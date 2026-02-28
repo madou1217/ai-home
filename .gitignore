@@ -1,2 +1,8 @@
 node_modules/
 .DS_Store
+
+# Keep key project docs trackable even if global excludes ignore Markdown.
+!/AGENTS.md
+!/README.md
+!/README_en.md
+!/ROADMAP.md
