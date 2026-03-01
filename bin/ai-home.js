@@ -2557,6 +2557,7 @@ function runCliPty(cliName, initialId, forwardArgs, isLogin = false, runtimeOpti
         appendRecentSession(lastCapturedSessionId, {
           cli: cliName,
           accountId: String(activeId),
+          pid: process.pid,
           cwd: process.cwd(),
           taskKey: taskKey || '',
           planPath: planPath || ''
@@ -2577,6 +2578,7 @@ function runCliPty(cliName, initialId, forwardArgs, isLogin = false, runtimeOpti
           setTaskSession(taskKey, lastCapturedSessionId, {
             cli: cliName,
             accountId: String(activeId),
+            pid: process.pid,
             cwd: process.cwd()
           });
           process.stdout.write(`\r\n\x1b[90m[aih]\x1b[0m Bound task-key '${taskKey}' -> session ${lastCapturedSessionId}\r\n`);

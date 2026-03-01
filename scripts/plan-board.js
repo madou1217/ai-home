@@ -3,6 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const { execSync } = require('child_process');
 
 const rootDir = path.resolve(__dirname, '..');
 const plansDir = path.join(rootDir, 'plans');
@@ -97,7 +98,7 @@ function parseChecklist(content) {
 }
 
 function renderTable(rows) {
-  const header = ['plan', 'task', 'check', 'status', 'owner', 'ai_type', 'account_id', 'session_id', 'title', 'branch', 'claimed_at'];
+  const header = ['plan', 'task', 'check', 'status', 'owner', 'ai_type', 'account_id', 'session_id', 'pid', 'alive', 'title', 'branch', 'claimed_at'];
   const all = [header, ...rows];
   const widths = header.map((_, idx) => Math.max(...all.map((r) => String(r[idx] || '').length)));
   const fmt = (r) => r.map((v, i) => String(v || '').padEnd(widths[i], ' ')).join(' | ');
@@ -105,6 +106,17 @@ function renderTable(rows) {
   console.log(fmt(header));
   console.log(widths.map((w) => '-'.repeat(w)).join('-|-'));
   rows.forEach((r) => console.log(fmt(r)));
+}
+
+function isPidAlive(pid) {
+  const n = Number(pid);
+  if (!Number.isFinite(n) || n <= 0) return false;
+  try {
+    process.kill(n, 0);
+    return true;
+  } catch (e) {
+    return false;
+  }
 }
 
 function readTaskSessionMap() {
@@ -120,13 +132,47 @@ function readTaskSessionMap() {
       map.set(String(taskKey), {
         sessionId: String(entry.sessionId),
         cli: entry.cli ? String(entry.cli) : '',
-        accountId: entry.accountId ? String(entry.accountId) : ''
+        accountId: entry.accountId ? String(entry.accountId) : '',
+        pid: entry.pid ? String(entry.pid) : ''
       });
     });
     return map;
   } catch (e) {
     return new Map();
   }
+}
+
+function readRunningProcessIndex() {
+  const byTaskKey = new Map();
+  const bySessionId = new Map();
+  try {
+    const output = execSync('ps -axo pid=,command=', { encoding: 'utf8' });
+    const lines = String(output || '').split(/\r?\n/);
+    lines.forEach((line) => {
+      const trimmed = line.trim();
+      if (!trimmed) return;
+      const m = trimmed.match(/^(\d+)\s+(.+)$/);
+      if (!m) return;
+      const pid = String(m[1] || '');
+      const cmd = String(m[2] || '');
+      if (!pid || !cmd) return;
+      const looksLikeAihAuto = cmd.includes('bin/ai-home.js codex auto exec');
+      const looksLikeCodexResume = cmd.includes('codex') && cmd.includes(' resume ');
+      if (!looksLikeAihAuto && !looksLikeCodexResume) return;
+
+      const inline = cmd.match(/--task-key=([a-zA-Z0-9._:-]+)/);
+      const spaced = cmd.match(/--task-key\s+([a-zA-Z0-9._:-]+)/);
+      const key = inline ? inline[1] : (spaced ? spaced[1] : '');
+      if (key && !byTaskKey.has(key)) byTaskKey.set(key, pid);
+
+      const sidMatch = cmd.match(/\bresume\s+([0-9a-f]{8}-[0-9a-f-]{27})\b/i);
+      const sid = sidMatch ? String(sidMatch[1]) : '';
+      if (sid && !bySessionId.has(sid)) bySessionId.set(sid, pid);
+    });
+  } catch (e) {
+    return { byTaskKey, bySessionId };
+  }
+  return { byTaskKey, bySessionId };
 }
 
 function deriveTaskKey(planName, task) {
@@ -165,6 +211,7 @@ if (planFiles.length === 0) {
 
 const rows = [];
 const taskSessionMap = readTaskSessionMap();
+const runningProcessIndex = readRunningProcessIndex();
 let total = 0;
 let doing = 0;
 let blocked = 0;
@@ -193,6 +240,10 @@ for (const absPath of planFiles) {
       const sid = binding && binding.sessionId ? binding.sessionId : '-';
       const aiType = binding && binding.cli ? binding.cli : '-';
       const accountId = binding && binding.accountId ? binding.accountId : '-';
+      const runtimePidByTaskKey = taskKey ? runningProcessIndex.byTaskKey.get(taskKey) : '';
+      const runtimePidBySession = sid !== '-' ? runningProcessIndex.bySessionId.get(sid) : '';
+      const pid = runtimePidByTaskKey || runtimePidBySession || (binding && binding.pid ? binding.pid : '-');
+      const alive = pid !== '-' ? (isPidAlive(pid) ? 'yes' : 'no') : '-';
       rows.push([
         planName,
         t.id,
@@ -202,6 +253,8 @@ for (const absPath of planFiles) {
         aiType,
         accountId,
         sid,
+        pid,
+        alive,
         t.title || '-',
         t.branch || '-',
         formatClaimedAtShort(t.claimedAt)
