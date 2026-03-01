@@ -190,7 +190,8 @@ fn main() {
       commands::migration::migration_namespace_info,
       commands::migration::migration_export_trigger,
       commands::migration::migration_import_trigger,
-      commands::audit::audit_namespace_info
+      commands::audit::audit_namespace_info,
+      commands::audit::audit_query
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

@@ -4167,8 +4167,23 @@ if (idOrAction === 'auto') {
     forwardArgs = resolved.args;
     taskKey = resolved.taskKey;
     planPath = resolved.planPath;
-    const isExec = String(forwardArgs[0] || '') === 'exec';
-    const isResume = String(forwardArgs[1] || '') === 'resume';
+    const normalizedForwardArgs = (() => {
+      const src = Array.isArray(forwardArgs) ? [...forwardArgs] : [];
+      if (String(src[0] || '') !== 'exec') return src;
+      const cleaned = ['exec'];
+      for (let i = 1; i < src.length; i++) {
+        const cur = String(src[i] || '');
+        if (cur === '--sandbox') {
+          if (i + 1 < src.length) i += 1;
+          continue;
+        }
+        if (cur.startsWith('--sandbox=')) continue;
+        cleaned.push(src[i]);
+      }
+      return cleaned;
+    })();
+    const isExec = String(normalizedForwardArgs[0] || '') === 'exec';
+    const isResume = String(normalizedForwardArgs[1] || '') === 'resume';
     if (isExec && !isResume && taskKey && planPath) {
       const claim = claimPlanTask(planPath, taskKey, 'aih-auto');
       if (!claim.ok) {
