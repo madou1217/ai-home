@@ -1409,14 +1409,15 @@ function looksLikeSessionId(v) {
 }
 
 function readTaskSessionRegistry() {
-  const empty = { tasks: {}, sessions: [] };
+  const empty = { tasks: {}, plans: {}, sessions: [] };
   if (!fs.existsSync(TASK_SESSION_REGISTRY_FILE)) return empty;
   try {
     const parsed = JSON.parse(fs.readFileSync(TASK_SESSION_REGISTRY_FILE, 'utf8'));
     if (!parsed || typeof parsed !== 'object') return empty;
-    if (parsed.tasks || parsed.sessions) {
+    if (parsed.tasks || parsed.sessions || parsed.plans) {
       return {
         tasks: parsed.tasks && typeof parsed.tasks === 'object' ? parsed.tasks : {},
+        plans: parsed.plans && typeof parsed.plans === 'object' ? parsed.plans : {},
         sessions: Array.isArray(parsed.sessions) ? parsed.sessions : []
       };
     }
@@ -1426,7 +1427,7 @@ function readTaskSessionRegistry() {
       if (!v || typeof v !== 'object' || !v.sessionId) return;
       tasks[sanitizeTaskKey(k)] = v;
     });
-    return { tasks, sessions: [] };
+    return { tasks, plans: {}, sessions: [] };
   } catch (e) {
     return empty;
   }
@@ -1437,6 +1438,7 @@ function writeTaskSessionRegistry(data) {
     ensureDir(path.dirname(TASK_SESSION_REGISTRY_FILE));
     fs.writeFileSync(TASK_SESSION_REGISTRY_FILE, JSON.stringify({
       tasks: data.tasks || {},
+      plans: data.plans || {},
       sessions: Array.isArray(data.sessions) ? data.sessions : []
     }, null, 2));
   } catch (e) {}
@@ -1478,6 +1480,92 @@ function appendRecentSession(sessionId, metadata = {}) {
   });
   all.sessions = next.slice(0, 200);
   writeTaskSessionRegistry(all);
+}
+
+function normalizePlanPath(planPathRaw) {
+  const v = String(planPathRaw || '').trim();
+  if (!v) return '';
+  const abs = path.resolve(process.cwd(), v);
+  if (!abs.endsWith('.plan.md')) return '';
+  return abs;
+}
+
+function getPlanSession(planPathRaw) {
+  const abs = normalizePlanPath(planPathRaw);
+  if (!abs) return null;
+  const all = readTaskSessionRegistry();
+  const entry = all.plans && all.plans[abs];
+  if (!entry || !entry.sessionId) return null;
+  return entry;
+}
+
+function setPlanSession(planPathRaw, sessionId, metadata = {}) {
+  const abs = normalizePlanPath(planPathRaw);
+  if (!abs || !sessionId) return;
+  const all = readTaskSessionRegistry();
+  if (!all.plans || typeof all.plans !== 'object') all.plans = {};
+  all.plans[abs] = {
+    planPath: abs,
+    sessionId: String(sessionId),
+    updatedAt: new Date().toISOString(),
+    ...metadata
+  };
+  writeTaskSessionRegistry(all);
+}
+
+function parseCodexExecPlanArg(forwardArgs) {
+  const arr = Array.isArray(forwardArgs) ? [...forwardArgs] : [];
+  if (arr.length === 0) return { planPath: '', args: arr };
+  if (String(arr[0]) !== 'exec') return { planPath: '', args: arr };
+
+  let planPath = '';
+  const next = [];
+  next.push(arr[0]);
+  for (let i = 1; i < arr.length; i++) {
+    const cur = String(arr[i] || '');
+    if (cur === '--plan' && i + 1 < arr.length) {
+      planPath = normalizePlanPath(arr[i + 1]);
+      i += 1;
+      continue;
+    }
+    if (cur.startsWith('--plan=')) {
+      planPath = normalizePlanPath(cur.slice('--plan='.length));
+      continue;
+    }
+    next.push(arr[i]);
+  }
+  return { planPath, args: next };
+}
+
+function detectSinglePlanFromPrompt(args) {
+  if (!Array.isArray(args) || String(args[0] || '') !== 'exec') return '';
+  const prompt = String(args.slice(1).join(' ') || '');
+  if (!prompt) return '';
+  const matches = [...prompt.matchAll(/plans\/[^\s"'`]+\.plan\.md/g)].map((m) => m[0]);
+  const uniq = Array.from(new Set(matches.map((x) => normalizePlanPath(x)).filter(Boolean)));
+  if (uniq.length === 1) return uniq[0];
+  return '';
+}
+
+function showCodexPlanSessions(planPath = '') {
+  const all = readTaskSessionRegistry();
+  const target = normalizePlanPath(planPath);
+  const entries = Object.values(all.plans || {})
+    .filter((x) => !!x && !!x.sessionId && !!x.planPath)
+    .filter((x) => !target || x.planPath === target)
+    .sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
+  if (entries.length === 0) {
+    console.log('\x1b[90m[aih]\x1b[0m No recorded plan-session bindings.');
+    return;
+  }
+  console.log('\n\x1b[36m[aih]\x1b[0m Plan-session bindings');
+  entries.forEach((v) => {
+    console.log(`  - plan: ${v.planPath}`);
+    console.log(`    session_id: \x1b[36m${v.sessionId}\x1b[0m`);
+    if (v.accountId) console.log(`    account_id: ${v.accountId}`);
+    if (v.updatedAt) console.log(`    updated_at: ${v.updatedAt}`);
+  });
+  console.log('');
 }
 
 function getLatestSessionForCwd(cwd = process.cwd()) {
@@ -1528,6 +1616,16 @@ function showCodexSessions(limit = 20) {
         taskKey: v.taskKey || ''
       });
     });
+    Object.values(all.plans || {}).forEach((v) => {
+      if (!v || !v.sessionId) return;
+      list.push({
+        sessionId: v.sessionId,
+        updatedAt: v.updatedAt || '',
+        accountId: v.accountId || '',
+        cwd: v.cwd || '',
+        planPath: v.planPath || ''
+      });
+    });
   }
   list = list
     .filter((x) => !!x && !!x.sessionId)
@@ -1542,6 +1640,7 @@ function showCodexSessions(limit = 20) {
     if (v.accountId) console.log(`    account_id: ${v.accountId}`);
     if (v.cwd) console.log(`    cwd: ${v.cwd}`);
     if (v.taskKey) console.log(`    task_key: ${v.taskKey}`);
+    if (v.planPath) console.log(`    plan: ${v.planPath}`);
     if (v.updatedAt) console.log(`    updated_at: ${v.updatedAt}`);
   });
   console.log('');
@@ -1562,14 +1661,32 @@ function showCodexLastSession() {
 
 function resolveCodexAutoExecArgs(rawForwardArgs) {
   const parsedTask = parseCodexExecTaskKey(rawForwardArgs);
-  let args = parsedTask.args;
+  const parsedPlan = parseCodexExecPlanArg(parsedTask.args);
+  let args = parsedPlan.args;
   const taskKey = parsedTask.taskKey;
+  let planPath = parsedPlan.planPath;
   if (String(args[0] || '') !== 'exec') {
-    return { args, taskKey, error: '' };
+    return { args, taskKey, planPath, error: '' };
   }
 
   const sub = String(args[1] || '');
+  if (!planPath && sub !== 'resume') {
+    planPath = detectSinglePlanFromPrompt(args);
+  }
   if (sub !== 'resume') {
+    if (planPath) {
+      const planBound = getPlanSession(planPath);
+      if (planBound && planBound.sessionId) {
+        const execPrompt = args.slice(1);
+        return {
+          args: ['exec', 'resume', planBound.sessionId, ...execPrompt],
+          taskKey,
+          planPath,
+          error: '',
+          note: `Resuming plan '${path.basename(planPath)}' with session ${planBound.sessionId}`
+        };
+      }
+    }
     if (taskKey) {
       const bound = getTaskSession(taskKey);
       if (bound && bound.sessionId) {
@@ -1577,12 +1694,13 @@ function resolveCodexAutoExecArgs(rawForwardArgs) {
         return {
           args: ['exec', 'resume', bound.sessionId, ...execPrompt],
           taskKey,
+          planPath,
           error: '',
           note: `Resuming task-key '${taskKey}' with session ${bound.sessionId}`
         };
       }
     }
-    return { args, taskKey, error: '' };
+    return { args, taskKey, planPath, error: '' };
   }
 
   const tokens = args.slice(2);
@@ -1597,7 +1715,7 @@ function resolveCodexAutoExecArgs(rawForwardArgs) {
       continue;
     }
     if (cur === '--prompt' || (cur === '--' && i + 1 < tokens.length && String(tokens[i + 1]) === '--prompt')) {
-      return { args, taskKey, error: 'Unsupported --prompt syntax. Use positional prompt: aih codex auto exec resume <session_id> "你写到哪里了"' };
+      return { args, taskKey, planPath, error: 'Unsupported --prompt syntax. Use positional prompt: aih codex auto exec resume <session_id> "你写到哪里了"' };
     }
     rest.push(cur);
   }
@@ -1608,6 +1726,10 @@ function resolveCodexAutoExecArgs(rawForwardArgs) {
   }
 
   let resolvedSessionId = explicitSessionId;
+  if (!resolvedSessionId && planPath) {
+    const planBound = getPlanSession(planPath);
+    if (planBound && planBound.sessionId) resolvedSessionId = planBound.sessionId;
+  }
   if (!resolvedSessionId && taskKey) {
     const bound = getTaskSession(taskKey);
     if (bound && bound.sessionId) resolvedSessionId = bound.sessionId;
@@ -1617,7 +1739,7 @@ function resolveCodexAutoExecArgs(rawForwardArgs) {
     if (latest && latest.sessionId) resolvedSessionId = latest.sessionId;
   }
   if (!resolvedSessionId) {
-    return { args, taskKey, error: 'No session_id found. Use `aih codex sessions` first, then run: aih codex auto exec resume <session_id> [prompt]' };
+    return { args, taskKey, planPath, error: 'No session_id found. Use `aih codex sessions` first, then run: aih codex auto exec resume <session_id> [prompt]' };
   }
   if (!prompt) prompt = DEFAULT_RESUME_PROMPT;
 
@@ -1627,6 +1749,7 @@ function resolveCodexAutoExecArgs(rawForwardArgs) {
   return {
     args: resumeArgs,
     taskKey,
+    planPath,
     error: '',
     note: explicitSessionId
       ? `Resuming explicit session ${resolvedSessionId}`
@@ -1730,8 +1853,10 @@ function showHelp() {
   aih <cli> add [or login]  \x1b[90mCreate a new account and run the login flow\x1b[0m
   aih <cli>                 \x1b[90mRun a tool with the default account (ID: 1)\x1b[0m
   aih <cli> auto            \x1b[90mRun the next non-exhausted account automatically\x1b[0m
+  aih codex auto exec --plan <plans/xxx.plan.md> "<prompt>" \x1b[90mBind one plan to one session\x1b[0m
   aih codex auto exec resume <session_id> [prompt] \x1b[90mResume a specific exec session precisely\x1b[0m
   aih codex sessions [--limit N] \x1b[90mShow recent codex session_id list\x1b[0m
+  aih codex plan-sessions [plan] \x1b[90mShow plan -> session_id bindings\x1b[0m
   aih codex last-session     \x1b[90mShow current project's latest session_id\x1b[0m
   aih <cli> usage <id>      \x1b[90mShow trusted usage-remaining snapshot (OAuth only)\x1b[0m
   aih <cli> usages          \x1b[90mShow trusted usage-remaining snapshots for all OAuth accounts\x1b[0m
@@ -1917,8 +2042,10 @@ function showCliUsage(cliName) {
   aih ${cliName} add             \x1b[90mCreate a new account and login\x1b[0m
   aih ${cliName} login           \x1b[90mAlias of add\x1b[0m
   aih ${cliName} auto            \x1b[90mAuto-select next non-exhausted account\x1b[0m
+  ${cliName === 'codex' ? `aih codex auto exec --plan <plans/xxx.plan.md> "<prompt>"  \x1b[90mBind one plan to one session\x1b[0m` : ''}
   ${cliName === 'codex' ? `aih codex auto exec resume <session_id> [prompt]  \x1b[90mResume specific exec session\x1b[0m` : ''}
   ${cliName === 'codex' ? `aih codex sessions [--limit N]  \x1b[90mShow recent codex session_id list\x1b[0m` : ''}
+  ${cliName === 'codex' ? `aih codex plan-sessions [plan]  \x1b[90mShow plan -> session_id bindings\x1b[0m` : ''}
   ${cliName === 'codex' ? `aih codex last-session  \x1b[90mShow current project's latest session_id\x1b[0m` : ''}
   aih ${cliName} usage <id>      \x1b[90mShow trusted usage-remaining snapshot (OAuth)\x1b[0m
   aih ${cliName} usages          \x1b[90mShow trusted usage snapshots for all OAuth accounts\x1b[0m
@@ -2246,6 +2373,7 @@ function runCliPty(cliName, initialId, forwardArgs, isLogin = false, runtimeOpti
 
   const autoRotateOnLimit = !!runtimeOptions.autoRotateOnLimit;
   const taskKey = sanitizeTaskKey(runtimeOptions.taskKey || '');
+  const planPath = normalizePlanPath(runtimeOptions.planPath || '');
   let activeId = String(initialId);
   let activeLeaseToken = String(runtimeOptions.leaseToken || '');
   let limitTriggered = false;
@@ -2328,11 +2456,20 @@ function runCliPty(cliName, initialId, forwardArgs, isLogin = false, runtimeOpti
           cli: cliName,
           accountId: String(activeId),
           cwd: process.cwd(),
-          taskKey: taskKey || ''
+          taskKey: taskKey || '',
+          planPath: planPath || ''
         });
         if (cliName === 'codex') {
           process.stdout.write(`\r\n\x1b[90m[aih]\x1b[0m captured_session_id: ${lastCapturedSessionId}\r\n`);
           process.stdout.write(`\x1b[90m[aih]\x1b[0m resume_cmd: aih codex auto exec resume ${lastCapturedSessionId} "继续执行"\r\n`);
+        }
+        if (cliName === 'codex' && planPath) {
+          setPlanSession(planPath, lastCapturedSessionId, {
+            cli: cliName,
+            accountId: String(activeId),
+            cwd: process.cwd()
+          });
+          process.stdout.write(`\x1b[90m[aih]\x1b[0m Bound plan '${path.basename(planPath)}' -> session ${lastCapturedSessionId}\r\n`);
         }
         if (cliName === 'codex' && taskKey) {
           setTaskSession(taskKey, lastCapturedSessionId, {
@@ -3577,8 +3714,9 @@ const USAGE_ACTIONS = new Set(['usage', '--usage', 'stats']);
 const USAGES_ACTIONS = new Set(['usages', 'usage-all', 'all-usage', 'all-usages']);
 const IMPORT_OUTPUT_ACTIONS = new Set(['import-output', 'import_output', 'bulk-import', 'bulk_import']);
 const SESSION_ACTIONS = new Set(['sessions', 'session', 'task-sessions', 'task_sessions', 'session-map', 'session_map']);
+const PLAN_SESSION_ACTIONS = new Set(['plan-sessions', 'plan_sessions', 'plansessions']);
 const LAST_SESSION_ACTIONS = new Set(['last-session', 'last_session', 'latest-session', 'latest_session']);
-const KNOWN_ACTIONS = new Set(['ls', 'set-default', 'add', 'login', 'auth', 'auto', ...SESSION_ACTIONS, ...LAST_SESSION_ACTIONS, ...UNLOCK_ACTIONS, ...USAGE_ACTIONS, ...USAGES_ACTIONS, ...IMPORT_OUTPUT_ACTIONS]);
+const KNOWN_ACTIONS = new Set(['ls', 'set-default', 'add', 'login', 'auth', 'auto', ...SESSION_ACTIONS, ...PLAN_SESSION_ACTIONS, ...LAST_SESSION_ACTIONS, ...UNLOCK_ACTIONS, ...USAGE_ACTIONS, ...USAGES_ACTIONS, ...IMPORT_OUTPUT_ACTIONS]);
 
 if (idOrAction === 'help') {
   showCliUsage(cliName);
@@ -3705,6 +3843,15 @@ if (idOrAction && SESSION_ACTIONS.has(idOrAction)) {
   process.exit(0);
 }
 
+if (idOrAction && PLAN_SESSION_ACTIONS.has(idOrAction)) {
+  if (cliName !== 'codex') {
+    console.error(`\x1b[31m[aih] ${idOrAction} is currently supported only for codex.\x1b[0m`);
+    process.exit(1);
+  }
+  showCodexPlanSessions(args[2] || '');
+  process.exit(0);
+}
+
 if (idOrAction && LAST_SESSION_ACTIONS.has(idOrAction)) {
   if (cliName !== 'codex') {
     console.error(`\x1b[31m[aih] ${idOrAction} is currently supported only for codex.\x1b[0m`);
@@ -3809,6 +3956,7 @@ if (idOrAction === 'auto') {
   
   forwardArgs = args.slice(2);
   let taskKey = '';
+  let planPath = '';
   if (cliName === 'codex') {
     const resolved = resolveCodexAutoExecArgs(forwardArgs);
     if (resolved.error) {
@@ -3817,6 +3965,7 @@ if (idOrAction === 'auto') {
     }
     forwardArgs = resolved.args;
     taskKey = resolved.taskKey;
+    planPath = resolved.planPath;
     if (resolved.note) {
       console.log(`\x1b[36m[aih auto]\x1b[0m ${resolved.note}`);
     }
@@ -3824,7 +3973,8 @@ if (idOrAction === 'auto') {
   runCliPty(cliName, nextId, forwardArgs, false, {
     autoRotateOnLimit: true,
     leaseToken: allocation.leaseToken,
-    taskKey
+    taskKey,
+    planPath
   });
   return;
 }
