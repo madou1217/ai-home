@@ -3,7 +3,7 @@
 - plan_id: roadmap-m4-remote-runtime-2026-03-01
 - coordinator: ai-coordinator
 - created_at: 2026-03-01T21:34:22+08:00
-- updated_at: 2026-03-01T22:52:05+08:00
+- updated_at: 2026-03-01T22:53:10+08:00
 - status: active
 
 ## Global Rules
@@ -22,7 +22,7 @@
 - [x] T006 Remote patch return channel
 - [x] T007 Runtime isolation templates
 - [x] T008 Runtime environment manager
-- [ ] T009 Remote session integration tests
+- [x] T009 Remote session integration tests
 
 Keep this checklist synced with `status`:
 - `status: done` => `[x]`
@@ -184,14 +184,14 @@ Keep this checklist synced with `status`:
 - id: T009
   title: Remote session integration tests
   scope: Add integration coverage for remote project session and runtime isolation behavior
-  status: doing
+  status: done
   owner: carol
   claimed_at: 2026-03-01T22:16:53+08:00
-  done_at:
+  done_at: 2026-03-01T22:53:10+08:00
   priority: P1
   depends_on: [T005, T006, T008]
   branch: feat/carol-m4-t009
-  pr_or_commit:
+  pr_or_commit: pending
   blocker:
   deliverable: Test coverage validating end-to-end remote session loop
   acceptance:
@@ -251,3 +251,4 @@ Keep this checklist synced with `status`:
 - 2026-03-01T22:42:37+08:00 [ai-watchdog] Relaunched T005 (m4-t005-grace) via resume session 019ca9c4-2d98-7950-9a54-08ea14cd1b3c.
 - 2026-03-01T22:42:37+08:00 [ai-watchdog] Relaunched T009 (m4-t009-carol) via resume session 019ca9c4-58ae-71b0-aeea-2ec6c7c0c0d2.
 - 2026-03-01T22:52:05+08:00 [grace] Completed T005 implementation in scoped file; set status=done with pr_or_commit=4e511fa.
+- 2026-03-01T22:53:10+08:00 [carol] Completed T009 integration tests for remote session retry/failure and runtime isolation bind/recover branches; status set to done, awaiting commit hash backfill.
