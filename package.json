@@ -7,6 +7,8 @@
     "test": "node --test test/*.test.js",
     "plan:board": "node scripts/plan-board.js",
     "plan:run": "node scripts/plan-run.js",
+    "plan:guard": "node scripts/plan-commit-guard.js",
+    "plan:hook:install": "node scripts/install-plan-hook.js",
     "postinstall": "chmod +x node_modules/node-pty/prebuilds/darwin-x64/spawn-helper node_modules/node-pty/prebuilds/darwin-arm64/spawn-helper 2>/dev/null || true"
   },
   "keywords": [],
