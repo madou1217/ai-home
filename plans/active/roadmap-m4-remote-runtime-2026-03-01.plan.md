@@ -3,7 +3,7 @@
 - plan_id: roadmap-m4-remote-runtime-2026-03-01
 - coordinator: ai-coordinator
 - created_at: 2026-03-01T21:34:22+08:00
-- updated_at: 2026-03-01T22:53:10+08:00
+- updated_at: 2026-03-01T22:53:40+08:00
 - status: active
 
 ## Global Rules
@@ -191,7 +191,7 @@ Keep this checklist synced with `status`:
   priority: P1
   depends_on: [T005, T006, T008]
   branch: feat/carol-m4-t009
-  pr_or_commit: pending
+  pr_or_commit: d2b0655
   blocker:
   deliverable: Test coverage validating end-to-end remote session loop
   acceptance:
@@ -252,3 +252,4 @@ Keep this checklist synced with `status`:
 - 2026-03-01T22:42:37+08:00 [ai-watchdog] Relaunched T009 (m4-t009-carol) via resume session 019ca9c4-58ae-71b0-aeea-2ec6c7c0c0d2.
 - 2026-03-01T22:52:05+08:00 [grace] Completed T005 implementation in scoped file; set status=done with pr_or_commit=4e511fa.
 - 2026-03-01T22:53:10+08:00 [carol] Completed T009 integration tests for remote session retry/failure and runtime isolation bind/recover branches; status set to done, awaiting commit hash backfill.
+- 2026-03-01T22:53:40+08:00 [carol] Backfilled T009 pr_or_commit=d2b0655 and finalized task closure metadata.
