@@ -1233,25 +1233,19 @@ function printAllUsageSnapshots(cliName) {
 
 function getNextAvailableId(cliName, currentId) {
   const toolDir = path.join(PROFILES_DIR, cliName);
-  const ids = fs.readdirSync(toolDir)
-                .filter(f => /^\d+$/.test(f) && fs.statSync(path.join(toolDir, f)).isDirectory());
-  
-  let validIds = [];
-  ids.forEach(id => {
-    if (id !== currentId && checkStatus(cliName, path.join(toolDir, id)).configured) {
-      const usageExhausted = syncExhaustedStateFromUsage(cliName, id);
-      if (usageExhausted === true) {
-        return;
-      }
-      if (!isExhausted(cliName, id)) {
-        validIds.push(id);
-      }
-    }
-  });
-  
-  if (validIds.length > 0) {
-    // Return the lowest ID available (or random, or round robin)
-    return validIds.sort((a, b) => parseInt(a) - parseInt(b))[0];
+  if (!fs.existsSync(toolDir)) return null;
+  const runDeepUsageCheck = process.env.AIH_DEEP_USAGE_CHECK === '1';
+  const ids = fs.readdirSync(toolDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && /^\d+$/.test(entry.name))
+    .map((entry) => entry.name)
+    .sort((a, b) => parseInt(a, 10) - parseInt(b, 10));
+
+  for (const id of ids) {
+    if (id === currentId) continue;
+    if (!checkStatus(cliName, path.join(toolDir, id)).configured) continue;
+    if (runDeepUsageCheck && syncExhaustedStateFromUsage(cliName, id) === true) continue;
+    if (isExhausted(cliName, id)) continue;
+    return id;
   }
   return null;
 }
@@ -1572,7 +1566,10 @@ function spawnPty(cliName, id, forwardArgs, isLogin) {
     GEMINI_CLI_SYSTEM_SETTINGS_PATH: path.join(sandboxDir, '.gemini', 'settings.json')
   };
 
-  const argsToRun = isLogin ? (CLI_CONFIGS[cliName]?.loginArgs || []) : forwardArgs;
+  let argsToRun = isLogin ? (CLI_CONFIGS[cliName]?.loginArgs || []) : forwardArgs;
+  if (cliName === 'codex' && !isLogin) {
+    argsToRun = applyCodexDefaultArgs(argsToRun);
+  }
   
   return pty.spawn(cliName, argsToRun, {
     name: 'xterm-color',
@@ -1581,6 +1578,16 @@ function spawnPty(cliName, id, forwardArgs, isLogin) {
     cwd: process.cwd(),
     env: envOverrides
   });
+}
+
+function applyCodexDefaultArgs(args) {
+  const out = Array.isArray(args) ? [...args] : [];
+  const first = String(out[0] || '').trim().toLowerCase();
+  if (first === 'auth' || first === 'login') return out;
+  if (out.includes('--sandbox')) return out;
+  out.unshift('danger-full-access');
+  out.unshift('--sandbox');
+  return out;
 }
 
 function runCliPty(cliName, initialId, forwardArgs, isLogin = false) {
@@ -2809,7 +2816,7 @@ const UNLOCK_ACTIONS = new Set(['unlock', '--unlock', 'unexhaust', 'unban', 'rel
 const USAGE_ACTIONS = new Set(['usage', '--usage', 'stats']);
 const USAGES_ACTIONS = new Set(['usages', 'usage-all', 'all-usage', 'all-usages']);
 const IMPORT_OUTPUT_ACTIONS = new Set(['import-output', 'import_output', 'bulk-import', 'bulk_import']);
-const KNOWN_ACTIONS = new Set(['ls', 'set-default', 'add', 'login', 'auto', ...UNLOCK_ACTIONS, ...USAGE_ACTIONS, ...USAGES_ACTIONS, ...IMPORT_OUTPUT_ACTIONS]);
+const KNOWN_ACTIONS = new Set(['ls', 'set-default', 'add', 'login', 'auth', 'auto', ...UNLOCK_ACTIONS, ...USAGE_ACTIONS, ...USAGES_ACTIONS, ...IMPORT_OUTPUT_ACTIONS]);
 
 if (idOrAction === 'help') {
   showCliUsage(cliName);
@@ -3105,8 +3112,13 @@ if (!configured) {
   }
 }
 
-// Refresh exhausted marker based on trusted usage snapshots before launch.
-syncExhaustedStateFromUsage(cliName, id);
+const firstForwardArg = String((forwardArgs && forwardArgs[0]) || '').trim().toLowerCase();
+const isAuthFlowArg = firstForwardArg === 'auth' || firstForwardArg === 'login';
+const shouldSyncUsageOnLaunch = process.env.AIH_SYNC_USAGE_ON_LAUNCH === '1' && !isAuthFlowArg;
+if (shouldSyncUsageOnLaunch) {
+  // Optional slow-path: refresh exhausted marker from trusted usage snapshots.
+  syncExhaustedStateFromUsage(cliName, id);
+}
 
 // Check if manually selected account is exhausted
 if (isExhausted(cliName, id)) {
