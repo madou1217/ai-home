@@ -45,9 +45,7 @@ const {
   writeSseChatCompletion
 } = require('../lib/proxy/http-utils');
 const {
-  loadCodexProxyAccounts,
-  loadGeminiProxyAccounts,
-  withRuntimeFields
+  loadProxyRuntimeAccounts
 } = require('../lib/proxy/accounts');
 const {
   resolveRequestProvider,
@@ -1609,8 +1607,9 @@ function appendProxyRequestLog(entry) {
 }
 
 async function startLocalProxyServer(options) {
-  const codexAccounts = withRuntimeFields(loadCodexProxyAccounts({ fs, getToolAccountIds, getToolConfigDir }), 'codex');
-  const geminiAccounts = withRuntimeFields(loadGeminiProxyAccounts({ getToolAccountIds, getProfileDir, checkStatus }), 'gemini');
+  const runtimeAccounts = loadProxyRuntimeAccounts({ fs, getToolAccountIds, getToolConfigDir, getProfileDir, checkStatus });
+  const codexAccounts = runtimeAccounts.codex;
+  const geminiAccounts = runtimeAccounts.gemini;
   const state = {
     strategy: options.strategy,
     cursors: { codex: 0, gemini: 0 },
@@ -1798,10 +1797,7 @@ async function startLocalProxyServer(options) {
         });
       }
       if (method === 'POST' && pathname === '/v0/management/reload') {
-        state.accounts = {
-          codex: withRuntimeFields(loadCodexProxyAccounts({ fs, getToolAccountIds, getToolConfigDir }), 'codex'),
-          gemini: withRuntimeFields(loadGeminiProxyAccounts({ getToolAccountIds, getProfileDir, checkStatus }), 'gemini')
-        };
+        state.accounts = loadProxyRuntimeAccounts({ fs, getToolAccountIds, getToolConfigDir, getProfileDir, checkStatus });
         state.cursors = { codex: 0, gemini: 0 };
         state.modelsCache = {
           updatedAt: 0,
