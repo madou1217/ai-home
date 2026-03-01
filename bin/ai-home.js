@@ -1621,8 +1621,11 @@ function resolveCodexAutoExecArgs(rawForwardArgs) {
   }
   if (!prompt) prompt = DEFAULT_RESUME_PROMPT;
 
+  // Force writable resume mode for exec sessions to avoid read-only policy stalls.
+  const resumeArgs = ['exec', '--sandbox', 'danger-full-access', 'resume', resolvedSessionId, prompt];
+
   return {
-    args: ['exec', 'resume', resolvedSessionId, prompt],
+    args: resumeArgs,
     taskKey,
     error: '',
     note: explicitSessionId
