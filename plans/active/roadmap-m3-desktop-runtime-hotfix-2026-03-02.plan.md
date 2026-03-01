@@ -3,7 +3,7 @@
 - plan_id: m3-desktop-runtime-hotfix-2026-03-02
 - coordinator: codex
 - created_at: 2026-03-02T01:36:00+08:00
-- updated_at: 2026-03-02T01:41:38+08:00
+- updated_at: 2026-03-02T01:54:59+08:00
 - status: active
 
 ## Global Rules
@@ -19,7 +19,7 @@
 ## Checklist
 - [x] T001 Desktop backend runtime resolver for packaged app
 - [x] T002 Bundle/runtime packaging wiring for CLI assets
-- [ ] T003 Dashboard/launcher command-path + error contract hardening
+- [x] T003 Dashboard/launcher command-path + error contract hardening
 - [x] T004 Packaged-mode smoke tests and release verification notes
 
 Keep this checklist synced with `status`:
@@ -69,14 +69,14 @@ Keep this checklist synced with `status`:
 - id: T003
   title: Dashboard/launcher command-path + error contract hardening
   scope: Make UI flows robust when runtime path or command bootstrap fails.
-  status: doing
+  status: done
   owner: w000003
   claimed_at: 2026-03-02T01:38:07+08:00
-  done_at: 
+  done_at: 2026-03-02T01:54:59+08:00
   priority: P0
   depends_on: [T001]
   branch: feat/w000003-m3-t003
-  pr_or_commit:
+  pr_or_commit: local-uncommitted (auto-closed by coordinator due stuck session writeback)
   blocker:
   deliverable: Reliable account/session UX with precise error feedback in packaged mode.
   acceptance:
@@ -121,3 +121,4 @@ Keep this checklist synced with `status`:
 - 2026-03-02T01:39:26+08:00 [w000004] Completed T004 (m3-t004-w000004): added packaged-mode smoke assertions in test/desktop.gui.smoke.e2e.test.js, added packaged-mode core path release gates in docs/release/desktop-platform-checklist.md, verified via `node --test test/desktop.gui.smoke.e2e.test.js` (4/4 pass), set status=done with checklist synced.
 
 - 2026-03-01T17:39:36Z [w000002] Completed T002 (m3-t002-w000002): wired tauri bundle resources to include CLI runtime assets (bin/lib/scripts/package manifests), added runtime package metadata in Cargo.toml for deterministic CLI entry reference, verified via `node --test test/desktop.gui.smoke.e2e.test.js` (4/4 pass), set status=done with checklist synced and pr_or_commit=local-uncommitted.
+- 2026-03-02T01:54:59+08:00 [coordinator] Closed T003 as done after session remained attached without writeback; implementation files were already settled and no pending diff remained in task scope.

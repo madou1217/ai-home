@@ -7,6 +7,7 @@
     "test": "node --test test/*.test.js",
     "plan:board": "node scripts/plan-board.js",
     "plan:run": "node scripts/plan-run.js",
+    "plan:dispatch": "node scripts/plan-dispatch.js",
     "plan:orchestrate": "node scripts/plan-orchestrate.js",
     "plan:guard": "node scripts/plan-commit-guard.js",
     "plan:watchdog": "node scripts/plan-watchdog.js",

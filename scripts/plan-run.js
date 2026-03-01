@@ -5,6 +5,7 @@ const { spawn } = require('child_process');
 const fs = require('fs');
 
 const rootDir = path.resolve(__dirname, '..');
+const plansRoot = path.join(rootDir, 'plans');
 
 function resolveWorkerSkillToken() {
   const candidates = [
@@ -108,14 +109,76 @@ function sanitizeTaskKey(raw) {
   return String(raw || '').trim().replace(/[^a-zA-Z0-9._:-]/g, '_').slice(0, 120);
 }
 
-function resolvePlanFromTaskKey(taskKey) {
-  const m = String(taskKey || '').toLowerCase().match(/^m(\d+)-t(\d+)-/);
-  if (!m) return '';
+function parseTaskKeyMeta(taskKey) {
+  const m = String(taskKey || '').toLowerCase().match(/^m(\d+)-t(\d+)-([a-z0-9._-]+)$/);
+  if (!m) return null;
   const milestone = `m${String(Number(m[1]))}`;
-  if (milestone === 'm3') return 'plans/active/roadmap-m3-desktop-production-2026-03-01.plan.md';
-  if (milestone === 'm4') return 'plans/active/roadmap-m4-remote-runtime-2026-03-01.plan.md';
-  if (milestone === 'm5') return 'plans/active/roadmap-m5-mobile-command-center-2026-03-01.plan.md';
-  if (milestone === 'm6') return 'plans/active/roadmap-m6-go-live-ops-2026-03-01.plan.md';
+  const taskId = `T${String(Number(m[2])).padStart(3, '0')}`;
+  const owner = String(m[3] || '').trim();
+  if (!milestone || !taskId || !owner) return null;
+  return { milestone, taskId, owner };
+}
+
+function listPlanFiles() {
+  const activeDir = path.join(plansRoot, 'active');
+  if (fs.existsSync(activeDir)) {
+    return fs.readdirSync(activeDir)
+      .filter((x) => x.endsWith('.plan.md') && x !== '_template.plan.md')
+      .map((x) => path.join(activeDir, x))
+      .sort();
+  }
+  if (!fs.existsSync(plansRoot)) return [];
+  return fs.readdirSync(plansRoot)
+    .filter((x) => x.endsWith('.plan.md') && x !== '_template.plan.md')
+    .map((x) => path.join(plansRoot, x))
+    .sort();
+}
+
+function findTaskInPlan(planAbs, taskId) {
+  try {
+    const lines = fs.readFileSync(planAbs, 'utf8').split(/\r?\n/);
+    const start = lines.findIndex((line) => line.trim() === `- id: ${taskId}`);
+    if (start < 0) return null;
+    let end = lines.length;
+    for (let i = start + 1; i < lines.length; i++) {
+      if (/^- id:\s+\S+/.test(lines[i].trim())) {
+        end = i;
+        break;
+      }
+    }
+    let owner = '';
+    for (let i = start + 1; i < end; i++) {
+      const m = lines[i].match(/^\s{2}owner:\s*(.*)$/);
+      if (m) {
+        owner = String(m[1] || '').trim().toLowerCase();
+        break;
+      }
+    }
+    return { owner };
+  } catch (_) {
+    return null;
+  }
+}
+
+function resolvePlanFromTaskKey(taskKey) {
+  const meta = parseTaskKeyMeta(taskKey);
+  if (!meta) return '';
+
+  const milestoneToken = `roadmap-${meta.milestone}-`;
+  const planFiles = listPlanFiles().filter((abs) => path.basename(abs).toLowerCase().includes(milestoneToken));
+  const withTask = planFiles
+    .map((abs) => ({ abs, task: findTaskInPlan(abs, meta.taskId) }))
+    .filter((x) => !!x.task);
+
+  if (withTask.length === 0) return '';
+  if (withTask.length === 1) return path.relative(rootDir, withTask[0].abs);
+
+  const ownerMatched = withTask.filter((x) => x.task.owner === meta.owner);
+  if (ownerMatched.length === 1) return path.relative(rootDir, ownerMatched[0].abs);
+
+  const unassignedMatched = withTask.filter((x) => !x.task.owner || x.task.owner === 'unassigned');
+  if (unassignedMatched.length === 1) return path.relative(rootDir, unassignedMatched[0].abs);
+
   return '';
 }
 
@@ -162,7 +225,7 @@ function runSingle(args, idx, total, options) {
     const taskKey = sanitizeTaskKey(args.taskKey);
     const plan = options.plan || resolvePlanFromTaskKey(taskKey);
     if (!taskKey || !plan) {
-      console.error(`[plan-run] invalid task or unresolved plan: task=${taskKey} plan=${plan}`);
+      console.error(`[plan-run] invalid task or unresolved/ambiguous plan: task=${taskKey} plan=${plan || '-'} (use --plan to bind explicitly)`);
       const endedAt = new Date();
       resolve({
         taskKey,
