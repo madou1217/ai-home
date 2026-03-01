@@ -68,8 +68,8 @@ export default function StatusPriorityCard(props: StatusPriorityCardProps): JSX.
       </View>
 
       <View style={styles.secondaryBlock}>
-        {(props.secondaryDetails ?? []).map((detail) => (
-          <View key={`${detail.label}:${detail.value}`} style={styles.secondaryRow}>
+        {(props.secondaryDetails ?? []).map((detail, index) => (
+          <View key={`${detail.label}:${detail.value}:${index}`} style={styles.secondaryRow}>
             <Text style={styles.secondaryLabel}>{normalizeText(detail.label)}</Text>
             <Text style={styles.secondaryValue}>{normalizeText(detail.value)}</Text>
           </View>
