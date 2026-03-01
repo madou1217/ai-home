@@ -30,10 +30,13 @@ Use this skill when coordinating multiple AIs working in parallel on this reposi
 - `status: done`
 - `done_at: <ISO8601>`
 - `pr_or_commit: <hash|PR>`
+- checklist line `- [x] Txxx ...`
 7. On blocker:
 - `status: blocked`
 - `blocker: <reason>`
+- checklist line remains `- [ ] Txxx ...`
 8. Update `updated_at` and append one line in `Activity Log` for each status transition.
+9. Ensure each task exists in `## Checklist` with markdown checkbox format.
 
 ## Todo Format (Mandatory)
 Each task item must include:
@@ -72,4 +75,3 @@ When producing or updating a plan:
 ## Quick Commands (recommended)
 - `git status --short`
 - `rg -n "status: (todo|doing|blocked|done)" plans/*.plan.md`
-

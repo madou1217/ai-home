@@ -23,7 +23,10 @@ Use this skill when an AI should claim one task from `plans/*.plan.md`, execute 
 - `done_at: <ISO8601>`
 - `pr_or_commit: <hash>`
 - optional `blocker`
-8. Append Activity Log line.
+8. Sync checklist line:
+- `done` => `- [x] Txxx ...`
+- `blocked/todo/doing` => `- [ ] Txxx ...`
+9. Append Activity Log line.
 
 ## Conflict Rules
 - Never edit tasks owned by other AIs in `doing`.
@@ -42,8 +45,8 @@ Use this exact structure when invoked manually:
 2) 只改该任务 files 范围内的文件。
 3) 完成后把任务改成 done，填写 done_at 和 pr_or_commit。
 4) 若无法完成，改成 blocked 并写 blocker。
-5) 更新 Activity Log。
+5) 同步 Checklist：done => `[x]`，其他 => `[ ]`。
+6) 更新 Activity Log。
 
 现在开始：先领取一个任务并提交 claim。
 """
-

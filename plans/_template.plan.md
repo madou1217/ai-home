@@ -13,6 +13,14 @@
 
 ## TodoList
 
+## Checklist
+- [ ] T001 <task-title>
+- [ ] T002 <task-title>
+
+Keep this checklist synced with `status`:
+- `status: done` => `[x]`
+- others => `[ ]`
+
 - id: T001
   title: <task-title>
   scope: <clear-boundary>
@@ -53,4 +61,3 @@
 
 ## Activity Log
 - <ISO8601> [coordinator] Plan created.
-

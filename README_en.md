@@ -153,3 +153,19 @@ Management APIs:
 - `GET /v0/management/accounts`
 - `GET /v0/management/models`
 - `POST /v0/management/reload`
+
+### 11. Multi-AI / Subagent Task Board
+Use this when multiple AIs work in parallel and you need to see who is doing what.
+
+```bash
+# Active work only (doing / blocked)
+npm run plan:board
+
+# Full board (todo / doing / blocked / done)
+npm run plan:board -- --all
+```
+
+Related files:
+- `skills/aih-task-orchestrator/SKILL.md`: coordinator AI (split + dispatch)
+- `skills/aih-task-worker/SKILL.md`: worker AI (claim + execute)
+- `plans/AGENT_BOARD.md`: board rules
