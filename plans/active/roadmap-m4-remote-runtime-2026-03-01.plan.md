@@ -3,7 +3,7 @@
 - plan_id: roadmap-m4-remote-runtime-2026-03-01
 - coordinator: ai-coordinator
 - created_at: 2026-03-01T21:34:22+08:00
-- updated_at: 2026-03-01T22:09:01+08:00
+- updated_at: 2026-03-01T22:14:10+08:00
 - status: active
 
 ## Global Rules
@@ -14,13 +14,13 @@
 ## TodoList
 
 ## Checklist
-- [ ] T001 Remote daemon core lifecycle
-- [ ] T002 Remote transport contract
+- [x] T001 Remote daemon core lifecycle
+- [x] T002 Remote transport contract
 - [ ] T003 Remote connector auth/reconnect
 - [ ] T004 Remote workspace runner
 - [ ] T005 Remote project session bridge
 - [ ] T006 Remote patch return channel
-- [ ] T007 Runtime isolation templates
+- [x] T007 Runtime isolation templates
 - [ ] T008 Runtime environment manager
 - [ ] T009 Remote session integration tests
 
@@ -31,14 +31,14 @@ Keep this checklist synced with `status`:
 - id: T001
   title: Remote daemon core lifecycle
   scope: Implement daemon lifecycle and remote control host behavior (Linux-first)
-  status: todo
-  owner: unassigned
-  claimed_at: 
-  done_at:
+  status: done
+  owner: carol
+  claimed_at: 2026-03-01T22:11:26+08:00
+  done_at: 2026-03-01T22:14:10+08:00
   priority: P0
   depends_on: []
-  branch: 
-  pr_or_commit:
+  branch: feat/carol-m4-t001
+  pr_or_commit: 604b595
   blocker:
   deliverable: Stable remote daemon lifecycle control surface
   acceptance:
@@ -50,14 +50,14 @@ Keep this checklist synced with `status`:
 - id: T002
   title: Remote transport contract
   scope: Define and stabilize control transport protocol for auth/session/project operations
-  status: todo
-  owner: unassigned
-  claimed_at: 
-  done_at:
+  status: done
+  owner: dave
+  claimed_at: 2026-03-01T22:11:26+08:00
+  done_at: 2026-03-01T22:14:10+08:00
   priority: P0
   depends_on: []
-  branch: 
-  pr_or_commit:
+  branch: feat/dave-m4-t002
+  pr_or_commit: a056478
   blocker:
   deliverable: Versioned transport contract for local<->remote control channel
   acceptance:
@@ -145,14 +145,14 @@ Keep this checklist synced with `status`:
 - id: T007
   title: Runtime isolation templates
   scope: Deliver deterministic container/sandbox templates for remote tool execution
-  status: todo
-  owner: unassigned
-  claimed_at: 
-  done_at:
+  status: done
+  owner: erin
+  claimed_at: 2026-03-01T22:11:54+08:00
+  done_at: 2026-03-01T22:14:10+08:00
   priority: P1
   depends_on: []
-  branch: 
-  pr_or_commit:
+  branch: feat/erin-m4-t007
+  pr_or_commit: b674ffd
   blocker:
   deliverable: Rebuildable isolation templates for codex/claude/gemini runtime
   acceptance:
@@ -211,3 +211,11 @@ Keep this checklist synced with `status`:
 - 2026-03-01T21:57:34+08:00 [ai-coordinator] Normalized in-flight task metadata for stable board rendering (claimed_at/branch cleanup).
 
 - 2026-03-01T22:09:01+08:00 [ai-coordinator] Reconciled stale doing tasks to todo (no live worker process): T001, T002, T007.
+
+- 2026-03-01T22:11:26+08:00 [aih-auto] Claimed T002 (m4-t002-dave) owner=dave branch=feat/dave-m4-t002.
+
+- 2026-03-01T22:11:26+08:00 [aih-auto] Claimed T001 (m4-t001-carol) owner=carol branch=feat/carol-m4-t001.
+
+- 2026-03-01T22:11:54+08:00 [aih-auto] Claimed T007 (m4-t007-erin) owner=erin branch=feat/erin-m4-t007.
+
+- 2026-03-01T22:14:10+08:00 [ai-coordinator] Marked done by worker commits: T001@604b595, T002@a056478, T007@b674ffd.

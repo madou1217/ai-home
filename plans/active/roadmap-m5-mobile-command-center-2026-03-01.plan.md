@@ -3,7 +3,7 @@
 - plan_id: roadmap-m5-mobile-command-center-2026-03-01
 - coordinator: ai-coordinator
 - created_at: 2026-03-01T21:34:22+08:00
-- updated_at: 2026-03-01T22:09:01+08:00
+- updated_at: 2026-03-01T22:14:55+08:00
 - status: active
 
 ## Global Rules
@@ -14,11 +14,11 @@
 ## TodoList
 
 ## Checklist
-- [ ] T001 Mobile session screen flow
-- [ ] T002 Mobile task screen flow
-- [ ] T003 Mobile daemon client
-- [ ] T004 Mobile reconnect manager
-- [ ] T005 Mobile push notification bridge
+- [x] T001 Mobile session screen flow
+- [x] T002 Mobile task screen flow
+- [x] T003 Mobile daemon client
+- [x] T004 Mobile reconnect manager
+- [x] T005 Mobile push notification bridge
 - [ ] T006 Mobile quick actions panel
 - [ ] T007 Mobile status priority card
 - [ ] T008 Mobile collapsible log panel
@@ -30,14 +30,14 @@ Keep this checklist synced with `status`:
 - id: T001
   title: Mobile session screen flow
   scope: Build session-centric mobile control screen for remote node status and entry actions
-  status: todo
-  owner: unassigned
-  claimed_at: 
-  done_at:
+  status: done
+  owner: frank
+  claimed_at: 2026-03-01T22:11:54+08:00
+  done_at: 2026-03-01T22:14:10+08:00
   priority: P0
   depends_on: []
-  branch: 
-  pr_or_commit:
+  branch: feat/frank-m5-t001
+  pr_or_commit: 72bf0c7
   blocker:
   deliverable: Session screen optimized for small-screen control and monitoring
   acceptance:
@@ -49,14 +49,14 @@ Keep this checklist synced with `status`:
 - id: T002
   title: Mobile task screen flow
   scope: Build task-centric mobile screen for start/track/result interactions
-  status: todo
-  owner: unassigned
-  claimed_at: 
-  done_at:
+  status: done
+  owner: grace
+  claimed_at: 2026-03-01T22:11:54+08:00
+  done_at: 2026-03-01T22:14:10+08:00
   priority: P0
   depends_on: []
-  branch: 
-  pr_or_commit:
+  branch: feat/grace-m5-t002
+  pr_or_commit: fcc6d52
   blocker:
   deliverable: Task screen supporting full task trigger-to-result path
   acceptance:
@@ -68,14 +68,14 @@ Keep this checklist synced with `status`:
 - id: T003
   title: Mobile daemon client
   scope: Implement mobile-side client API for remote daemon control calls
-  status: todo
-  owner: unassigned
-  claimed_at: 
-  done_at:
+  status: done
+  owner: heidi
+  claimed_at: 2026-03-01T22:11:26+08:00
+  done_at: 2026-03-01T22:14:10+08:00
   priority: P0
   depends_on: []
-  branch: 
-  pr_or_commit:
+  branch: feat/heidi-m5-t003
+  pr_or_commit: 2421fb6
   blocker:
   deliverable: Mobile daemon client service with stable request contract
   acceptance:
@@ -87,14 +87,14 @@ Keep this checklist synced with `status`:
 - id: T004
   title: Mobile reconnect manager
   scope: Implement reconnect strategy for intermittent network and daemon restarts
-  status: todo
-  owner: unassigned
-  claimed_at: 
-  done_at:
+  status: done
+  owner: ivan
+  claimed_at: 2026-03-01T22:11:25+08:00
+  done_at: 2026-03-01T22:14:10+08:00
   priority: P0
   depends_on: [T003]
-  branch: 
-  pr_or_commit:
+  branch: feat/ivan-m5-t004
+  pr_or_commit: f692532
   blocker:
   deliverable: Reconnect manager with explicit recoverability state transitions
   acceptance:
@@ -106,14 +106,14 @@ Keep this checklist synced with `status`:
 - id: T005
   title: Mobile push notification bridge
   scope: Implement notification service for completion/failure/quota alert events
-  status: todo
-  owner: unassigned
-  claimed_at: 
-  done_at:
+  status: done
+  owner: judy
+  claimed_at: 2026-03-01T22:11:54+08:00
+  done_at: 2026-03-01T22:14:55+08:00
   priority: P0
   depends_on: [T003]
-  branch: 
-  pr_or_commit:
+  branch: feat/judy-m5-t005
+  pr_or_commit: 1c445f3
   blocker:
   deliverable: Push notification channel integrated with task lifecycle events
   acceptance:
@@ -192,3 +192,17 @@ Keep this checklist synced with `status`:
 - 2026-03-01T21:57:34+08:00 [ai-coordinator] Normalized in-flight task metadata for stable board rendering (claimed_at/branch cleanup).
 
 - 2026-03-01T22:09:01+08:00 [ai-coordinator] Reconciled stale doing tasks to todo (no live worker process): T001, T002, T003, T004, T005.
+
+- 2026-03-01T22:11:25+08:00 [aih-auto] Claimed T004 (m5-t004-ivan) owner=ivan branch=feat/ivan-m5-t004.
+
+- 2026-03-01T22:11:26+08:00 [aih-auto] Claimed T003 (m5-t003-heidi) owner=heidi branch=feat/heidi-m5-t003.
+
+- 2026-03-01T22:11:54+08:00 [aih-auto] Claimed T001 (m5-t001-frank) owner=frank branch=feat/frank-m5-t001.
+
+- 2026-03-01T22:11:54+08:00 [aih-auto] Claimed T002 (m5-t002-grace) owner=grace branch=feat/grace-m5-t002.
+
+- 2026-03-01T22:11:54+08:00 [aih-auto] Claimed T005 (m5-t005-judy) owner=judy branch=feat/judy-m5-t005.
+
+- 2026-03-01T22:14:10+08:00 [ai-coordinator] Marked done by worker commits: T001@72bf0c7, T002@fcc6d52, T003@2421fb6, T004@f692532.
+
+- 2026-03-01T22:14:55+08:00 [ai-coordinator] Marked done by worker commits: T005@1c445f3.

@@ -3,7 +3,7 @@
 - plan_id: roadmap-m3-desktop-production-2026-03-01
 - coordinator: ai-coordinator
 - created_at: 2026-03-01T21:34:22+08:00
-- updated_at: 2026-03-01T22:09:01+08:00
+- updated_at: 2026-03-01T22:14:55+08:00
 - status: active
 
 ## Global Rules
@@ -14,13 +14,13 @@
 ## TodoList
 
 ## Checklist
-- [ ] T001 Tauri command registration
+- [x] T001 Tauri command registration
 - [ ] T002 Desktop accounts command module
 - [ ] T003 Desktop migration command module
 - [ ] T004 Desktop audit command module
 - [ ] T005 Desktop dashboard and launcher UI
 - [ ] T006 Desktop migration and audit UI
-- [ ] T007 Desktop packaging config
+- [x] T007 Desktop packaging config
 - [ ] T008 Desktop release workflow and checklist
 
 Keep this checklist synced with `status`:
@@ -30,14 +30,14 @@ Keep this checklist synced with `status`:
 - id: T001
   title: Tauri command registration
   scope: Wire Rust command endpoints and unified error mapping entrypoint
-  status: todo
-  owner: unassigned
-  claimed_at: 
-  done_at:
+  status: done
+  owner: alice
+  claimed_at: 2026-03-01T22:10:42+08:00
+  done_at: 2026-03-01T22:14:55+08:00
   priority: P0
   depends_on: []
-  branch: 
-  pr_or_commit:
+  branch: feat/alice-m3-t001
+  pr_or_commit: e5d0966
   blocker:
   deliverable: Main Tauri entry exposes stable command registration for GUI calls
   acceptance:
@@ -147,14 +147,14 @@ Keep this checklist synced with `status`:
 - id: T007
   title: Desktop packaging config
   scope: Harden Tauri packaging config for Win/Linux/macOS release artifacts
-  status: todo
-  owner: unassigned
-  claimed_at: 
-  done_at:
+  status: done
+  owner: bob
+  claimed_at: 2026-03-01T22:11:25+08:00
+  done_at: 2026-03-01T22:14:10+08:00
   priority: P1
   depends_on: []
-  branch: 
-  pr_or_commit:
+  branch: feat/bob-m3-t007
+  pr_or_commit: fbcebe7
   blocker:
   deliverable: Cross-platform packaging configuration tuned for production deliverables
   acceptance:
@@ -193,3 +193,13 @@ Keep this checklist synced with `status`:
 - 2026-03-01T21:57:34+08:00 [ai-coordinator] Normalized in-flight task metadata for stable board rendering (claimed_at/branch cleanup).
 
 - 2026-03-01T22:09:01+08:00 [ai-coordinator] Reconciled stale doing tasks to todo (no live worker process): T001, T007.
+
+- 2026-03-01T22:10:42+08:00 [aih-auto] Claimed T001 (m3-t001-alice) owner=alice branch=feat/alice-m3-t001.
+
+- 2026-03-01T22:11:25+08:00 [aih-auto] Claimed T007 (m3-t007-bob) owner=bob branch=feat/bob-m3-t007.
+
+- 2026-03-01T22:11:54+08:00 [aih-auto] Claimed T001 (m3-t001-alice) owner=alice branch=feat/alice-m3-t001.
+
+- 2026-03-01T22:14:10+08:00 [ai-coordinator] Marked done by worker commits: T007@fbcebe7.
+
+- 2026-03-01T22:14:55+08:00 [ai-coordinator] Marked done by worker commits: T001@e5d0966.
