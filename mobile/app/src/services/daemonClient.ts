@@ -1,4 +1,30 @@
 export type TaskStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'canceled';
+export type SessionStatus = 'idle' | 'active' | 'degraded' | 'offline' | 'unknown';
+
+export interface SessionSnapshot {
+  sessionId: string;
+  status: SessionStatus;
+  nodeId?: string;
+  activeTaskId?: string;
+  message?: string;
+  updatedAt: string;
+}
+
+export type DaemonClientErrorCode =
+  | 'daemon_request_aborted'
+  | 'daemon_request_timeout'
+  | 'daemon_http_error'
+  | 'daemon_network_error'
+  | 'daemon_validation_error'
+  | 'daemon_parse_error'
+  | 'daemon_request_failed';
+
+export interface DaemonClientError extends Error {
+  code: DaemonClientErrorCode;
+  status?: number;
+  retryable: boolean;
+  details?: unknown;
+}
 
 export interface StartTaskInput {
   command: string;
@@ -38,11 +64,13 @@ export interface WatchTaskController {
 
 export interface DaemonClient {
   ping(signal?: AbortSignal): Promise<boolean>;
+  getSessionStatus(sessionId: string, signal?: AbortSignal): Promise<SessionSnapshot>;
   startTask(input: StartTaskInput, signal?: AbortSignal): Promise<TaskSnapshot>;
   getTask(taskId: string, signal?: AbortSignal): Promise<TaskSnapshot>;
   cancelTask(taskId: string, signal?: AbortSignal): Promise<void>;
   waitForTaskCompletion(taskId: string, options?: WaitForTaskCompletionOptions): Promise<TaskSnapshot>;
   watchTask(taskId: string, options: WatchTaskOptions): WatchTaskController;
+  normalizeError(error: unknown): DaemonClientError;
 }
 
 export interface CreateDaemonClientOptions {
@@ -74,6 +102,14 @@ function isTaskTerminal(status: TaskStatus): boolean {
   return status === 'succeeded' || status === 'failed' || status === 'canceled';
 }
 
+function normalizeSessionStatus(value: unknown): SessionStatus {
+  const raw = String(value || '').toLowerCase();
+  if (raw === 'idle' || raw === 'active' || raw === 'degraded' || raw === 'offline') {
+    return raw;
+  }
+  return 'unknown';
+}
+
 function normalizeStatus(value: unknown): TaskStatus {
   const raw = String(value || '').toLowerCase();
   if (raw === 'queued' || raw === 'running' || raw === 'succeeded' || raw === 'failed' || raw === 'canceled') {
@@ -82,12 +118,54 @@ function normalizeStatus(value: unknown): TaskStatus {
   return 'running';
 }
 
+function createDaemonClientError(input: {
+  code: DaemonClientErrorCode;
+  message: string;
+  status?: number;
+  retryable: boolean;
+  details?: unknown;
+}): DaemonClientError {
+  const err = new Error(input.message) as DaemonClientError;
+  err.name = 'DaemonClientError';
+  err.code = input.code;
+  err.status = input.status;
+  err.retryable = input.retryable;
+  err.details = input.details;
+  return err;
+}
+
+function normalizeSessionSnapshot(payload: unknown): SessionSnapshot {
+  const source = (payload as { session?: unknown; data?: unknown }) || {};
+  const session = (source.session || source.data || payload) as Record<string, unknown>;
+  const sessionId = String(session?.sessionId || session?.id || '');
+  if (!sessionId) {
+    throw createDaemonClientError({
+      code: 'daemon_parse_error',
+      message: 'daemon_invalid_session_payload',
+      retryable: false
+    });
+  }
+
+  return {
+    sessionId,
+    status: normalizeSessionStatus(session?.status),
+    nodeId: session?.nodeId ? String(session.nodeId) : undefined,
+    activeTaskId: session?.activeTaskId ? String(session.activeTaskId) : undefined,
+    message: session?.message ? String(session.message) : undefined,
+    updatedAt: session?.updatedAt ? String(session.updatedAt) : nowIso()
+  };
+}
+
 function normalizeTaskSnapshot(payload: unknown): TaskSnapshot {
   const source = (payload as { task?: unknown; data?: unknown }) || {};
   const task = (source.task || source.data || payload) as Record<string, unknown>;
   const taskId = String(task?.taskId || task?.id || '');
   if (!taskId) {
-    throw new Error('daemon_invalid_task_payload');
+    throw createDaemonClientError({
+      code: 'daemon_parse_error',
+      message: 'daemon_invalid_task_payload',
+      retryable: false
+    });
   }
   return {
     taskId,
@@ -143,6 +221,54 @@ function isAbortError(error: unknown): boolean {
   return false;
 }
 
+function parseErrorDetails(raw: string): unknown {
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return trimmed;
+  }
+}
+
+function normalizeDaemonError(error: unknown): DaemonClientError {
+  if (error && typeof error === 'object' && (error as { name?: string }).name === 'DaemonClientError') {
+    return error as DaemonClientError;
+  }
+
+  if (isAbortError(error)) {
+    return createDaemonClientError({
+      code: 'daemon_request_aborted',
+      message: 'daemon_request_aborted',
+      retryable: false
+    });
+  }
+
+  if (error instanceof TypeError) {
+    return createDaemonClientError({
+      code: 'daemon_network_error',
+      message: error.message || 'daemon_network_error',
+      retryable: true
+    });
+  }
+
+  if (error instanceof Error) {
+    return createDaemonClientError({
+      code: 'daemon_request_failed',
+      message: error.message || 'daemon_request_failed',
+      retryable: false,
+      details: { name: error.name }
+    });
+  }
+
+  return createDaemonClientError({
+    code: 'daemon_request_failed',
+    message: 'daemon_request_failed',
+    retryable: false,
+    details: error
+  });
+}
+
 export function createDaemonClient(options: CreateDaemonClientOptions): DaemonClient {
   const fetchImpl = options.fetchImpl || fetch;
   const timeoutMs = options.timeoutMs || DEFAULT_TIMEOUT_MS;
@@ -194,12 +320,18 @@ export function createDaemonClient(options: CreateDaemonClientOptions): DaemonCl
         const canRetry = RETRYABLE_STATUS.has(response.status);
         if (!response.ok) {
           const errBody = await response.text().catch(() => '');
-          const message = `daemon_http_${response.status}${errBody ? `:${errBody}` : ''}`;
+          const details = parseErrorDetails(errBody);
           if (attempt < retryCount && canRetry) {
             await sleep(retryDelayMs * (attempt + 1));
             continue;
           }
-          throw new Error(message);
+          throw createDaemonClientError({
+            code: 'daemon_http_error',
+            message: `daemon_http_${response.status}`,
+            status: response.status,
+            retryable: canRetry,
+            details
+          });
         }
 
         const contentType = response.headers.get('content-type') || '';
@@ -212,13 +344,24 @@ export function createDaemonClient(options: CreateDaemonClientOptions): DaemonCl
         clearTimeout(internalTimeout);
         mergedSignal.removeEventListener('abort', relayAbort);
         cleanup();
-        lastError = error;
-        if (signal?.aborted || isAbortError(error)) throw error;
+        if (signal?.aborted) {
+          throw normalizeDaemonError(error);
+        }
+        if (isAbortError(error)) {
+          const timeoutHappened = !mergedSignal.aborted && !signal?.aborted;
+          lastError = createDaemonClientError({
+            code: timeoutHappened ? 'daemon_request_timeout' : 'daemon_request_aborted',
+            message: timeoutHappened ? 'daemon_request_timeout' : 'daemon_request_aborted',
+            retryable: timeoutHappened
+          });
+        } else {
+          lastError = normalizeDaemonError(error);
+        }
         if (attempt >= retryCount) break;
         await sleep(retryDelayMs * (attempt + 1));
       }
     }
-    throw lastError instanceof Error ? lastError : new Error('daemon_request_failed');
+    throw normalizeDaemonError(lastError);
   }
 
   async function ping(signal?: AbortSignal): Promise<boolean> {
@@ -230,9 +373,29 @@ export function createDaemonClient(options: CreateDaemonClientOptions): DaemonCl
     }
   }
 
+  async function getSessionStatus(sessionId: string, signal?: AbortSignal): Promise<SessionSnapshot> {
+    if (!sessionId || !String(sessionId).trim()) {
+      throw createDaemonClientError({
+        code: 'daemon_validation_error',
+        message: 'daemon_session_id_required',
+        retryable: false
+      });
+    }
+    const payload = await requestJson<unknown>(
+      `/v1/sessions/${encodeURIComponent(String(sessionId).trim())}`,
+      { method: 'GET' },
+      signal
+    );
+    return normalizeSessionSnapshot(payload);
+  }
+
   async function startTask(input: StartTaskInput, signal?: AbortSignal): Promise<TaskSnapshot> {
     if (!input.command || !String(input.command).trim()) {
-      throw new Error('daemon_task_command_required');
+      throw createDaemonClientError({
+        code: 'daemon_validation_error',
+        message: 'daemon_task_command_required',
+        retryable: false
+      });
     }
     const body = JSON.stringify({
       command: String(input.command).trim(),
@@ -251,13 +414,25 @@ export function createDaemonClient(options: CreateDaemonClientOptions): DaemonCl
   }
 
   async function getTask(taskId: string, signal?: AbortSignal): Promise<TaskSnapshot> {
-    if (!taskId) throw new Error('daemon_task_id_required');
+    if (!taskId) {
+      throw createDaemonClientError({
+        code: 'daemon_validation_error',
+        message: 'daemon_task_id_required',
+        retryable: false
+      });
+    }
     const payload = await requestJson<unknown>(`/v1/tasks/${encodeURIComponent(taskId)}`, { method: 'GET' }, signal);
     return normalizeTaskSnapshot(payload);
   }
 
   async function cancelTask(taskId: string, signal?: AbortSignal): Promise<void> {
-    if (!taskId) throw new Error('daemon_task_id_required');
+    if (!taskId) {
+      throw createDaemonClientError({
+        code: 'daemon_validation_error',
+        message: 'daemon_task_id_required',
+        retryable: false
+      });
+    }
     await requestJson<unknown>(
       `/v1/tasks/${encodeURIComponent(taskId)}/cancel`,
       {
@@ -277,23 +452,43 @@ export function createDaemonClient(options: CreateDaemonClientOptions): DaemonCl
     const startedAt = Date.now();
 
     while (true) {
-      if (optionsArg.signal?.aborted) throw new Error('daemon_wait_aborted');
+      if (optionsArg.signal?.aborted) {
+        throw createDaemonClientError({
+          code: 'daemon_request_aborted',
+          message: 'daemon_wait_aborted',
+          retryable: false
+        });
+      }
       const snapshot = await getTask(taskId, optionsArg.signal);
       if (optionsArg.onProgress) {
         optionsArg.onProgress(snapshot);
       }
       if (isTaskTerminal(snapshot.status)) return snapshot;
       if (Date.now() - startedAt > timeout) {
-        throw new Error('daemon_wait_timeout');
+        throw createDaemonClientError({
+          code: 'daemon_request_timeout',
+          message: 'daemon_wait_timeout',
+          retryable: true
+        });
       }
       await sleep(pollIntervalMs);
     }
   }
 
   function watchTask(taskId: string, optionsArg: WatchTaskOptions): WatchTaskController {
-    if (!taskId) throw new Error('daemon_task_id_required');
+    if (!taskId) {
+      throw createDaemonClientError({
+        code: 'daemon_validation_error',
+        message: 'daemon_task_id_required',
+        retryable: false
+      });
+    }
     if (!optionsArg || typeof optionsArg.onUpdate !== 'function') {
-      throw new Error('daemon_watch_on_update_required');
+      throw createDaemonClientError({
+        code: 'daemon_validation_error',
+        message: 'daemon_watch_on_update_required',
+        retryable: false
+      });
     }
 
     const pollIntervalMs = normalizePollInterval(optionsArg.pollIntervalMs);
@@ -328,7 +523,7 @@ export function createDaemonClient(options: CreateDaemonClientOptions): DaemonCl
       } catch (error) {
         consecutiveErrors += 1;
         if (optionsArg.onError) {
-          optionsArg.onError(error);
+          optionsArg.onError(normalizeDaemonError(error));
         }
         if (consecutiveErrors >= maxConsecutiveErrors) {
           stop();
@@ -348,10 +543,12 @@ export function createDaemonClient(options: CreateDaemonClientOptions): DaemonCl
 
   return {
     ping,
+    getSessionStatus,
     startTask,
     getTask,
     cancelTask,
     waitForTaskCompletion,
-    watchTask
+    watchTask,
+    normalizeError: normalizeDaemonError
   };
 }

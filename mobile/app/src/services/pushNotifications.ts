@@ -9,6 +9,10 @@ export interface PushMessage {
   data?: Record<string, unknown>;
 }
 
+export type NotificationDestination =
+  | { screen: 'TaskScreen'; params: { taskId: string; sessionId?: string } }
+  | { screen: 'SessionScreen'; params?: Record<string, unknown> };
+
 export interface PushAdapter {
   requestPermission(): Promise<PushPermission>;
   getDeviceToken(): Promise<string | null>;
@@ -48,6 +52,39 @@ export class PushNotifications {
     this.adapter = adapter || new ConsolePushAdapter();
   }
 
+  private buildTaskDestination(task: TaskSnapshot): NotificationDestination {
+    return {
+      screen: 'TaskScreen',
+      params: {
+        taskId: task.taskId,
+        ...(task.sessionId ? { sessionId: task.sessionId } : {})
+      }
+    };
+  }
+
+  private taskPayload(task: TaskSnapshot, event: 'completion' | 'failure' | 'quota'): Record<string, unknown> {
+    return {
+      event,
+      taskId: task.taskId,
+      sessionId: task.sessionId,
+      status: task.status,
+      destination: this.buildTaskDestination(task),
+      action: {
+        type: 'navigate',
+        label: 'View task',
+        destination: this.buildTaskDestination(task)
+      }
+    };
+  }
+
+  private hasQuotaSignal(task: TaskSnapshot): boolean {
+    const text = [task.error, task.message, typeof task.result === 'string' ? task.result : '']
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+    return /quota|rate[\s-_]?limit|too many requests|429/.test(text);
+  }
+
   getState(): PushState {
     return { ...this.state };
   }
@@ -79,6 +116,11 @@ export class PushNotifications {
   }
 
   async notifyTaskUpdated(task: TaskSnapshot): Promise<void> {
+    if (this.hasQuotaSignal(task)) {
+      await this.notifyQuotaAlert(task);
+      return;
+    }
+
     const progressText = Number.isFinite(task.progress) ? ` (${Math.round(Number(task.progress) * 100)}%)` : '';
     await this.send(
       'Task update',
@@ -88,12 +130,29 @@ export class PushNotifications {
   }
 
   async notifyTaskCompleted(task: TaskSnapshot): Promise<void> {
+    if (this.hasQuotaSignal(task)) {
+      await this.notifyQuotaAlert(task);
+      return;
+    }
+
     const success = task.status === 'succeeded';
-    const title = success ? 'Task completed' : 'Task needs attention';
+    const title = success ? 'Task completed' : 'Task failed';
     const body = success
       ? `Task ${task.taskId} completed successfully.`
-      : `Task ${task.taskId} finished with status: ${task.status}.`;
-    await this.send(title, body, { taskId: task.taskId, status: task.status, error: task.error });
+      : `Task ${task.taskId} ended with status ${task.status}. Open task details for recovery steps.`;
+    await this.send(
+      title,
+      body,
+      this.taskPayload(task, success ? 'completion' : 'failure')
+    );
+  }
+
+  async notifyQuotaAlert(task: TaskSnapshot): Promise<void> {
+    await this.send(
+      'Quota limit reached',
+      `Task ${task.taskId} hit a quota/rate limit. Open task details to retry or switch account.`,
+      this.taskPayload(task, 'quota')
+    );
   }
 
   async notifyReconnectScheduled(snapshot: ReconnectSnapshot): Promise<void> {
@@ -102,7 +161,17 @@ export class PushNotifications {
     await this.send(
       'Reconnecting',
       `Connection lost. Retry attempt ${snapshot.attempt} at ${retryAt}.`,
-      { attempt: snapshot.attempt, nextRetryAt: snapshot.nextRetryAt, reason: snapshot.reason }
+      {
+        attempt: snapshot.attempt,
+        nextRetryAt: snapshot.nextRetryAt,
+        reason: snapshot.reason,
+        destination: { screen: 'SessionScreen' },
+        action: {
+          type: 'navigate',
+          label: 'Open session',
+          destination: { screen: 'SessionScreen' }
+        }
+      }
     );
   }
 
@@ -114,8 +183,16 @@ export class PushNotifications {
     await this.send(
       'Connection offline',
       `Reconnect attempts exhausted after ${snapshot.attempt} tries.`,
-      { attempt: snapshot.attempt, reason: snapshot.reason }
+      {
+        attempt: snapshot.attempt,
+        reason: snapshot.reason,
+        destination: { screen: 'SessionScreen' },
+        action: {
+          type: 'navigate',
+          label: 'Open session',
+          destination: { screen: 'SessionScreen' }
+        }
+      }
     );
   }
 }
-
