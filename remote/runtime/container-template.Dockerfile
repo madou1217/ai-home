@@ -9,6 +9,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \
     NODE_ENV=production \
+    AIH_RUNTIME_PROFILES=codex,claude,gemini \
     AIH_RUNTIME_PROFILE=${AIH_DEFAULT_PROFILE}
 
 RUN apt-get update \
