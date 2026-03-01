@@ -3,7 +3,7 @@
 - plan_id: roadmap-m4-remote-ga-2026-03-01
 - coordinator: ai-coordinator
 - created_at: 2026-03-01T23:48:40+08:00
-- updated_at: 2026-03-01T15:51:41Z
+- updated_at: 2026-03-01T23:52:04+08:00
 - status: active
 
 ## Global Rules
@@ -183,7 +183,7 @@ Keep this checklist synced with `status`:
 - id: T009
   title: Remote integration test expansion
   scope: Expand remote integration tests for daemon connector workspace patch flows
-  status: doing
+  status: blocked
   owner: rem09
   claimed_at: 2026-03-01T23:48:57+08:00
   done_at: 
@@ -191,7 +191,7 @@ Keep this checklist synced with `status`:
   depends_on: [T002, T003, T004, T005, T006]
   branch: feat/rem09-m4-t009
   pr_or_commit:
-  blocker:
+  blocker: plan_guard_blocks_code_commit_until_other_active_doing_tasks_close; resumed_session=019caa16-b2f8-7232-be5a-54a310db670f
   deliverable: Integration test suite covering critical remote workflows
   acceptance:
   - tests cover connect execute patch reconnect end-to-end path
@@ -241,3 +241,5 @@ Keep this checklist synced with `status`:
 - 2026-03-01T23:51:37+08:00 [rem06] Completed T006 in remote/runtime/environment-manager.js; hardened deterministic bind/rebind/recover diagnostics and added runtime health-check contract with machine-readable status codes.
 
 - 2026-03-01T15:51:41Z [rem01] Completed T001 in remote/daemon/src/main.rs; bound remote sessions to lifecycle generation, invalidated sessions on stop/restart, and added deterministic daemon-stopped reason codes for blocked operations.
+
+- 2026-03-01T23:52:04+08:00 [rem09] Blocked T009 after resume session 019caa16-b2f8-7232-be5a-54a310db670f: expanded test/remote.project-session.test.js and verified pass (6/6), but plan-guard rejected code commit because other plan tasks remained doing at commit time; kept checklist unchecked and left done_at/pr_or_commit empty.
