@@ -1587,7 +1587,8 @@ function parseProxyServeArgs(rawArgs) {
     logRequests: String(process.env.AIH_PROXY_LOG_REQUESTS || '1').trim() !== '0',
     codexMaxConcurrency: Number(process.env.AIH_PROXY_CODEX_MAX_CONCURRENCY || 2),
     geminiMaxConcurrency: Number(process.env.AIH_PROXY_GEMINI_MAX_CONCURRENCY || 1),
-    queueLimit: Number(process.env.AIH_PROXY_QUEUE_LIMIT || 200)
+    queueLimit: Number(process.env.AIH_PROXY_QUEUE_LIMIT || 200),
+    localMaxAttempts: Number(process.env.AIH_PROXY_LOCAL_MAX_ATTEMPTS || 2)
   };
   const tokens = Array.isArray(rawArgs) ? rawArgs.slice() : [];
   for (let i = 0; i < tokens.length; i += 1) {
@@ -1716,6 +1717,13 @@ function parseProxyServeArgs(rawArgs) {
       i += 1;
       continue;
     }
+    if (arg === '--local-max-attempts') {
+      const val = String(tokens[i + 1] || '').trim();
+      if (!/^\d+$/.test(val)) throw new Error('Invalid --local-max-attempts value');
+      out.localMaxAttempts = Number(val);
+      i += 1;
+      continue;
+    }
     throw new Error(`Unknown option: ${arg}`);
   }
   out.upstream = out.upstream.replace(/\/+$/, '');
@@ -1729,6 +1737,7 @@ function parseProxyServeArgs(rawArgs) {
   out.codexMaxConcurrency = Math.max(1, Math.min(32, Number(out.codexMaxConcurrency) || 2));
   out.geminiMaxConcurrency = Math.max(1, Math.min(16, Number(out.geminiMaxConcurrency) || 1));
   out.queueLimit = Math.max(1, Math.min(5000, Number(out.queueLimit) || 200));
+  out.localMaxAttempts = Math.max(1, Math.min(8, Number(out.localMaxAttempts) || 2));
   return out;
 }
 
@@ -2343,6 +2352,17 @@ function appendProxyRequestLog(entry) {
   } catch (e) {}
 }
 
+function isRetriableLocalError(message) {
+  const m = String(message || '').toLowerCase();
+  if (!m) return false;
+  if (m.includes('queue_full')) return false;
+  if (m.includes('unsupported')) return false;
+  if (m.includes('timeout')) return true;
+  if (m.includes('failed')) return true;
+  if (m.includes('exit_')) return true;
+  return false;
+}
+
 function createProviderExecutor(name, maxConcurrency, queueLimit) {
   const queue = [];
   let running = 0;
@@ -2786,32 +2806,53 @@ async function startLocalProxyServer(options) {
         const provider = resolveRequestProvider(options, requestJson || {});
         const pool = provider === 'gemini' ? state.accounts.gemini : state.accounts.codex;
         const cursorKey = provider === 'gemini' ? 'gemini' : 'codex';
-        const account = chooseProxyAccount(pool, state.cursors, cursorKey);
-        if (!account) {
-          state.metrics.totalFailures += 1;
-          state.metrics.providerFailures[provider] = Number(state.metrics.providerFailures[provider] || 0) + 1;
-          pushMetricError(state.metrics, routeKey, provider, 'no_available_account');
-          return writeJson(res, 503, { ok: false, error: 'no_available_account' });
-        }
+        const maxLocalAttempts = Math.min(options.localMaxAttempts, Math.max(1, pool.length));
+        const attempted = new Set();
         state.metrics.providerCounts[provider] = Number(state.metrics.providerCounts[provider] || 0) + 1;
         const prompt = buildPromptFromChatRequest(requestJson || {});
-        try {
-          const exec = provider === 'gemini' ? state.executors.gemini : state.executors.codex;
-          let text = '';
-          await exec.schedule(async () => {
-            if (provider === 'gemini') {
-              const out = await runGeminiLocalCompletion(account, prompt, options.upstreamTimeoutMs);
-              text = out.text;
-              (out.discoveredModels || []).forEach((m) => addModelToRegistry(state.modelRegistry, 'gemini', m));
+        let lastDetail = '';
+        for (let attempt = 0; attempt < maxLocalAttempts; attempt += 1) {
+          const account = chooseProxyAccount(pool, state.cursors, cursorKey);
+          if (!account || attempted.has(account.id)) {
+            continue;
+          }
+          attempted.add(account.id);
+          try {
+            const exec = provider === 'gemini' ? state.executors.gemini : state.executors.codex;
+            let text = '';
+            await exec.schedule(async () => {
+              if (provider === 'gemini') {
+                const out = await runGeminiLocalCompletion(account, prompt, options.upstreamTimeoutMs);
+                text = out.text;
+                (out.discoveredModels || []).forEach((m) => addModelToRegistry(state.modelRegistry, 'gemini', m));
+                return;
+              }
+              text = await runCodexLocalCompletion(account, prompt, options.upstreamTimeoutMs);
+              addModelToRegistry(state.modelRegistry, 'codex', requestJson && requestJson.model);
+            });
+            const isStream = !!(requestJson && requestJson.stream);
+            const model = String((requestJson && requestJson.model) || 'gpt-4o-mini');
+            if (isStream) {
+              writeSseChatCompletion(res, model, text);
+              state.metrics.totalSuccess += 1;
+              state.metrics.providerSuccess[provider] = Number(state.metrics.providerSuccess[provider] || 0) + 1;
+              markProxyAccountSuccess(account);
+              if (options.logRequests) {
+                appendProxyRequestLog({
+                  at: new Date().toISOString(),
+                  route: routeKey,
+                  provider,
+                  accountId: account.id,
+                  status: 200,
+                  stream: true,
+                  durationMs: Date.now() - requestStartedAt
+                });
+              }
               return;
             }
-            text = await runCodexLocalCompletion(account, prompt, options.upstreamTimeoutMs);
-            addModelToRegistry(state.modelRegistry, 'codex', requestJson && requestJson.model);
-          });
-          const isStream = !!(requestJson && requestJson.stream);
-          const model = String((requestJson && requestJson.model) || 'gpt-4o-mini');
-          if (isStream) {
-            writeSseChatCompletion(res, model, text);
+            res.statusCode = 200;
+            res.setHeader('content-type', 'application/json; charset=utf-8');
+            res.end(JSON.stringify(buildChatCompletionPayload(model, text)));
             state.metrics.totalSuccess += 1;
             state.metrics.providerSuccess[provider] = Number(state.metrics.providerSuccess[provider] || 0) + 1;
             markProxyAccountSuccess(account);
@@ -2822,136 +2863,119 @@ async function startLocalProxyServer(options) {
                 provider,
                 accountId: account.id,
                 status: 200,
-                stream: true,
+                stream: false,
                 durationMs: Date.now() - requestStartedAt
               });
             }
             return;
+          } catch (e) {
+            const detail = String((e && e.message) || e);
+            lastDetail = detail;
+            if (detail.includes('timeout')) state.metrics.totalTimeouts += 1;
+            markProxyAccountFailure(account, detail, cooldownMs, options.failureThreshold);
+            if (!isRetriableLocalError(detail)) break;
           }
-          res.statusCode = 200;
-          res.setHeader('content-type', 'application/json; charset=utf-8');
-          res.end(JSON.stringify(buildChatCompletionPayload(model, text)));
-          state.metrics.totalSuccess += 1;
-          state.metrics.providerSuccess[provider] = Number(state.metrics.providerSuccess[provider] || 0) + 1;
-          markProxyAccountSuccess(account);
-          if (options.logRequests) {
-            appendProxyRequestLog({
-              at: new Date().toISOString(),
-              route: routeKey,
-              provider,
-              accountId: account.id,
-              status: 200,
-              stream: false,
-              durationMs: Date.now() - requestStartedAt
-            });
-          }
-          return;
-        } catch (e) {
-          const detail = String((e && e.message) || e);
-          if (detail.includes('_queue_full')) {
-            state.metrics.totalFailures += 1;
-            state.metrics.providerFailures[provider] = Number(state.metrics.providerFailures[provider] || 0) + 1;
-            pushMetricError(state.metrics, routeKey, provider, detail);
-            return writeJson(res, 429, { ok: false, error: 'queue_full', detail });
-          }
-          if (detail.includes('timeout')) state.metrics.totalTimeouts += 1;
-          state.metrics.totalFailures += 1;
-          state.metrics.providerFailures[provider] = Number(state.metrics.providerFailures[provider] || 0) + 1;
-          markProxyAccountFailure(account, detail, cooldownMs, options.failureThreshold);
-          pushMetricError(state.metrics, routeKey, provider, detail);
-          if (options.logRequests) {
-            appendProxyRequestLog({
-              at: new Date().toISOString(),
-              route: routeKey,
-              provider,
-              accountId: account.id,
-              status: 502,
-              error: detail,
-              durationMs: Date.now() - requestStartedAt
-            });
-          }
-          return writeJson(res, 502, { ok: false, error: 'local_backend_failed', detail });
         }
+        const detail = lastDetail || 'no_available_account';
+        state.metrics.totalFailures += 1;
+        state.metrics.providerFailures[provider] = Number(state.metrics.providerFailures[provider] || 0) + 1;
+        pushMetricError(state.metrics, routeKey, provider, detail);
+        if (options.logRequests) {
+          appendProxyRequestLog({
+            at: new Date().toISOString(),
+            route: routeKey,
+            provider,
+            status: detail.includes('_queue_full') ? 429 : 502,
+            error: detail,
+            durationMs: Date.now() - requestStartedAt
+          });
+        }
+        if (detail.includes('_queue_full')) {
+          return writeJson(res, 429, { ok: false, error: 'queue_full', detail });
+        }
+        return writeJson(res, 502, { ok: false, error: 'local_backend_failed', detail });
       }
       if (method === 'POST' && pathname === '/v1/responses') {
         const provider = resolveRequestProvider(options, requestJson || {});
         const pool = provider === 'gemini' ? state.accounts.gemini : state.accounts.codex;
         const cursorKey = provider === 'gemini' ? 'gemini' : 'codex';
-        const account = chooseProxyAccount(pool, state.cursors, cursorKey);
-        if (!account) {
-          state.metrics.totalFailures += 1;
-          state.metrics.providerFailures[provider] = Number(state.metrics.providerFailures[provider] || 0) + 1;
-          pushMetricError(state.metrics, routeKey, provider, 'no_available_account');
-          return writeJson(res, 503, { ok: false, error: 'no_available_account' });
-        }
+        const maxLocalAttempts = Math.min(options.localMaxAttempts, Math.max(1, pool.length));
+        const attempted = new Set();
         state.metrics.providerCounts[provider] = Number(state.metrics.providerCounts[provider] || 0) + 1;
         const prompt = buildPromptFromResponsesRequest(requestJson || {});
-        try {
-          const exec = provider === 'gemini' ? state.executors.gemini : state.executors.codex;
-          let text = '';
-          await exec.schedule(async () => {
-            if (provider === 'gemini') {
-              const out = await runGeminiLocalCompletion(account, prompt, options.upstreamTimeoutMs);
-              text = out.text;
-              (out.discoveredModels || []).forEach((m) => addModelToRegistry(state.modelRegistry, 'gemini', m));
-              return;
+        let lastDetail = '';
+        for (let attempt = 0; attempt < maxLocalAttempts; attempt += 1) {
+          const account = chooseProxyAccount(pool, state.cursors, cursorKey);
+          if (!account || attempted.has(account.id)) {
+            continue;
+          }
+          attempted.add(account.id);
+          try {
+            const exec = provider === 'gemini' ? state.executors.gemini : state.executors.codex;
+            let text = '';
+            await exec.schedule(async () => {
+              if (provider === 'gemini') {
+                const out = await runGeminiLocalCompletion(account, prompt, options.upstreamTimeoutMs);
+                text = out.text;
+                (out.discoveredModels || []).forEach((m) => addModelToRegistry(state.modelRegistry, 'gemini', m));
+                return;
+              }
+              text = await runCodexLocalCompletion(account, prompt, options.upstreamTimeoutMs);
+              addModelToRegistry(state.modelRegistry, 'codex', requestJson && requestJson.model);
+            });
+            const model = String((requestJson && requestJson.model) || 'gpt-4o-mini');
+            const payload = {
+              id: `resp_${Date.now()}`,
+              object: 'response',
+              created_at: Math.floor(Date.now() / 1000),
+              status: 'completed',
+              model,
+              output: [{
+                type: 'message',
+                role: 'assistant',
+                content: [{ type: 'output_text', text }]
+              }]
+            };
+            state.metrics.totalSuccess += 1;
+            state.metrics.providerSuccess[provider] = Number(state.metrics.providerSuccess[provider] || 0) + 1;
+            markProxyAccountSuccess(account);
+            if (options.logRequests) {
+              appendProxyRequestLog({
+                at: new Date().toISOString(),
+                route: routeKey,
+                provider,
+                accountId: account.id,
+                status: 200,
+                durationMs: Date.now() - requestStartedAt
+              });
             }
-            text = await runCodexLocalCompletion(account, prompt, options.upstreamTimeoutMs);
-            addModelToRegistry(state.modelRegistry, 'codex', requestJson && requestJson.model);
-          });
-          const model = String((requestJson && requestJson.model) || 'gpt-4o-mini');
-          const payload = {
-            id: `resp_${Date.now()}`,
-            object: 'response',
-            created_at: Math.floor(Date.now() / 1000),
-            status: 'completed',
-            model,
-            output: [{
-              type: 'message',
-              role: 'assistant',
-              content: [{ type: 'output_text', text }]
-            }]
-          };
-          state.metrics.totalSuccess += 1;
-          state.metrics.providerSuccess[provider] = Number(state.metrics.providerSuccess[provider] || 0) + 1;
-          markProxyAccountSuccess(account);
-          if (options.logRequests) {
-            appendProxyRequestLog({
-              at: new Date().toISOString(),
-              route: routeKey,
-              provider,
-              accountId: account.id,
-              status: 200,
-              durationMs: Date.now() - requestStartedAt
-            });
+            return writeJson(res, 200, payload);
+          } catch (e) {
+            const detail = String((e && e.message) || e);
+            lastDetail = detail;
+            if (detail.includes('timeout')) state.metrics.totalTimeouts += 1;
+            markProxyAccountFailure(account, detail, cooldownMs, options.failureThreshold);
+            if (!isRetriableLocalError(detail)) break;
           }
-          return writeJson(res, 200, payload);
-        } catch (e) {
-          const detail = String((e && e.message) || e);
-          if (detail.includes('_queue_full')) {
-            state.metrics.totalFailures += 1;
-            state.metrics.providerFailures[provider] = Number(state.metrics.providerFailures[provider] || 0) + 1;
-            pushMetricError(state.metrics, routeKey, provider, detail);
-            return writeJson(res, 429, { ok: false, error: 'queue_full', detail });
-          }
-          if (detail.includes('timeout')) state.metrics.totalTimeouts += 1;
-          state.metrics.totalFailures += 1;
-          state.metrics.providerFailures[provider] = Number(state.metrics.providerFailures[provider] || 0) + 1;
-          markProxyAccountFailure(account, detail, cooldownMs, options.failureThreshold);
-          pushMetricError(state.metrics, routeKey, provider, detail);
-          if (options.logRequests) {
-            appendProxyRequestLog({
-              at: new Date().toISOString(),
-              route: routeKey,
-              provider,
-              accountId: account.id,
-              status: 502,
-              error: detail,
-              durationMs: Date.now() - requestStartedAt
-            });
-          }
-          return writeJson(res, 502, { ok: false, error: 'local_backend_failed', detail });
         }
+        const detail = lastDetail || 'no_available_account';
+        state.metrics.totalFailures += 1;
+        state.metrics.providerFailures[provider] = Number(state.metrics.providerFailures[provider] || 0) + 1;
+        pushMetricError(state.metrics, routeKey, provider, detail);
+        if (options.logRequests) {
+          appendProxyRequestLog({
+            at: new Date().toISOString(),
+            route: routeKey,
+            provider,
+            status: detail.includes('_queue_full') ? 429 : 502,
+            error: detail,
+            durationMs: Date.now() - requestStartedAt
+          });
+        }
+        if (detail.includes('_queue_full')) {
+          return writeJson(res, 429, { ok: false, error: 'queue_full', detail });
+        }
+        return writeJson(res, 502, { ok: false, error: 'local_backend_failed', detail });
       }
       state.metrics.totalFailures += 1;
       pushMetricError(state.metrics, routeKey, 'n/a', 'unsupported_in_codex_local_backend');
