@@ -3,7 +3,7 @@
 - plan_id: roadmap-m5-mobile-command-center-2026-03-01
 - coordinator: ai-coordinator
 - created_at: 2026-03-01T21:34:22+08:00
-- updated_at: 2026-03-01T22:40:10+08:00
+- updated_at: 2026-03-01T22:40:27+08:00
 - status: active
 
 ## Global Rules
@@ -132,7 +132,7 @@ Keep this checklist synced with `status`:
   priority: P1
   depends_on: [T001, T002]
   branch: feat/heidi-m5-t006
-  pr_or_commit: pending
+  pr_or_commit: dc4cd36
   blocker:
   deliverable: High-frequency quick actions optimized for mobile ergonomics
   acceptance:
@@ -221,4 +221,4 @@ Keep this checklist synced with `status`:
 - 2026-03-01T22:38:23+08:00 [erin] Completed T008; added collapsible log panel with default-collapsed summary and expandable timestamp/level/message scan view. pr_or_commit=d1252a2.
 
 - 2026-03-01T22:37:29+08:00 [dave] Completed T007; set status=done, checklist checked, done_at/pr_or_commit updated (a2876f7).
-- 2026-03-01T22:40:10+08:00 [heidi] Completed T006; delivered one-handed Retry/Stop/Switch Account panel with immediate status refresh feedback. pr_or_commit=pending.
+- 2026-03-01T22:40:10+08:00 [heidi] Completed T006; delivered one-handed Retry/Stop/Switch Account panel with immediate status refresh feedback. pr_or_commit=dc4cd36.
