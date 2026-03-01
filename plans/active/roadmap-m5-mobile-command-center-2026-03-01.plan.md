@@ -3,7 +3,7 @@
 - plan_id: roadmap-m5-mobile-command-center-2026-03-01
 - coordinator: ai-coordinator
 - created_at: 2026-03-01T21:34:22+08:00
-- updated_at: 2026-03-01T22:37:29+08:00
+- updated_at: 2026-03-01T22:40:10+08:00
 - status: active
 
 ## Global Rules
@@ -19,7 +19,7 @@
 - [x] T003 Mobile daemon client
 - [x] T004 Mobile reconnect manager
 - [x] T005 Mobile push notification bridge
-- [ ] T006 Mobile quick actions panel
+- [x] T006 Mobile quick actions panel
 - [x] T007 Mobile status priority card
 - [x] T008 Mobile collapsible log panel
 
@@ -125,14 +125,14 @@ Keep this checklist synced with `status`:
 - id: T006
   title: Mobile quick actions panel
   scope: Build one-handed quick action panel for retry/stop/switch-account operations
-  status: doing
+  status: done
   owner: heidi
   claimed_at: 2026-03-01T22:16:27+08:00
-  done_at:
+  done_at: 2026-03-01T22:40:10+08:00
   priority: P1
   depends_on: [T001, T002]
   branch: feat/heidi-m5-t006
-  pr_or_commit:
+  pr_or_commit: pending
   blocker:
   deliverable: High-frequency quick actions optimized for mobile ergonomics
   acceptance:
@@ -221,3 +221,4 @@ Keep this checklist synced with `status`:
 - 2026-03-01T22:38:23+08:00 [erin] Completed T008; added collapsible log panel with default-collapsed summary and expandable timestamp/level/message scan view. pr_or_commit=d1252a2.
 
 - 2026-03-01T22:37:29+08:00 [dave] Completed T007; set status=done, checklist checked, done_at/pr_or_commit updated (a2876f7).
+- 2026-03-01T22:40:10+08:00 [heidi] Completed T006; delivered one-handed Retry/Stop/Switch Account panel with immediate status refresh feedback. pr_or_commit=pending.
