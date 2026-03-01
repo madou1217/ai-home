@@ -119,3 +119,38 @@ aih import -o backup.aes
 - SSH Key 模式：使用 `age`，仅列出本机 `~/.ssh/id_*.pub` 中可用的 `ssh-ed25519` / `ssh-rsa` 密钥
 - 若系统未安装 `age`，CLI 会先给出平台安装命令，并支持交互式自动安装
 - `-o` 未指定时，若目标账号已存在则跳过该账号；指定 `-o` 时覆盖该账号目录
+
+### 10. 本地账号能力代理（OpenAI 兼容）
+`aih` 现在内置本地代理，不依赖额外上游。默认后端为 `codex-local`，可按模型路由到 `codex/gemini`。
+
+```bash
+# 启动后台代理（默认 127.0.0.1:8317）
+aih proxy
+
+# 查看状态 / 重启 / 停止
+aih proxy status
+aih proxy restart
+aih proxy stop
+```
+
+在客户端（例如 Cherry Studio）里填写：
+- `base_url`: `http://127.0.0.1:8317/v1`
+- `api_key`: `dummy`
+
+高级可选：
+```bash
+# 前台调试运行
+aih proxy serve --port 8317 --provider auto
+
+# 开机自启（macOS launchd）
+aih proxy autostart install
+aih proxy autostart status
+aih proxy autostart uninstall
+```
+
+管理接口：
+- `GET /v0/management/status`
+- `GET /v0/management/metrics`（成功率、超时率、最近错误）
+- `GET /v0/management/accounts`
+- `GET /v0/management/models`
+- `POST /v0/management/reload`

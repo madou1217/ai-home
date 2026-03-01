@@ -118,3 +118,38 @@ Notes:
 - SSH-key mode uses `age`, and only lists local `~/.ssh/id_*.pub` keys that are `ssh-ed25519` or `ssh-rsa`
 - If `age` is missing, `aih` prints platform install commands and can auto-install interactively
 - Without `-o`, existing account directories are skipped; with `-o`, they are overwritten
+
+### 10. Local Account Proxy (OpenAI-compatible)
+`aih` now includes a built-in local proxy. Default backend is `codex-local`, and it can route to `codex/gemini` by model/provider rules.
+
+```bash
+# Start background proxy (default 127.0.0.1:8317)
+aih proxy
+
+# Check status / restart / stop
+aih proxy status
+aih proxy restart
+aih proxy stop
+```
+
+In clients (e.g. Cherry Studio), use:
+- `base_url`: `http://127.0.0.1:8317/v1`
+- `api_key`: `dummy`
+
+Advanced (optional):
+```bash
+# Foreground debug mode
+aih proxy serve --port 8317 --provider auto
+
+# Auto-start on boot (macOS launchd)
+aih proxy autostart install
+aih proxy autostart status
+aih proxy autostart uninstall
+```
+
+Management APIs:
+- `GET /v0/management/status`
+- `GET /v0/management/metrics` (success rate, timeout rate, recent errors)
+- `GET /v0/management/accounts`
+- `GET /v0/management/models`
+- `POST /v0/management/reload`

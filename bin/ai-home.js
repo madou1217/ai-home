@@ -7,7 +7,8 @@ const os = require('os');
 const crypto = require('crypto');
 const readline = require('readline-sync');
 const pty = require('node-pty');
-const { execSync, spawnSync } = require('child_process');
+const { execSync, spawnSync, spawn } = require('child_process');
+const http = require('http');
 
 // Configurations
 const HOST_HOME_DIR = (() => {
@@ -22,6 +23,10 @@ const HOST_HOME_DIR = (() => {
 
 const AI_HOME_DIR = path.join(HOST_HOME_DIR, '.ai_home');
 const PROFILES_DIR = path.join(AI_HOME_DIR, 'profiles');
+const AIH_PROXY_PID_FILE = path.join(AI_HOME_DIR, 'proxy.pid');
+const AIH_PROXY_LOG_FILE = path.join(AI_HOME_DIR, 'proxy.log');
+const AIH_PROXY_LAUNCHD_LABEL = 'com.aih.proxy';
+const AIH_PROXY_LAUNCHD_PLIST = path.join(HOST_HOME_DIR, 'Library', 'LaunchAgents', `${AIH_PROXY_LAUNCHD_LABEL}.plist`);
 
 const CLI_CONFIGS = {
   gemini: { globalDir: '.gemini', loginArgs: ['auth'], pkg: '@google/gemini-cli', envKeys: ['GEMINI_API_KEY', 'GOOGLE_API_KEY'] },
@@ -73,6 +78,7 @@ const TRUSTED_CLAUDE_USAGE_SOURCES = new Set([
   USAGE_SOURCE_CLAUDE_OAUTH,
   USAGE_SOURCE_CLAUDE_AUTH_TOKEN
 ]);
+const LIST_PAGE_SIZE = 10;
 const EXPORT_MAGIC = 'AIH_EXPORT_V2:';
 const EXPORT_VERSION = 2;
 const AGE_SSH_KEY_TYPES = new Set(['ssh-ed25519', 'ssh-rsa']);
@@ -1318,16 +1324,20 @@ function showHelp() {
 
 \x1b[33mUsage:\x1b[0m
   aih ls                    \x1b[90mList all tools, accounts, and their status\x1b[0m
+  aih ls --help             \x1b[90mShow list mode help (paging behavior)\x1b[0m
   aih <cli> ls              \x1b[90mList accounts for a specific tool\x1b[0m
+  aih <cli> ls --help       \x1b[90mShow list mode help for this tool\x1b[0m
   aih <cli> add [or login]  \x1b[90mCreate a new account and run the login flow\x1b[0m
   aih <cli>                 \x1b[90mRun a tool with the default account (ID: 1)\x1b[0m
   aih <cli> auto            \x1b[90mRun the next non-exhausted account automatically\x1b[0m
   aih <cli> usage <id>      \x1b[90mShow trusted usage-remaining snapshot (OAuth only)\x1b[0m
   aih <cli> usages          \x1b[90mShow trusted usage-remaining snapshots for all OAuth accounts\x1b[0m
+  aih codex import-output [dir] [--parallel N] [--limit N] [--dry-run]\x1b[90mBulk import codex refresh tokens from output files\x1b[0m
   aih <cli> <id> usage      \x1b[90mSame as above, ID-first style\x1b[0m
   aih <cli> unlock <id>     \x1b[90mManually clear [Exhausted Limit] for an account\x1b[0m
   aih <cli> <id> unlock     \x1b[90mSame as above, ID-first style\x1b[0m
   aih <cli> <id> [args]     \x1b[90mRun a tool with a specific account ID\x1b[0m
+  aih proxy                 \x1b[90mStart local OpenAI-compatible proxy (auto uses local codex accounts)\x1b[0m
   
 \x1b[33mAdvanced:\x1b[0m
   aih <cli> set-default <id>\x1b[90mSet default account for aih only\x1b[0m
@@ -1338,20 +1348,73 @@ function showHelp() {
 
 function showCliUsage(cliName) {
   console.log(`
-\x1b[36mAI Home (aih)\x1b[0m - Invalid subcommand for \x1b[33m${cliName}\x1b[0m
+\x1b[36mAI Home (aih)\x1b[0m - Subcommands for \x1b[33m${cliName}\x1b[0m
 
 \x1b[33mUsage:\x1b[0m
   aih ${cliName} ls              \x1b[90mList all ${cliName} accounts\x1b[0m
+  aih ${cliName} ls --help       \x1b[90mShow list mode help (paging behavior)\x1b[0m
   aih ${cliName} add             \x1b[90mCreate a new account and login\x1b[0m
   aih ${cliName} login           \x1b[90mAlias of add\x1b[0m
   aih ${cliName} auto            \x1b[90mAuto-select next non-exhausted account\x1b[0m
   aih ${cliName} usage <id>      \x1b[90mShow trusted usage-remaining snapshot (OAuth)\x1b[0m
   aih ${cliName} usages          \x1b[90mShow trusted usage snapshots for all OAuth accounts\x1b[0m
+  ${cliName === 'codex' ? 'aih codex import-output [dir] [--parallel N] [--limit N] [--dry-run]  \x1b[90mBulk import codex refresh tokens\x1b[0m' : ''}
   aih ${cliName} unlock <id>     \x1b[90mClear exhausted flag manually\x1b[0m
   aih ${cliName} <id> usage      \x1b[90mID-first style usage query\x1b[0m
   aih ${cliName} <id> unlock     \x1b[90mID-first style manual unlock\x1b[0m
   aih ${cliName} <id> [args]     \x1b[90mRun ${cliName} under a specific account\x1b[0m
   aih ${cliName}                 \x1b[90mRun with default account\x1b[0m
+`);
+}
+
+function showProxyUsage() {
+  console.log(`
+\x1b[36mAI Home Proxy Helpers\x1b[0m
+
+\x1b[33mUsage:\x1b[0m
+  aih proxy
+  aih proxy start
+  aih proxy restart
+  aih proxy stop
+  aih proxy status
+  aih proxy autostart <install|uninstall|status>
+  aih proxy serve
+  aih proxy serve [--port <n>]
+
+\x1b[33mNotes:\x1b[0m
+  - Default listen: http://127.0.0.1:8317
+  - OpenAI-compatible endpoint: http://127.0.0.1:8317/v1
+  - Default backend is codex-local (directly executes local codex accounts).
+  - Default provider mode is auto (routes by model hint: gpt/o* -> codex, gemini* -> gemini).
+  - No extra key setup is required in default mode.
+  - aih proxy is equivalent to aih proxy start (daemon mode).
+
+\x1b[33mAdvanced (optional):\x1b[0m
+  aih proxy serve [--host <ip>] [--port <n>] [--backend codex-local|openai-upstream] [--provider codex|gemini|auto] [--upstream <url>] [--strategy round-robin|random] [--client-key <key>] [--management-key <key>] [--cooldown-ms <ms>] [--max-attempts <n>] [--upstream-timeout-ms <ms>]
+  aih proxy env [--base-url <url>] [--api-key <key>]
+  aih proxy sync-codex [--management-url <url>] [--key <management-key>] [--parallel <1-32>] [--limit <n>] [--dry-run]
+  management APIs: /v0/management/status, /v0/management/metrics, /v0/management/accounts, /v0/management/models, /v0/management/reload
+`);
+}
+
+function showLsHelp(scope = null) {
+  const target = scope ? `aih ${scope} ls` : 'aih ls';
+  console.log(`
+\x1b[36mAI Home List Mode Help\x1b[0m
+
+\x1b[33mUsage:\x1b[0m
+  ${target}
+
+\x1b[33mBehavior:\x1b[0m
+  - Default output: first ${LIST_PAGE_SIZE} accounts.
+  - Interactive mode: if output is a terminal (TTY), shows pager prompt after each page.
+  - Keys in pager: \x1b[32mSpace\x1b[0m = next page, \x1b[32mq\x1b[0m = quit.
+  - Non-interactive mode (pipe/redirect): show first ${LIST_PAGE_SIZE} and print omitted count.
+
+\x1b[33mExamples:\x1b[0m
+  aih ls
+  aih codex ls
+  aih codex ls --help
 `);
 }
 
@@ -1393,35 +1456,1523 @@ function listProfiles(filterCliName = null) {
          if (fs.existsSync(defPath)) defaultId = fs.readFileSync(defPath, 'utf8').trim();
       } catch (e) {}
 
-      ids.forEach(id => {
-        const pDir = path.join(toolDir, id);
-        const { configured, accountName } = checkStatus(tool, pDir);
-        const usageExhausted = configured ? syncExhaustedStateFromUsage(tool, id) : null;
-        
-        const exhausted = (usageExhausted === true || isExhausted(tool, id)) ? `\x1b[31m[Exhausted Limit]\x1b[0m ` : '';
-        const isDefault = (id === defaultId) ? `\x1b[32m[★ Default]\x1b[0m ` : '';
-        const usageLabel = formatUsageLabel(tool, id, accountName);
+      const interactivePager = !!(process.stdout && process.stdout.isTTY);
+      let cursor = 0;
+      while (cursor < ids.length) {
+        const batch = ids.slice(cursor, cursor + LIST_PAGE_SIZE);
+        batch.forEach(id => {
+          const pDir = path.join(toolDir, id);
+          const { configured, accountName } = checkStatus(tool, pDir);
+          // Keep ls lightweight: do not refresh remote usage for every account here.
+          const exhausted = isExhausted(tool, id) ? `\x1b[31m[Exhausted Limit]\x1b[0m ` : '';
+          const isDefault = (id === defaultId) ? `\x1b[32m[★ Default]\x1b[0m ` : '';
+          const usageLabel = formatUsageLabel(tool, id, accountName);
 
-        let statusStr = configured 
-          ? `\x1b[32mActive\x1b[0m` 
-          : `\x1b[90mPending Login\x1b[0m`;
+          let statusStr = configured
+            ? `\x1b[32mActive\x1b[0m`
+            : `\x1b[90mPending Login\x1b[0m`;
 
-        let accountInfo = configured && accountName !== 'Unknown' ? `(${accountName})` : '';
+          let accountInfo = configured && accountName !== 'Unknown' ? `(${accountName})` : '';
 
-        let duplicateWarning = '';
-        if (configured && accountName !== 'Unknown' && accountName !== 'Token Configured' && !accountName.startsWith('API Key')) {
-          if (seenAccounts.has(accountName)) {
-            duplicateWarning = ` \x1b[31m[⚠️ Duplicate of ID ${seenAccounts.get(accountName)}]\x1b[0m`;
-          } else {
-            seenAccounts.set(accountName, id);
+          let duplicateWarning = '';
+          if (configured && accountName !== 'Unknown' && accountName !== 'Token Configured' && !accountName.startsWith('API Key')) {
+            if (seenAccounts.has(accountName)) {
+              duplicateWarning = ` \x1b[31m[⚠️ Duplicate of ID ${seenAccounts.get(accountName)}]\x1b[0m`;
+            } else {
+              seenAccounts.set(accountName, id);
+            }
           }
+
+          console.log(`  - Account ID: \x1b[36m${id}\x1b[0m  ${isDefault}[${statusStr}] ${exhausted}\x1b[35m${accountInfo}\x1b[0m ${usageLabel} ${duplicateWarning}`);
+        });
+        cursor += batch.length;
+        if (cursor >= ids.length) break;
+        const remaining = ids.length - cursor;
+        if (!interactivePager) {
+          console.log(`  \x1b[90m... omitted ${remaining} accounts\x1b[0m`);
+          break;
         }
-          
-        console.log(`  - Account ID: \x1b[36m${id}\x1b[0m  ${isDefault}[${statusStr}] ${exhausted}\x1b[35m${accountInfo}\x1b[0m ${usageLabel} ${duplicateWarning}`);
-      });
+        process.stdout.write(`  \x1b[90m-- More (${remaining} remaining) [Space=next, q=quit]\x1b[0m`);
+        let key = '';
+        try {
+          key = String(readline.keyIn('', { hideEchoBack: true, mask: '', limit: ' q' }) || '');
+        } catch (e) {
+          process.stdout.write('\n');
+          break;
+        }
+        process.stdout.write('\r\x1b[K');
+        if (key.toLowerCase() === 'q') {
+          console.log(`  \x1b[90m... omitted ${remaining} accounts\x1b[0m`);
+          break;
+        }
+      }
     }
     console.log('');
   });
+}
+
+function parseProxySyncArgs(rawArgs) {
+  const out = {
+    managementUrl: 'http://127.0.0.1:8317/v0/management',
+    key: String(process.env.AIH_PROXY_MANAGEMENT_KEY || '').trim(),
+    parallel: 8,
+    limit: 0,
+    dryRun: false,
+    namePrefix: 'aih-codex-'
+  };
+  const tokens = Array.isArray(rawArgs) ? rawArgs.slice() : [];
+  for (let i = 0; i < tokens.length; i += 1) {
+    const arg = String(tokens[i] || '').trim();
+    if (!arg) continue;
+    if (arg === '--dry-run') {
+      out.dryRun = true;
+      continue;
+    }
+    if (arg === '--management-url') {
+      const val = String(tokens[i + 1] || '').trim();
+      if (!val) throw new Error('Invalid --management-url value');
+      out.managementUrl = val;
+      i += 1;
+      continue;
+    }
+    if (arg === '--key') {
+      const val = String(tokens[i + 1] || '').trim();
+      if (!val) throw new Error('Invalid --key value');
+      out.key = val;
+      i += 1;
+      continue;
+    }
+    if (arg === '--parallel' || arg === '-p') {
+      const val = String(tokens[i + 1] || '').trim();
+      if (!/^\d+$/.test(val)) throw new Error('Invalid --parallel value');
+      out.parallel = Math.max(1, Math.min(32, Number(val)));
+      i += 1;
+      continue;
+    }
+    if (arg === '--limit') {
+      const val = String(tokens[i + 1] || '').trim();
+      if (!/^\d+$/.test(val)) throw new Error('Invalid --limit value');
+      out.limit = Number(val);
+      i += 1;
+      continue;
+    }
+    if (arg === '--name-prefix') {
+      const val = String(tokens[i + 1] || '').trim();
+      if (!val) throw new Error('Invalid --name-prefix value');
+      out.namePrefix = val;
+      i += 1;
+      continue;
+    }
+    throw new Error(`Unknown option: ${arg}`);
+  }
+  return out;
+}
+
+function parseProxyServeArgs(rawArgs) {
+  const out = {
+    host: String(process.env.AIH_PROXY_HOST || '127.0.0.1').trim(),
+    port: Number(process.env.AIH_PROXY_PORT || 8317),
+    upstream: String(process.env.AIH_PROXY_UPSTREAM || 'https://api.openai.com').trim(),
+    strategy: String(process.env.AIH_PROXY_STRATEGY || 'round-robin').trim().toLowerCase(),
+    clientKey: String(process.env.AIH_PROXY_CLIENT_KEY || '').trim(),
+    managementKey: String(process.env.AIH_PROXY_MANAGEMENT_KEY || '').trim(),
+    cooldownMs: Number(process.env.AIH_PROXY_COOLDOWN_MS || 60000),
+    upstreamTimeoutMs: Number(process.env.AIH_PROXY_UPSTREAM_TIMEOUT_MS || 45000),
+    maxAttempts: Number(process.env.AIH_PROXY_MAX_ATTEMPTS || 3),
+    modelsCacheTtlMs: Number(process.env.AIH_PROXY_MODELS_CACHE_TTL_MS || 300000),
+    modelsProbeAccounts: Number(process.env.AIH_PROXY_MODELS_PROBE_ACCOUNTS || 2),
+    backend: String(process.env.AIH_PROXY_BACKEND || 'codex-local').trim().toLowerCase(),
+    provider: String(process.env.AIH_PROXY_PROVIDER || 'auto').trim().toLowerCase(),
+    failureThreshold: Number(process.env.AIH_PROXY_FAILURE_THRESHOLD || 2),
+    logRequests: String(process.env.AIH_PROXY_LOG_REQUESTS || '1').trim() !== '0'
+  };
+  const tokens = Array.isArray(rawArgs) ? rawArgs.slice() : [];
+  for (let i = 0; i < tokens.length; i += 1) {
+    const arg = String(tokens[i] || '').trim();
+    if (!arg) continue;
+    if (arg === '--host') {
+      const val = String(tokens[i + 1] || '').trim();
+      if (!val) throw new Error('Invalid --host value');
+      out.host = val;
+      i += 1;
+      continue;
+    }
+    if (arg === '--port') {
+      const val = String(tokens[i + 1] || '').trim();
+      if (!/^\d+$/.test(val)) throw new Error('Invalid --port value');
+      out.port = Number(val);
+      i += 1;
+      continue;
+    }
+    if (arg === '--upstream') {
+      const val = String(tokens[i + 1] || '').trim();
+      if (!val) throw new Error('Invalid --upstream value');
+      out.upstream = val;
+      i += 1;
+      continue;
+    }
+    if (arg === '--strategy') {
+      const val = String(tokens[i + 1] || '').trim().toLowerCase();
+      if (!['round-robin', 'random'].includes(val)) throw new Error('Invalid --strategy value');
+      out.strategy = val;
+      i += 1;
+      continue;
+    }
+    if (arg === '--client-key') {
+      const val = String(tokens[i + 1] || '').trim();
+      if (!val) throw new Error('Invalid --client-key value');
+      out.clientKey = val;
+      i += 1;
+      continue;
+    }
+    if (arg === '--management-key') {
+      const val = String(tokens[i + 1] || '').trim();
+      if (!val) throw new Error('Invalid --management-key value');
+      out.managementKey = val;
+      i += 1;
+      continue;
+    }
+    if (arg === '--cooldown-ms') {
+      const val = String(tokens[i + 1] || '').trim();
+      if (!/^\d+$/.test(val)) throw new Error('Invalid --cooldown-ms value');
+      out.cooldownMs = Number(val);
+      i += 1;
+      continue;
+    }
+    if (arg === '--upstream-timeout-ms') {
+      const val = String(tokens[i + 1] || '').trim();
+      if (!/^\d+$/.test(val)) throw new Error('Invalid --upstream-timeout-ms value');
+      out.upstreamTimeoutMs = Number(val);
+      i += 1;
+      continue;
+    }
+    if (arg === '--max-attempts') {
+      const val = String(tokens[i + 1] || '').trim();
+      if (!/^\d+$/.test(val)) throw new Error('Invalid --max-attempts value');
+      out.maxAttempts = Number(val);
+      i += 1;
+      continue;
+    }
+    if (arg === '--models-cache-ttl-ms') {
+      const val = String(tokens[i + 1] || '').trim();
+      if (!/^\d+$/.test(val)) throw new Error('Invalid --models-cache-ttl-ms value');
+      out.modelsCacheTtlMs = Number(val);
+      i += 1;
+      continue;
+    }
+    if (arg === '--models-probe-accounts') {
+      const val = String(tokens[i + 1] || '').trim();
+      if (!/^\d+$/.test(val)) throw new Error('Invalid --models-probe-accounts value');
+      out.modelsProbeAccounts = Number(val);
+      i += 1;
+      continue;
+    }
+    if (arg === '--backend') {
+      const val = String(tokens[i + 1] || '').trim().toLowerCase();
+      if (!['codex-local', 'openai-upstream'].includes(val)) throw new Error('Invalid --backend value');
+      out.backend = val;
+      i += 1;
+      continue;
+    }
+    if (arg === '--provider') {
+      const val = String(tokens[i + 1] || '').trim().toLowerCase();
+      if (!['codex', 'gemini', 'auto'].includes(val)) throw new Error('Invalid --provider value');
+      out.provider = val;
+      i += 1;
+      continue;
+    }
+    if (arg === '--failure-threshold') {
+      const val = String(tokens[i + 1] || '').trim();
+      if (!/^\d+$/.test(val)) throw new Error('Invalid --failure-threshold value');
+      out.failureThreshold = Number(val);
+      i += 1;
+      continue;
+    }
+    if (arg === '--no-request-log') {
+      out.logRequests = false;
+      continue;
+    }
+    throw new Error(`Unknown option: ${arg}`);
+  }
+  out.upstream = out.upstream.replace(/\/+$/, '');
+  out.upstreamTimeoutMs = Math.max(1000, out.upstreamTimeoutMs || 15000);
+  out.maxAttempts = Math.max(1, Math.min(32, out.maxAttempts || 3));
+  out.modelsCacheTtlMs = Math.max(1000, out.modelsCacheTtlMs || 300000);
+  out.modelsProbeAccounts = Math.max(1, Math.min(8, out.modelsProbeAccounts || 2));
+  if (!['codex-local', 'openai-upstream'].includes(out.backend)) out.backend = 'codex-local';
+  if (!['codex', 'gemini', 'auto'].includes(out.provider)) out.provider = 'auto';
+  out.failureThreshold = Math.max(1, Math.min(10, Number(out.failureThreshold) || 2));
+  return out;
+}
+
+function parseProxyEnvArgs(rawArgs) {
+  const out = {
+    baseUrl: 'http://127.0.0.1:8317/v1',
+    apiKey: 'dummy'
+  };
+  const tokens = Array.isArray(rawArgs) ? rawArgs.slice() : [];
+  for (let i = 0; i < tokens.length; i += 1) {
+    const arg = String(tokens[i] || '').trim();
+    if (!arg) continue;
+    if (arg === '--base-url') {
+      const val = String(tokens[i + 1] || '').trim();
+      if (!val) throw new Error('Invalid --base-url value');
+      out.baseUrl = val;
+      i += 1;
+      continue;
+    }
+    if (arg === '--api-key') {
+      const val = String(tokens[i + 1] || '').trim();
+      if (!val) throw new Error('Invalid --api-key value');
+      out.apiKey = val;
+      i += 1;
+      continue;
+    }
+    throw new Error(`Unknown option: ${arg}`);
+  }
+  return out;
+}
+
+function parseJsonFileSafe(filePath) {
+  try {
+    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  } catch (e) {
+    return null;
+  }
+}
+
+function normalizeManagementBase(url) {
+  const base = String(url || '').trim();
+  if (!base) throw new Error('Empty management URL');
+  return base.replace(/\/+$/, '');
+}
+
+function readProxyPid() {
+  if (!fs.existsSync(AIH_PROXY_PID_FILE)) return 0;
+  try {
+    const val = String(fs.readFileSync(AIH_PROXY_PID_FILE, 'utf8')).trim();
+    return /^\d+$/.test(val) ? Number(val) : 0;
+  } catch (e) {
+    return 0;
+  }
+}
+
+function isProcessAlive(pid) {
+  if (!Number.isFinite(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+function waitForProxyReady(port, timeoutMs = 5000) {
+  const deadline = Date.now() + timeoutMs;
+  return new Promise((resolve) => {
+    const tick = async () => {
+      if (Date.now() > deadline) {
+        resolve(false);
+        return;
+      }
+      try {
+        const res = await fetch(`http://127.0.0.1:${port}/healthz`);
+        if (res.ok) {
+          resolve(true);
+          return;
+        }
+      } catch (e) {}
+      setTimeout(tick, 150);
+    };
+    tick();
+  });
+}
+
+async function startProxyDaemon(rawServeArgs) {
+  ensureDir(AI_HOME_DIR);
+  const parsed = parseProxyServeArgs(rawServeArgs || []);
+  const existingPid = readProxyPid();
+  if (isProcessAlive(existingPid)) {
+    return { alreadyRunning: true, pid: existingPid };
+  }
+
+  const outFd = fs.openSync(AIH_PROXY_LOG_FILE, 'a');
+  const child = spawn(process.execPath, [__filename, 'proxy', 'serve', ...(rawServeArgs || [])], {
+    detached: true,
+    stdio: ['ignore', outFd, outFd],
+    env: process.env
+  });
+  child.unref();
+  fs.writeFileSync(AIH_PROXY_PID_FILE, String(child.pid));
+  const started = await waitForProxyReady(parsed.port, 7000);
+  return { alreadyRunning: false, pid: child.pid, started };
+}
+
+function stopProxyDaemon() {
+  const pid = readProxyPid();
+  if (!pid) return { stopped: false, reason: 'not_running' };
+  if (!isProcessAlive(pid)) {
+    try { fs.unlinkSync(AIH_PROXY_PID_FILE); } catch (e) {}
+    return { stopped: false, reason: 'stale_pid', pid };
+  }
+  try {
+    process.kill(pid, 'SIGTERM');
+  } catch (e) {
+    return { stopped: false, reason: 'kill_failed', pid };
+  }
+  const deadline = Date.now() + 3000;
+  while (Date.now() < deadline) {
+    if (!isProcessAlive(pid)) {
+      try { fs.unlinkSync(AIH_PROXY_PID_FILE); } catch (e) {}
+      return { stopped: true, pid };
+    }
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 80);
+  }
+  try {
+    process.kill(pid, 'SIGKILL');
+  } catch (e) {}
+  try { fs.unlinkSync(AIH_PROXY_PID_FILE); } catch (e) {}
+  return { stopped: true, pid, forced: true };
+}
+
+function getProxyDaemonStatus() {
+  const pid = readProxyPid();
+  const running = isProcessAlive(pid);
+  return {
+    running,
+    pid: running ? pid : 0,
+    pidFile: AIH_PROXY_PID_FILE,
+    logFile: AIH_PROXY_LOG_FILE
+  };
+}
+
+function getProxyAutostartStatus() {
+  if (process.platform !== 'darwin') {
+    return { supported: false, installed: false, loaded: false };
+  }
+  const installed = fs.existsSync(AIH_PROXY_LAUNCHD_PLIST);
+  let loaded = false;
+  try {
+    const out = spawnSync('launchctl', ['list', AIH_PROXY_LAUNCHD_LABEL], { encoding: 'utf8' });
+    loaded = out.status === 0;
+  } catch (e) {
+    loaded = false;
+  }
+  return { supported: true, installed, loaded, plist: AIH_PROXY_LAUNCHD_PLIST, label: AIH_PROXY_LAUNCHD_LABEL };
+}
+
+function installProxyAutostart() {
+  if (process.platform !== 'darwin') {
+    throw new Error('autostart is currently implemented for macOS launchd only');
+  }
+  ensureDir(path.dirname(AIH_PROXY_LAUNCHD_PLIST));
+  const plist = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>${AIH_PROXY_LAUNCHD_LABEL}</string>
+    <key>ProgramArguments</key>
+    <array>
+      <string>${process.execPath}</string>
+      <string>${__filename}</string>
+      <string>proxy</string>
+      <string>serve</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>${AIH_PROXY_LOG_FILE}</string>
+    <key>StandardErrorPath</key>
+    <string>${AIH_PROXY_LOG_FILE}</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+      <key>PATH</key>
+      <string>${process.env.PATH || ''}</string>
+    </dict>
+  </dict>
+</plist>
+`;
+  fs.writeFileSync(AIH_PROXY_LAUNCHD_PLIST, plist);
+  spawnSync('launchctl', ['unload', AIH_PROXY_LAUNCHD_PLIST], { stdio: 'ignore' });
+  const load = spawnSync('launchctl', ['load', AIH_PROXY_LAUNCHD_PLIST], { encoding: 'utf8' });
+  if (load.status !== 0) {
+    throw new Error(String(load.stderr || load.stdout || 'launchctl load failed').trim());
+  }
+}
+
+function uninstallProxyAutostart() {
+  if (process.platform !== 'darwin') {
+    throw new Error('autostart is currently implemented for macOS launchd only');
+  }
+  if (fs.existsSync(AIH_PROXY_LAUNCHD_PLIST)) {
+    spawnSync('launchctl', ['unload', AIH_PROXY_LAUNCHD_PLIST], { stdio: 'ignore' });
+    fs.unlinkSync(AIH_PROXY_LAUNCHD_PLIST);
+  }
+}
+
+function buildProxyCodexUploadPayload(authJson) {
+  if (!authJson || typeof authJson !== 'object') return null;
+  const tokens = authJson.tokens && typeof authJson.tokens === 'object' ? authJson.tokens : null;
+  if (!tokens) return null;
+  const refreshToken = String(tokens.refresh_token || '').trim();
+  if (!refreshToken.startsWith('rt_')) return null;
+  return {
+    auth_mode: 'chatgpt',
+    OPENAI_API_KEY: null,
+    tokens: {
+      id_token: String(tokens.id_token || ''),
+      access_token: String(tokens.access_token || ''),
+      refresh_token: refreshToken,
+      account_id: String(tokens.account_id || '')
+    },
+    last_refresh: String(authJson.last_refresh || new Date().toISOString())
+  };
+}
+
+function parseAuthorizationBearer(headerValue) {
+  const value = String(headerValue || '').trim();
+  if (!value) return '';
+  const m = value.match(/^Bearer\s+(.+)$/i);
+  return m ? String(m[1] || '').trim() : '';
+}
+
+function decodeJwtPayloadUnsafe(jwt) {
+  const text = String(jwt || '').trim();
+  const parts = text.split('.');
+  if (parts.length < 2) return null;
+  try {
+    return JSON.parse(Buffer.from(parts[1], 'base64').toString('utf8'));
+  } catch (e) {
+    return null;
+  }
+}
+
+function loadCodexProxyAccounts() {
+  const ids = getToolAccountIds('codex');
+  const out = [];
+  ids.forEach((id) => {
+    const authPath = path.join(getToolConfigDir('codex', id), 'auth.json');
+    const authJson = parseJsonFileSafe(authPath);
+    const payload = buildProxyCodexUploadPayload(authJson);
+    if (!payload) return;
+    const jwtPayload = decodeJwtPayloadUnsafe(payload.tokens.id_token);
+    const email = jwtPayload && typeof jwtPayload.email === 'string' ? jwtPayload.email : '';
+    out.push({
+      id: String(id),
+      email,
+      accountId: String(payload.tokens.account_id || ''),
+      accessToken: String(payload.tokens.access_token || ''),
+      refreshToken: String(payload.tokens.refresh_token || ''),
+      lastRefresh: String(payload.last_refresh || ''),
+      cooldownUntil: 0
+    });
+  });
+  return out;
+}
+
+function loadGeminiProxyAccounts() {
+  const ids = getToolAccountIds('gemini');
+  const out = [];
+  ids.forEach((id) => {
+    const pDir = getProfileDir('gemini', id);
+    const { configured, accountName } = checkStatus('gemini', pDir);
+    if (!configured) return;
+    out.push({
+      id: String(id),
+      email: accountName && accountName !== 'Unknown' ? accountName : '',
+      accountId: String(id),
+      provider: 'gemini',
+      cooldownUntil: 0,
+      consecutiveFailures: 0,
+      successCount: 0,
+      failCount: 0,
+      lastError: ''
+    });
+  });
+  return out;
+}
+
+function chooseProxyAccount(accounts, state, cursorKey = 'cursor') {
+  if (!Array.isArray(accounts) || accounts.length === 0) return null;
+  const now = Date.now();
+  const available = accounts.filter((a) => now >= (a.cooldownUntil || 0));
+  if (available.length === 0) return null;
+  if (state.strategy === 'random') {
+    return available[Math.floor(Math.random() * available.length)];
+  }
+  // round-robin over full list while skipping cooldown/empty token
+  const n = accounts.length;
+  const cursor = Number(state[cursorKey] || 0);
+  for (let i = 0; i < n; i += 1) {
+    const idx = (cursor + i) % n;
+    const item = accounts[idx];
+    if (now < (item.cooldownUntil || 0)) continue;
+    state[cursorKey] = (idx + 1) % n;
+    return item;
+  }
+  return null;
+}
+
+function normalizeModelId(modelRaw) {
+  return String(modelRaw || '').trim().toLowerCase();
+}
+
+function inferProviderFromModel(modelRaw) {
+  const m = normalizeModelId(modelRaw);
+  if (!m) return 'codex';
+  if (m.startsWith('gemini')) return 'gemini';
+  if (m.startsWith('gpt') || m.startsWith('o1') || m.startsWith('o3') || m.startsWith('o4')) return 'codex';
+  return 'codex';
+}
+
+function resolveRequestProvider(options, requestJson) {
+  const requested = normalizeModelId(requestJson && requestJson.model);
+  if (options.provider === 'codex' || options.provider === 'gemini') return options.provider;
+  return inferProviderFromModel(requested);
+}
+
+function markProxyAccountSuccess(account) {
+  if (!account) return;
+  account.consecutiveFailures = 0;
+  account.successCount = Number(account.successCount || 0) + 1;
+  account.lastError = '';
+}
+
+function markProxyAccountFailure(account, reason, cooldownMs, failureThreshold = 2) {
+  if (!account) return;
+  account.failCount = Number(account.failCount || 0) + 1;
+  account.consecutiveFailures = Number(account.consecutiveFailures || 0) + 1;
+  account.lastError = String(reason || '');
+  if (account.consecutiveFailures >= failureThreshold) {
+    account.cooldownUntil = Date.now() + cooldownMs;
+  }
+}
+
+function readRequestBody(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    req.on('data', (chunk) => chunks.push(chunk));
+    req.on('end', () => resolve(Buffer.concat(chunks)));
+    req.on('error', reject);
+  });
+}
+
+function writeJson(res, statusCode, payload) {
+  const body = JSON.stringify(payload, null, 2);
+  res.statusCode = statusCode;
+  res.setHeader('content-type', 'application/json; charset=utf-8');
+  res.setHeader('content-length', Buffer.byteLength(body));
+  res.end(body);
+}
+
+function withTimeout(promise, ms) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms))
+  ]);
+}
+
+async function fetchWithTimeout(url, init, timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...(init || {}), signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function fetchModelsForAccount(options, account, timeoutMs = 8000) {
+  const url = `${options.upstream}/v1/models`;
+  const headers = {
+    authorization: `Bearer ${account.accessToken}`
+  };
+  const res = await fetchWithTimeout(url, { method: 'GET', headers }, timeoutMs);
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`HTTP ${res.status} ${text.slice(0, 160)}`.trim());
+  }
+  const json = await res.json();
+  const arr = Array.isArray(json && json.data) ? json.data : [];
+  return arr
+    .map((x) => String((x && x.id) || '').trim())
+    .filter(Boolean);
+}
+
+function buildOpenAIModelsList(models) {
+  const now = Math.floor(Date.now() / 1000);
+  const safe = Array.isArray(models) ? models : [];
+  return {
+    object: 'list',
+    data: safe.map((id) => ({
+      id,
+      object: 'model',
+      created: now,
+      owned_by: 'aih-proxy'
+    }))
+  };
+}
+
+const FALLBACK_MODELS = [
+  'gpt-4o-mini',
+  'gpt-4.1-mini',
+  'gpt-4.1'
+];
+
+function extractTextFromContent(content) {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => {
+        if (!part) return '';
+        if (typeof part === 'string') return part;
+        if (part.type === 'text') return String(part.text || '');
+        return '';
+      })
+      .filter(Boolean)
+      .join('\n');
+  }
+  if (content && typeof content === 'object' && typeof content.text === 'string') {
+    return content.text;
+  }
+  return '';
+}
+
+function buildPromptFromChatRequest(body) {
+  const messages = Array.isArray(body && body.messages) ? body.messages : [];
+  if (messages.length === 0) return 'Please respond helpfully.';
+  return messages.map((m) => {
+    const role = String((m && m.role) || 'user');
+    const text = extractTextFromContent(m && m.content);
+    return `${role.toUpperCase()}:\n${text}`;
+  }).join('\n\n');
+}
+
+function buildPromptFromResponsesRequest(body) {
+  const input = body && body.input;
+  if (typeof input === 'string' && input.trim()) return input.trim();
+  if (Array.isArray(input)) {
+    return input.map((item) => {
+      if (typeof item === 'string') return item;
+      if (item && typeof item === 'object') {
+        return extractTextFromContent(item.content);
+      }
+      return '';
+    }).filter(Boolean).join('\n\n');
+  }
+  return 'Please respond helpfully.';
+}
+
+function spawnWithTimeout(command, args, opts, timeoutMs) {
+  return new Promise((resolve) => {
+    const child = spawn(command, args, opts);
+    let stdout = '';
+    let stderr = '';
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      try { child.kill('SIGTERM'); } catch (e) {}
+      setTimeout(() => {
+        try { child.kill('SIGKILL'); } catch (e) {}
+      }, 500);
+    }, timeoutMs);
+    child.stdout.on('data', (chunk) => { stdout += String(chunk || ''); });
+    child.stderr.on('data', (chunk) => { stderr += String(chunk || ''); });
+    child.on('error', (error) => {
+      clearTimeout(timer);
+      resolve({ code: 1, stdout, stderr: `${stderr}\n${String((error && error.message) || error)}`, timedOut });
+    });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      resolve({ code: Number(code) || 0, stdout, stderr, timedOut });
+    });
+  });
+}
+
+async function runCodexLocalCompletion(account, prompt, timeoutMs) {
+  const sandboxDir = getProfileDir('codex', account.id);
+  const outFile = path.join(os.tmpdir(), `aih-codex-out-${Date.now()}-${Math.random().toString(16).slice(2)}.txt`);
+  const args = [
+    'exec',
+    '--skip-git-repo-check',
+    '--sandbox', 'danger-full-access',
+    '--output-last-message', outFile,
+    prompt
+  ];
+  const env = {
+    ...process.env,
+    HOME: sandboxDir,
+    USERPROFILE: sandboxDir,
+    CODEX_HOME: path.join(sandboxDir, '.codex')
+  };
+  const run = await spawnWithTimeout('codex', args, { env, cwd: process.cwd() }, timeoutMs);
+  let text = '';
+  try {
+    if (fs.existsSync(outFile)) text = String(fs.readFileSync(outFile, 'utf8') || '').trim();
+  } catch (e) {}
+  try { if (fs.existsSync(outFile)) fs.unlinkSync(outFile); } catch (e) {}
+  if (run.timedOut) {
+    throw new Error('codex_exec_timeout');
+  }
+  if (run.code !== 0 && !text) {
+    const msg = String(run.stderr || run.stdout || '').trim();
+    throw new Error(msg || `codex_exec_exit_${run.code}`);
+  }
+  if (!text) {
+    throw new Error('codex_empty_response');
+  }
+  return text;
+}
+
+function parseGeminiJsonResponse(stdoutText) {
+  const text = String(stdoutText || '');
+  const first = text.indexOf('{');
+  const last = text.lastIndexOf('}');
+  if (first < 0 || last <= first) return null;
+  const candidate = text.slice(first, last + 1).trim();
+  try {
+    const parsed = JSON.parse(candidate);
+    if (parsed && typeof parsed.response === 'string') return parsed.response;
+  } catch (e) {}
+  return null;
+}
+
+function cleanGeminiTextOutput(stdoutText) {
+  const lines = String(stdoutText || '')
+    .split(/\r?\n/)
+    .map((x) => x.trim())
+    .filter(Boolean)
+    .filter((x) => !x.includes('YOLO mode is enabled'))
+    .filter((x) => !x.includes('Loaded cached credentials.'));
+  return lines.join('\n').trim();
+}
+
+async function runGeminiLocalCompletion(account, prompt, timeoutMs) {
+  const sandboxDir = getProfileDir('gemini', account.id);
+  const args = [
+    '-p',
+    prompt,
+    '--output-format',
+    'json',
+    '--approval-mode',
+    'yolo'
+  ];
+  const env = {
+    ...process.env,
+    HOME: sandboxDir,
+    USERPROFILE: sandboxDir,
+    GEMINI_CLI_SYSTEM_SETTINGS_PATH: path.join(sandboxDir, '.gemini', 'settings.json')
+  };
+  const run = await spawnWithTimeout('gemini', args, { env, cwd: process.cwd() }, timeoutMs);
+  if (run.timedOut) throw new Error('gemini_exec_timeout');
+  let text = parseGeminiJsonResponse(run.stdout);
+  if (!text) text = cleanGeminiTextOutput(run.stdout);
+  if (!text && run.code !== 0) {
+    const msg = String(run.stderr || run.stdout || '').trim();
+    throw new Error(msg || `gemini_exec_exit_${run.code}`);
+  }
+  if (!text) throw new Error('gemini_empty_response');
+  return text;
+}
+
+function initProxyMetrics() {
+  return {
+    startedAt: Date.now(),
+    totalRequests: 0,
+    totalSuccess: 0,
+    totalFailures: 0,
+    totalTimeouts: 0,
+    routeCounts: {},
+    providerCounts: { codex: 0, gemini: 0 },
+    providerSuccess: { codex: 0, gemini: 0 },
+    providerFailures: { codex: 0, gemini: 0 },
+    lastErrors: []
+  };
+}
+
+function pushMetricError(metrics, route, provider, message) {
+  const item = {
+    at: new Date().toISOString(),
+    route,
+    provider,
+    error: String(message || '').slice(0, 500)
+  };
+  metrics.lastErrors.push(item);
+  if (metrics.lastErrors.length > 20) {
+    metrics.lastErrors = metrics.lastErrors.slice(-20);
+  }
+}
+
+function appendProxyRequestLog(entry) {
+  const line = JSON.stringify(entry);
+  try {
+    fs.appendFileSync(AIH_PROXY_LOG_FILE, `${line}\n`);
+  } catch (e) {}
+}
+
+function buildChatCompletionPayload(model, text) {
+  return {
+    id: `chatcmpl-${Date.now()}`,
+    object: 'chat.completion',
+    created: Math.floor(Date.now() / 1000),
+    model: model || 'gpt-4o-mini',
+    choices: [
+      {
+        index: 0,
+        message: {
+          role: 'assistant',
+          content: text
+        },
+        finish_reason: 'stop'
+      }
+    ],
+    usage: {
+      prompt_tokens: 0,
+      completion_tokens: 0,
+      total_tokens: 0
+    }
+  };
+}
+
+function writeSseChatCompletion(res, model, text) {
+  res.statusCode = 200;
+  res.setHeader('content-type', 'text/event-stream; charset=utf-8');
+  res.setHeader('cache-control', 'no-cache');
+  res.setHeader('connection', 'keep-alive');
+  const id = `chatcmpl-${Date.now()}`;
+  const created = Math.floor(Date.now() / 1000);
+  const chunks = [
+    {
+      id,
+      object: 'chat.completion.chunk',
+      created,
+      model: model || 'gpt-4o-mini',
+      choices: [{ index: 0, delta: { role: 'assistant' }, finish_reason: null }]
+    },
+    {
+      id,
+      object: 'chat.completion.chunk',
+      created,
+      model: model || 'gpt-4o-mini',
+      choices: [{ index: 0, delta: { content: text }, finish_reason: null }]
+    },
+    {
+      id,
+      object: 'chat.completion.chunk',
+      created,
+      model: model || 'gpt-4o-mini',
+      choices: [{ index: 0, delta: {}, finish_reason: 'stop' }]
+    }
+  ];
+  chunks.forEach((c) => {
+    res.write(`data: ${JSON.stringify(c)}\n\n`);
+  });
+  res.write('data: [DONE]\n\n');
+  res.end();
+}
+
+async function startLocalProxyServer(options) {
+  const codexAccounts = loadCodexProxyAccounts().map((a) => ({ ...a, provider: 'codex', consecutiveFailures: 0, successCount: 0, failCount: 0, lastError: '' }));
+  const geminiAccounts = loadGeminiProxyAccounts();
+  const state = {
+    strategy: options.strategy,
+    cursors: { codex: 0, gemini: 0 },
+    accounts: {
+      codex: codexAccounts,
+      gemini: geminiAccounts
+    },
+    startedAt: Date.now(),
+    metrics: initProxyMetrics(),
+    modelsCache: {
+      updatedAt: 0,
+      ids: [],
+      byAccount: {},
+      sourceCount: 0
+    }
+  };
+  const requiredClientKey = String(options.clientKey || '').trim();
+  const requiredManagementKey = String(options.managementKey || '').trim();
+  const cooldownMs = Math.max(1000, Number(options.cooldownMs) || 60000);
+
+  const server = http.createServer(async (req, res) => {
+    const method = String(req.method || 'GET').toUpperCase();
+    const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+    const pathname = url.pathname || '/';
+
+    if (pathname === '/healthz') {
+      return writeJson(res, 200, { ok: true, service: 'aih-proxy' });
+    }
+
+    if (pathname.startsWith('/v0/management')) {
+      if (requiredManagementKey) {
+        const incoming = parseAuthorizationBearer(req.headers.authorization);
+        if (incoming !== requiredManagementKey) {
+          return writeJson(res, 401, { ok: false, error: 'unauthorized_management' });
+        }
+      }
+      if (method === 'GET' && pathname === '/v0/management/status') {
+        const now = Date.now();
+        const codex = state.accounts.codex || [];
+        const gemini = state.accounts.gemini || [];
+        const activeCodex = codex.filter((a) => now >= (a.cooldownUntil || 0)).length;
+        const activeGemini = gemini.filter((a) => now >= (a.cooldownUntil || 0)).length;
+        const total = codex.length + gemini.length;
+        const active = activeCodex + activeGemini;
+        const cooldown = total - active;
+        const requests = Math.max(1, state.metrics.totalRequests);
+        return writeJson(res, 200, {
+          ok: true,
+          backend: options.backend,
+          providerMode: options.provider,
+          strategy: state.strategy,
+          totalAccounts: total,
+          activeAccounts: active,
+          cooldownAccounts: cooldown,
+          providers: {
+            codex: { total: codex.length, active: activeCodex },
+            gemini: { total: gemini.length, active: activeGemini }
+          },
+          modelsCached: Array.isArray(state.modelsCache.ids) ? state.modelsCache.ids.length : 0,
+          modelsUpdatedAt: state.modelsCache.updatedAt || 0,
+          successRate: Number((state.metrics.totalSuccess / requests).toFixed(4)),
+          timeoutRate: Number((state.metrics.totalTimeouts / requests).toFixed(4)),
+          totalRequests: state.metrics.totalRequests,
+          uptimeSec: Math.floor((Date.now() - state.startedAt) / 1000)
+        });
+      }
+      if (method === 'GET' && pathname === '/v0/management/metrics') {
+        const requests = Math.max(1, state.metrics.totalRequests);
+        return writeJson(res, 200, {
+          ok: true,
+          totalRequests: state.metrics.totalRequests,
+          totalSuccess: state.metrics.totalSuccess,
+          totalFailures: state.metrics.totalFailures,
+          totalTimeouts: state.metrics.totalTimeouts,
+          successRate: Number((state.metrics.totalSuccess / requests).toFixed(4)),
+          timeoutRate: Number((state.metrics.totalTimeouts / requests).toFixed(4)),
+          routeCounts: state.metrics.routeCounts,
+          providerCounts: state.metrics.providerCounts,
+          providerSuccess: state.metrics.providerSuccess,
+          providerFailures: state.metrics.providerFailures,
+          lastErrors: state.metrics.lastErrors
+        });
+      }
+      if (method === 'GET' && pathname === '/v0/management/models') {
+        const forceRefresh = ['1', 'true', 'yes'].includes(String(url.searchParams.get('refresh') || '').toLowerCase());
+        const accountLimitRaw = String(url.searchParams.get('accounts') || '').trim();
+        const accountLimit = /^\d+$/.test(accountLimitRaw) ? Math.max(1, Number(accountLimitRaw)) : 3;
+        const cacheTtlRaw = String(url.searchParams.get('ttl_ms') || '').trim();
+        const cacheTtl = /^\d+$/.test(cacheTtlRaw) ? Math.max(1000, Number(cacheTtlRaw)) : 5 * 60 * 1000;
+        const now = Date.now();
+        if (!forceRefresh && state.modelsCache.updatedAt > 0 && now - state.modelsCache.updatedAt < cacheTtl) {
+          return writeJson(res, 200, {
+            ok: true,
+            cached: true,
+            updatedAt: state.modelsCache.updatedAt,
+            sources: state.modelsCache.sourceCount,
+            models: state.modelsCache.ids
+          });
+        }
+
+        const candidates = (state.accounts.codex || []).filter((a) => !!a.accessToken).slice(0, accountLimit);
+        const modelSet = new Set();
+        const byAccount = {};
+        let sourceCount = 0;
+        let firstError = '';
+        for (const acc of candidates) {
+          try {
+            const models = await fetchModelsForAccount(options, acc, 8000);
+            byAccount[acc.id] = models;
+            models.forEach((m) => modelSet.add(m));
+            sourceCount += 1;
+          } catch (e) {
+            byAccount[acc.id] = [];
+            if (!firstError) firstError = String((e && e.message) || e);
+          }
+        }
+
+        const ids = Array.from(modelSet).sort();
+        state.modelsCache = {
+          updatedAt: now,
+          ids,
+          byAccount,
+          sourceCount
+        };
+        return writeJson(res, 200, {
+          ok: true,
+          cached: false,
+          updatedAt: state.modelsCache.updatedAt,
+          scannedAccounts: candidates.length,
+          sources: sourceCount,
+          models: ids,
+          firstError
+        });
+      }
+      if (method === 'GET' && pathname === '/v0/management/accounts') {
+        const allAccounts = [...(state.accounts.codex || []), ...(state.accounts.gemini || [])];
+        return writeJson(res, 200, {
+          ok: true,
+          accounts: allAccounts.map((a) => ({
+            id: a.id,
+            provider: a.provider || 'codex',
+            email: a.email,
+            accountId: a.accountId,
+            hasAccessToken: !!a.accessToken,
+            hasRefreshToken: !!a.refreshToken,
+            cooldownUntil: a.cooldownUntil || 0,
+            lastRefresh: a.lastRefresh,
+            consecutiveFailures: a.consecutiveFailures || 0,
+            successCount: a.successCount || 0,
+            failCount: a.failCount || 0,
+            lastError: a.lastError || ''
+          }))
+        });
+      }
+      if (method === 'POST' && pathname === '/v0/management/reload') {
+        state.accounts = {
+          codex: loadCodexProxyAccounts().map((a) => ({ ...a, provider: 'codex', consecutiveFailures: 0, successCount: 0, failCount: 0, lastError: '' })),
+          gemini: loadGeminiProxyAccounts()
+        };
+        state.cursors = { codex: 0, gemini: 0 };
+        state.modelsCache = {
+          updatedAt: 0,
+          ids: [],
+          byAccount: {},
+          sourceCount: 0
+        };
+        const total = state.accounts.codex.length + state.accounts.gemini.length;
+        return writeJson(res, 200, { ok: true, reloaded: total, providers: { codex: state.accounts.codex.length, gemini: state.accounts.gemini.length } });
+      }
+      if (method === 'POST' && pathname === '/v0/management/cooldown/clear') {
+        [...(state.accounts.codex || []), ...(state.accounts.gemini || [])].forEach((a) => { a.cooldownUntil = 0; a.consecutiveFailures = 0; });
+        return writeJson(res, 200, { ok: true });
+      }
+      return writeJson(res, 404, { ok: false, error: 'management_not_found' });
+    }
+
+    if (!pathname.startsWith('/v1/')) {
+      return writeJson(res, 404, { ok: false, error: 'not_found' });
+    }
+    if (requiredClientKey) {
+      const incoming = parseAuthorizationBearer(req.headers.authorization);
+      if (incoming !== requiredClientKey) {
+        return writeJson(res, 401, { ok: false, error: 'unauthorized_client' });
+      }
+    }
+
+    const bodyBuffer = await readRequestBody(req).catch(() => null);
+    if (bodyBuffer === null) {
+      return writeJson(res, 400, { ok: false, error: 'invalid_request_body' });
+    }
+    let requestJson = null;
+    try {
+      requestJson = bodyBuffer.length > 0 ? JSON.parse(bodyBuffer.toString('utf8')) : {};
+    } catch (e) {
+      requestJson = {};
+    }
+    const requestStartedAt = Date.now();
+    const routeKey = `${method} ${pathname}`;
+    state.metrics.totalRequests += 1;
+    state.metrics.routeCounts[routeKey] = Number(state.metrics.routeCounts[routeKey] || 0) + 1;
+
+    if (options.backend === 'codex-local') {
+      if (method === 'GET' && pathname === '/v1/models') {
+        const modelList = [...new Set([
+          ...FALLBACK_MODELS,
+          'gemini-2.5-pro',
+          'gemini-2.5-flash',
+          'gemini-2.0-flash'
+        ])];
+        const payload = buildOpenAIModelsList(modelList);
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/json; charset=utf-8');
+        res.end(JSON.stringify(payload));
+        state.metrics.totalSuccess += 1;
+        return;
+      }
+      if (method === 'POST' && pathname === '/v1/chat/completions') {
+        const provider = resolveRequestProvider(options, requestJson || {});
+        const pool = provider === 'gemini' ? state.accounts.gemini : state.accounts.codex;
+        const cursorKey = provider === 'gemini' ? 'gemini' : 'codex';
+        const account = chooseProxyAccount(pool, state.cursors, cursorKey);
+        if (!account) {
+          state.metrics.totalFailures += 1;
+          state.metrics.providerFailures[provider] = Number(state.metrics.providerFailures[provider] || 0) + 1;
+          pushMetricError(state.metrics, routeKey, provider, 'no_available_account');
+          return writeJson(res, 503, { ok: false, error: 'no_available_account' });
+        }
+        state.metrics.providerCounts[provider] = Number(state.metrics.providerCounts[provider] || 0) + 1;
+        const prompt = buildPromptFromChatRequest(requestJson || {});
+        try {
+          const text = provider === 'gemini'
+            ? await runGeminiLocalCompletion(account, prompt, options.upstreamTimeoutMs)
+            : await runCodexLocalCompletion(account, prompt, options.upstreamTimeoutMs);
+          const isStream = !!(requestJson && requestJson.stream);
+          const model = String((requestJson && requestJson.model) || 'gpt-4o-mini');
+          if (isStream) {
+            writeSseChatCompletion(res, model, text);
+            state.metrics.totalSuccess += 1;
+            state.metrics.providerSuccess[provider] = Number(state.metrics.providerSuccess[provider] || 0) + 1;
+            markProxyAccountSuccess(account);
+            if (options.logRequests) {
+              appendProxyRequestLog({
+                at: new Date().toISOString(),
+                route: routeKey,
+                provider,
+                accountId: account.id,
+                status: 200,
+                stream: true,
+                durationMs: Date.now() - requestStartedAt
+              });
+            }
+            return;
+          }
+          res.statusCode = 200;
+          res.setHeader('content-type', 'application/json; charset=utf-8');
+          res.end(JSON.stringify(buildChatCompletionPayload(model, text)));
+          state.metrics.totalSuccess += 1;
+          state.metrics.providerSuccess[provider] = Number(state.metrics.providerSuccess[provider] || 0) + 1;
+          markProxyAccountSuccess(account);
+          if (options.logRequests) {
+            appendProxyRequestLog({
+              at: new Date().toISOString(),
+              route: routeKey,
+              provider,
+              accountId: account.id,
+              status: 200,
+              stream: false,
+              durationMs: Date.now() - requestStartedAt
+            });
+          }
+          return;
+        } catch (e) {
+          const detail = String((e && e.message) || e);
+          if (detail.includes('timeout')) state.metrics.totalTimeouts += 1;
+          state.metrics.totalFailures += 1;
+          state.metrics.providerFailures[provider] = Number(state.metrics.providerFailures[provider] || 0) + 1;
+          markProxyAccountFailure(account, detail, cooldownMs, options.failureThreshold);
+          pushMetricError(state.metrics, routeKey, provider, detail);
+          if (options.logRequests) {
+            appendProxyRequestLog({
+              at: new Date().toISOString(),
+              route: routeKey,
+              provider,
+              accountId: account.id,
+              status: 502,
+              error: detail,
+              durationMs: Date.now() - requestStartedAt
+            });
+          }
+          return writeJson(res, 502, { ok: false, error: 'local_backend_failed', detail });
+        }
+      }
+      if (method === 'POST' && pathname === '/v1/responses') {
+        const provider = resolveRequestProvider(options, requestJson || {});
+        const pool = provider === 'gemini' ? state.accounts.gemini : state.accounts.codex;
+        const cursorKey = provider === 'gemini' ? 'gemini' : 'codex';
+        const account = chooseProxyAccount(pool, state.cursors, cursorKey);
+        if (!account) {
+          state.metrics.totalFailures += 1;
+          state.metrics.providerFailures[provider] = Number(state.metrics.providerFailures[provider] || 0) + 1;
+          pushMetricError(state.metrics, routeKey, provider, 'no_available_account');
+          return writeJson(res, 503, { ok: false, error: 'no_available_account' });
+        }
+        state.metrics.providerCounts[provider] = Number(state.metrics.providerCounts[provider] || 0) + 1;
+        const prompt = buildPromptFromResponsesRequest(requestJson || {});
+        try {
+          const text = provider === 'gemini'
+            ? await runGeminiLocalCompletion(account, prompt, options.upstreamTimeoutMs)
+            : await runCodexLocalCompletion(account, prompt, options.upstreamTimeoutMs);
+          const model = String((requestJson && requestJson.model) || 'gpt-4o-mini');
+          const payload = {
+            id: `resp_${Date.now()}`,
+            object: 'response',
+            created_at: Math.floor(Date.now() / 1000),
+            status: 'completed',
+            model,
+            output: [{
+              type: 'message',
+              role: 'assistant',
+              content: [{ type: 'output_text', text }]
+            }]
+          };
+          state.metrics.totalSuccess += 1;
+          state.metrics.providerSuccess[provider] = Number(state.metrics.providerSuccess[provider] || 0) + 1;
+          markProxyAccountSuccess(account);
+          if (options.logRequests) {
+            appendProxyRequestLog({
+              at: new Date().toISOString(),
+              route: routeKey,
+              provider,
+              accountId: account.id,
+              status: 200,
+              durationMs: Date.now() - requestStartedAt
+            });
+          }
+          return writeJson(res, 200, payload);
+        } catch (e) {
+          const detail = String((e && e.message) || e);
+          if (detail.includes('timeout')) state.metrics.totalTimeouts += 1;
+          state.metrics.totalFailures += 1;
+          state.metrics.providerFailures[provider] = Number(state.metrics.providerFailures[provider] || 0) + 1;
+          markProxyAccountFailure(account, detail, cooldownMs, options.failureThreshold);
+          pushMetricError(state.metrics, routeKey, provider, detail);
+          if (options.logRequests) {
+            appendProxyRequestLog({
+              at: new Date().toISOString(),
+              route: routeKey,
+              provider,
+              accountId: account.id,
+              status: 502,
+              error: detail,
+              durationMs: Date.now() - requestStartedAt
+            });
+          }
+          return writeJson(res, 502, { ok: false, error: 'local_backend_failed', detail });
+        }
+      }
+      state.metrics.totalFailures += 1;
+      pushMetricError(state.metrics, routeKey, 'n/a', 'unsupported_in_codex_local_backend');
+      return writeJson(res, 404, { ok: false, error: 'unsupported_in_codex_local_backend' });
+    }
+
+    if (method === 'GET' && pathname === '/v1/models') {
+      const now = Date.now();
+      const ttl = Math.max(1000, Number(options.modelsCacheTtlMs) || 300000);
+      if (state.modelsCache.updatedAt > 0 && now - state.modelsCache.updatedAt < ttl && Array.isArray(state.modelsCache.ids)) {
+        const payload = buildOpenAIModelsList(state.modelsCache.ids.length > 0 ? state.modelsCache.ids : FALLBACK_MODELS);
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/json; charset=utf-8');
+        res.end(JSON.stringify(payload));
+        return;
+      }
+      const candidates = (state.accounts.codex || [])
+        .filter((a) => !!a.accessToken && Date.now() >= (a.cooldownUntil || 0))
+        .slice(0, Math.max(1, Number(options.modelsProbeAccounts) || 2));
+      const modelSet = new Set();
+      let firstError = '';
+      const probeTimeout = Math.min(4000, options.upstreamTimeoutMs);
+      const settled = await Promise.allSettled(
+        candidates.map((acc) => fetchModelsForAccount(options, acc, probeTimeout))
+      );
+      settled.forEach((result) => {
+        if (result.status === 'fulfilled') {
+          result.value.forEach((m) => modelSet.add(m));
+          return;
+        }
+        if (!firstError) firstError = String((result.reason && result.reason.message) || result.reason);
+      });
+      const ids = Array.from(modelSet).sort();
+      state.modelsCache = {
+        updatedAt: now,
+        ids,
+        byAccount: {},
+        sourceCount: ids.length > 0 ? candidates.length : 0
+      };
+      const payload = buildOpenAIModelsList(ids.length > 0 ? ids : FALLBACK_MODELS);
+      res.statusCode = 200;
+      res.setHeader('content-type', 'application/json; charset=utf-8');
+      if (ids.length === 0 && firstError) {
+        res.setHeader('x-aih-models-fallback', '1');
+      }
+      res.end(JSON.stringify(payload));
+      return;
+    }
+
+    let lastError = '';
+    const pool = state.accounts.codex || [];
+    const maxAttempts = Math.min(
+      Math.max(1, Number(options.maxAttempts) || 3),
+      Math.max(1, pool.length)
+    );
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      const account = chooseProxyAccount(pool, state.cursors, 'codex');
+      if (!account) {
+        state.metrics.totalFailures += 1;
+        pushMetricError(state.metrics, routeKey, 'codex', 'no_available_account');
+        return writeJson(res, 503, { ok: false, error: 'no_available_account' });
+      }
+      const upstreamUrl = `${options.upstream}${req.url || ''}`;
+      try {
+        const headers = {};
+        Object.entries(req.headers || {}).forEach(([k, v]) => {
+          const key = String(k || '').toLowerCase();
+          if (key === 'host' || key === 'authorization' || key === 'content-length') return;
+          headers[key] = v;
+        });
+        headers.authorization = `Bearer ${account.accessToken}`;
+        headers['x-aih-account-id'] = account.id;
+        headers['x-aih-account-email'] = account.email || '';
+
+        const upstreamRes = await fetchWithTimeout(upstreamUrl, {
+          method,
+          headers,
+          body: ['GET', 'HEAD'].includes(method) ? undefined : bodyBuffer
+        }, options.upstreamTimeoutMs);
+        if (upstreamRes.status === 401 || upstreamRes.status === 403) {
+          markProxyAccountFailure(account, `upstream_${upstreamRes.status}`, cooldownMs, options.failureThreshold);
+          lastError = `upstream_${upstreamRes.status}_account_${account.id}`;
+          continue;
+        }
+        const raw = Buffer.from(await upstreamRes.arrayBuffer());
+        res.statusCode = upstreamRes.status;
+        upstreamRes.headers.forEach((value, key) => {
+          const low = String(key || '').toLowerCase();
+          if (low === 'transfer-encoding') return;
+          if (low === 'content-length') return;
+          res.setHeader(key, value);
+        });
+        res.setHeader('x-aih-proxy-account-id', account.id);
+        if (account.email) res.setHeader('x-aih-proxy-account-email', account.email);
+        res.setHeader('content-length', raw.length);
+        res.end(raw);
+        markProxyAccountSuccess(account);
+        state.metrics.totalSuccess += 1;
+        if (options.logRequests) {
+          appendProxyRequestLog({
+            at: new Date().toISOString(),
+            route: routeKey,
+            provider: 'codex',
+            accountId: account.id,
+            status: upstreamRes.status,
+            durationMs: Date.now() - requestStartedAt
+          });
+        }
+        return;
+      } catch (e) {
+        const detail = String((e && e.message) || e);
+        if (detail.includes('timeout')) state.metrics.totalTimeouts += 1;
+        markProxyAccountFailure(account, detail, cooldownMs, options.failureThreshold);
+        lastError = detail;
+      }
+    }
+    state.metrics.totalFailures += 1;
+    pushMetricError(state.metrics, routeKey, 'codex', lastError);
+    if (options.logRequests) {
+      appendProxyRequestLog({
+        at: new Date().toISOString(),
+        route: routeKey,
+        provider: 'codex',
+        status: 502,
+        error: lastError,
+        durationMs: Date.now() - requestStartedAt
+      });
+    }
+    return writeJson(res, 502, { ok: false, error: 'upstream_failed', detail: lastError });
+  });
+
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(options.port, options.host, resolve);
+  });
+
+  console.log(`\x1b[36m[aih]\x1b[0m proxy serve started`);
+  console.log(`  listen: http://${options.host}:${options.port}`);
+  console.log(`  upstream: ${options.upstream}`);
+  console.log(`  backend: ${options.backend}`);
+  console.log(`  provider_mode: ${options.provider}`);
+  console.log(`  strategy: ${options.strategy}`);
+  console.log(`  accounts: codex=${state.accounts.codex.length}, gemini=${state.accounts.gemini.length}`);
+  if (requiredClientKey) {
+    console.log('  client_auth: enabled (Bearer key required)');
+  } else {
+    console.log('  client_auth: disabled');
+  }
+  if (requiredManagementKey) {
+    console.log('  management_auth: enabled (Bearer key required)');
+  } else {
+    console.log('  management_auth: disabled');
+  }
+  console.log('  management: /v0/management/status');
+  console.log('  metrics: /v0/management/metrics');
+  console.log('  gateway: /v1/*');
+  console.log('  openai_base_url: ' + `http://${options.host}:${options.port}/v1`);
+  console.log('  tip: export OPENAI_BASE_URL=' + `"http://${options.host}:${options.port}/v1"`);
+  console.log('  tip: export OPENAI_API_KEY="dummy"');
+}
+
+async function syncCodexAccountsToProxy(options) {
+  const base = normalizeManagementBase(options.managementUrl || '');
+  const key = String(options.key || '').trim();
+  if (!key) {
+    throw new Error('Missing management key. Use --key or env AIH_PROXY_MANAGEMENT_KEY.');
+  }
+  const ids = getToolAccountIds('codex');
+  const limit = Math.max(0, Number(options.limit) || 0);
+  const targetIds = limit > 0 ? ids.slice(0, limit) : ids.slice();
+  const maxConcurrency = Math.max(1, Number(options.parallel) || 8);
+  const prefix = String(options.namePrefix || 'aih-codex-');
+
+  let scanned = 0;
+  let eligible = 0;
+  let uploaded = 0;
+  let skippedInvalid = 0;
+  let failed = 0;
+  let firstError = '';
+
+  let cursor = 0;
+  const worker = async () => {
+    while (true) {
+      const idx = cursor;
+      cursor += 1;
+      if (idx >= targetIds.length) return;
+      const id = String(targetIds[idx]);
+      scanned += 1;
+      const authPath = path.join(getToolConfigDir('codex', id), 'auth.json');
+      const authJson = parseJsonFileSafe(authPath);
+      const payload = buildProxyCodexUploadPayload(authJson);
+      if (!payload) {
+        skippedInvalid += 1;
+        continue;
+      }
+      eligible += 1;
+      if (options.dryRun) continue;
+
+      const name = `${prefix}${id}.json`;
+      const url = `${base}/auth-files?name=${encodeURIComponent(name)}`;
+      try {
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${key}`
+          },
+          body: JSON.stringify(payload)
+        });
+        if (!res.ok) {
+          failed += 1;
+          const body = await res.text().catch(() => '');
+          if (!firstError) firstError = `HTTP ${res.status} ${body.slice(0, 200)}`.trim();
+          continue;
+        }
+        uploaded += 1;
+      } catch (e) {
+        failed += 1;
+        if (!firstError) firstError = String((e && e.message) || e);
+      }
+    }
+  };
+
+  const workerCount = Math.min(maxConcurrency, Math.max(1, targetIds.length));
+  const workers = [];
+  for (let i = 0; i < workerCount; i += 1) {
+    workers.push(worker());
+  }
+  await Promise.all(workers);
+
+  return {
+    managementUrl: base,
+    scanned,
+    eligible,
+    uploaded: options.dryRun ? eligible : uploaded,
+    skippedInvalid,
+    failed,
+    firstError,
+    dryRun: !!options.dryRun
+  };
 }
 
 function getNextId(cliName) {
@@ -1631,6 +3182,11 @@ if (!cmd || cmd === 'help' || cmd === '--help' || cmd === '-h') {
 }
 
 if (cmd === 'ls' || cmd === 'list') {
+  const lsArg = String(args[1] || '').trim();
+  if (lsArg === '--help' || lsArg === '-h' || lsArg === 'help') {
+    showLsHelp();
+    process.exit(0);
+  }
   listProfiles();
   process.exit(0);
 }
@@ -2034,6 +3590,219 @@ function parseImportArgs(importArgs) {
     throw new Error(`Unexpected argument(s): ${extra.join(' ')}`);
   }
   return { targetFile, overwrite };
+}
+
+function parseCodexBulkImportArgs(rawArgs) {
+  let sourceDir = 'accounts';
+  let parallel = 8;
+  let limit = 0;
+  let dryRun = false;
+
+  const tokens = Array.isArray(rawArgs) ? rawArgs.slice() : [];
+  for (let i = 0; i < tokens.length; i += 1) {
+    const arg = String(tokens[i] || '').trim();
+    if (!arg) continue;
+    if (arg === '--dry-run') {
+      dryRun = true;
+      continue;
+    }
+    if (arg === '--parallel' || arg === '-p') {
+      const val = String(tokens[i + 1] || '').trim();
+      if (!/^\d+$/.test(val)) throw new Error('Invalid --parallel value');
+      parallel = Math.max(1, Math.min(32, Number(val)));
+      i += 1;
+      continue;
+    }
+    if (arg === '--limit') {
+      const val = String(tokens[i + 1] || '').trim();
+      if (!/^\d+$/.test(val)) throw new Error('Invalid --limit value');
+      limit = Number(val);
+      i += 1;
+      continue;
+    }
+    if (arg.startsWith('-')) throw new Error(`Unknown option: ${arg}`);
+    sourceDir = arg;
+  }
+
+  return { sourceDir, parallel, limit, dryRun };
+}
+
+function parseCodexRefreshTokenLine(line) {
+  const payload = line && typeof line === 'object' ? line : null;
+  if (!payload) return null;
+  const refreshToken = payload.refresh_token || (payload.tokens && payload.tokens.refresh_token) || '';
+  if (!refreshToken.startsWith('rt_')) return null;
+  const idToken = String(payload.id_token || (payload.tokens && payload.tokens.id_token) || '').trim();
+  const accessToken = String(payload.access_token || (payload.tokens && payload.tokens.access_token) || '').trim();
+  const email = String(payload.email || '').trim();
+  const explicitAccountId = String(payload.account_id || (payload.tokens && payload.tokens.account_id) || '').trim();
+  const accountSlug = explicitAccountId || (email ? email.split('@')[0] : '');
+  return { email, accountSlug, refreshToken, idToken, accessToken };
+}
+
+function buildCodexAuthFromRefreshToken(entry) {
+  const accountId = entry.accountSlug || `imported-${crypto.randomBytes(6).toString('hex')}`;
+  return {
+    auth_mode: 'chatgpt',
+    OPENAI_API_KEY: null,
+    tokens: {
+      id_token: String(entry.idToken || ''),
+      access_token: String(entry.accessToken || ''),
+      refresh_token: entry.refreshToken,
+      account_id: accountId
+    },
+    last_refresh: new Date().toISOString()
+  };
+}
+
+function getNextNumericId(cliName) {
+  const ids = getToolAccountIds(cliName).map((x) => Number(x)).filter((n) => Number.isFinite(n));
+  if (ids.length === 0) return 1;
+  return Math.max(...ids) + 1;
+}
+
+function collectJsonFilesRecursively(rootDir) {
+  const out = [];
+  const stack = [rootDir];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    let entries = [];
+    try {
+      entries = fs.readdirSync(current, { withFileTypes: true });
+    } catch (e) {
+      continue;
+    }
+    for (const entry of entries) {
+      const fullPath = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        stack.push(fullPath);
+        continue;
+      }
+      if (entry.isFile() && /\.json$/i.test(entry.name)) {
+        out.push(fullPath);
+      }
+    }
+  }
+  return out.sort();
+}
+
+function collectExistingCodexRefreshTokens() {
+  const out = new Set();
+  const codexRoot = path.join(PROFILES_DIR, 'codex');
+  if (!fs.existsSync(codexRoot)) return out;
+  let entries = [];
+  try {
+    entries = fs.readdirSync(codexRoot, { withFileTypes: true });
+  } catch (e) {
+    return out;
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !/^\d+$/.test(entry.name)) continue;
+    const authPath = path.join(codexRoot, entry.name, '.codex', 'auth.json');
+    if (!fs.existsSync(authPath)) continue;
+    try {
+      const parsed = JSON.parse(fs.readFileSync(authPath, 'utf8'));
+      const token = String((parsed && parsed.tokens && parsed.tokens.refresh_token) || '').trim();
+      if (token.startsWith('rt_')) out.add(token);
+    } catch (e) {
+      // ignore invalid auth payloads
+    }
+  }
+  return out;
+}
+
+async function importCodexTokensFromOutput(options) {
+  const sourceDir = path.resolve(options.sourceDir);
+  if (!fs.existsSync(sourceDir) || !fs.statSync(sourceDir).isDirectory()) {
+    throw new Error(`Source directory not found: ${sourceDir}`);
+  }
+
+  const tokenFiles = collectJsonFilesRecursively(sourceDir);
+  if (tokenFiles.length === 0) {
+    return {
+      sourceDir, scannedFiles: 0, parsedLines: 0, imported: 0, duplicates: 0, invalid: 0, dryRun: !!options.dryRun
+    };
+  }
+
+  let nextId = getNextNumericId('codex');
+  let parsedLines = 0;
+  let imported = 0;
+  let duplicates = 0;
+  let invalid = 0;
+  let failed = 0;
+  let firstError = '';
+  const seenRefreshTokens = collectExistingCodexRefreshTokens();
+  const maxConcurrency = Math.max(1, Number(options.parallel) || 8);
+  const limit = Math.max(0, Number(options.limit) || 0);
+  const queue = [];
+
+  for (const tokenFile of tokenFiles) {
+    if (limit > 0 && parsedLines >= limit) break;
+    let parsedJson = null;
+    try {
+      const content = fs.readFileSync(tokenFile, 'utf8');
+      parsedJson = JSON.parse(content);
+    } catch (e) {
+      invalid += 1;
+      continue;
+    }
+    const parsed = parseCodexRefreshTokenLine(parsedJson);
+    if (!parsed) {
+      invalid += 1;
+      continue;
+    }
+    parsedLines += 1;
+    if (seenRefreshTokens.has(parsed.refreshToken)) {
+      duplicates += 1;
+      continue;
+    }
+    seenRefreshTokens.add(parsed.refreshToken);
+    queue.push(parsed);
+  }
+
+  if (options.dryRun) {
+    imported = queue.length;
+  } else if (queue.length > 0) {
+    let cursor = 0;
+    const worker = async () => {
+      while (true) {
+        const idx = cursor;
+        cursor += 1;
+        if (idx >= queue.length) return;
+        const entry = queue[idx];
+        const id = String(nextId++);
+        try {
+          ensureDir(getProfileDir('codex', id));
+          const codexDir = getToolConfigDir('codex', id);
+          ensureDir(codexDir);
+          const authPayload = buildCodexAuthFromRefreshToken(entry);
+          fs.writeFileSync(path.join(codexDir, 'auth.json'), JSON.stringify(authPayload, null, 2));
+          imported += 1;
+        } catch (e) {
+          failed += 1;
+          if (!firstError) firstError = e.message;
+        }
+      }
+    };
+    const workerCount = Math.min(maxConcurrency, queue.length);
+    const workers = [];
+    for (let i = 0; i < workerCount; i += 1) {
+      workers.push(worker());
+    }
+    await Promise.all(workers);
+  }
+
+  return {
+    sourceDir,
+    scannedFiles: tokenFiles.length,
+    parsedLines,
+    imported,
+    duplicates,
+    invalid,
+    failed,
+    firstError,
+    dryRun: !!options.dryRun
+  };
 }
 
 function buildProgressBar(current, total, width = 22) {
@@ -2445,6 +4214,195 @@ if (cmd === 'import') {
   process.exit(0);
 }
 
+if (cmd === 'proxy') {
+  const action = String(args[1] || '').trim();
+  if (action === 'help' || action === '--help' || action === '-h') {
+    showProxyUsage();
+    process.exit(0);
+  }
+
+  if (action === 'status') {
+    const st = getProxyDaemonStatus();
+    if (st.running) {
+      console.log(`\x1b[36m[aih]\x1b[0m proxy is running (pid=${st.pid})`);
+      console.log('  base_url: http://127.0.0.1:8317/v1');
+      console.log('  api_key: dummy');
+      console.log(`  pid_file: ${st.pidFile}`);
+      console.log(`  log_file: ${st.logFile}`);
+    } else {
+      console.log('\x1b[90m[aih]\x1b[0m proxy is not running');
+    }
+    const auto = getProxyAutostartStatus();
+    if (auto.supported) {
+      console.log(`  autostart: installed=${auto.installed} loaded=${auto.loaded}`);
+    } else {
+      console.log('  autostart: unsupported_on_this_platform');
+    }
+    process.exit(0);
+  }
+
+  if (action === 'autostart') {
+    const sub = String(args[2] || 'status').trim().toLowerCase();
+    try {
+      if (sub === 'install') {
+        installProxyAutostart();
+        console.log(`\x1b[32m[aih]\x1b[0m proxy autostart installed`);
+        process.exit(0);
+      }
+      if (sub === 'uninstall' || sub === 'remove') {
+        uninstallProxyAutostart();
+        console.log(`\x1b[32m[aih]\x1b[0m proxy autostart removed`);
+        process.exit(0);
+      }
+      const st = getProxyAutostartStatus();
+      if (!st.supported) {
+        console.log('\x1b[90m[aih]\x1b[0m autostart is unsupported on this platform');
+        process.exit(0);
+      }
+      console.log(`\x1b[36m[aih]\x1b[0m proxy autostart status`);
+      console.log(`  installed: ${st.installed}`);
+      console.log(`  loaded: ${st.loaded}`);
+      console.log(`  plist: ${st.plist}`);
+      process.exit(0);
+    } catch (e) {
+      console.error(`\x1b[31m[aih] proxy autostart failed: ${e.message}\x1b[0m`);
+      process.exit(1);
+    }
+  }
+
+  if (action === 'stop') {
+    const res = stopProxyDaemon();
+    if (res.stopped) {
+      console.log(`\x1b[32m[aih]\x1b[0m proxy stopped (pid=${res.pid})${res.forced ? ' [forced]' : ''}`);
+      process.exit(0);
+    }
+    console.log(`\x1b[90m[aih]\x1b[0m proxy stop skipped (${res.reason || 'not_running'})`);
+    process.exit(0);
+  }
+
+  if (action === 'start' || !action || action.startsWith('-')) {
+    (async () => {
+      try {
+        const serveArgs = action === 'start' ? args.slice(2) : args.slice(1);
+        const result = await startProxyDaemon(serveArgs);
+        if (result.alreadyRunning) {
+          console.log(`\x1b[90m[aih]\x1b[0m proxy already running (pid=${result.pid})`);
+        } else if (result.started) {
+          console.log(`\x1b[32m[aih]\x1b[0m proxy started in background (pid=${result.pid})`);
+        } else {
+          console.log(`\x1b[33m[aih]\x1b[0m proxy process created (pid=${result.pid}), but health check timed out`);
+        }
+        console.log('  base_url: http://127.0.0.1:8317/v1');
+        console.log('  api_key: dummy');
+        process.exit(0);
+      } catch (e) {
+        console.error(`\x1b[31m[aih] proxy start failed: ${e.message}\x1b[0m`);
+        process.exit(1);
+      }
+    })();
+    return;
+  }
+
+  if (action === 'restart') {
+    const stopped = stopProxyDaemon();
+    if (stopped.stopped) {
+      console.log(`\x1b[90m[aih]\x1b[0m proxy stopped for restart (pid=${stopped.pid})`);
+    }
+    (async () => {
+      try {
+        const result = await startProxyDaemon(args.slice(2));
+        if (result.alreadyRunning) {
+          console.log(`\x1b[90m[aih]\x1b[0m proxy already running (pid=${result.pid})`);
+        } else if (result.started) {
+          console.log(`\x1b[32m[aih]\x1b[0m proxy restarted in background (pid=${result.pid})`);
+        } else {
+          console.log(`\x1b[33m[aih]\x1b[0m proxy process created (pid=${result.pid}), but health check timed out`);
+        }
+        console.log('  base_url: http://127.0.0.1:8317/v1');
+        console.log('  api_key: dummy');
+        process.exit(0);
+      } catch (e) {
+        console.error(`\x1b[31m[aih] proxy restart failed: ${e.message}\x1b[0m`);
+        process.exit(1);
+      }
+    })();
+    return;
+  }
+
+  if (action === 'env') {
+    let envOpts;
+    try {
+      envOpts = parseProxyEnvArgs(args.slice(2));
+    } catch (e) {
+      console.error(`\x1b[31m[aih] ${e.message}\x1b[0m`);
+      console.log('\x1b[90mUsage:\x1b[0m aih proxy env [--base-url <url>] [--api-key <key>]');
+      process.exit(1);
+    }
+    console.log(`export OPENAI_BASE_URL="${envOpts.baseUrl}"`);
+    console.log(`export OPENAI_API_KEY="${envOpts.apiKey}"`);
+    process.exit(0);
+  }
+
+  if (action === 'serve') {
+    let serveOpts;
+    try {
+      const serveArgs = (action === 'serve') ? args.slice(2) : args.slice(1);
+      serveOpts = parseProxyServeArgs(serveArgs);
+    } catch (e) {
+      console.error(`\x1b[31m[aih] ${e.message}\x1b[0m`);
+      console.log('\x1b[90mUsage:\x1b[0m aih proxy [--port <n>]  (or: aih proxy serve [options])');
+      process.exit(1);
+    }
+    (async () => {
+      try {
+        await startLocalProxyServer(serveOpts);
+      } catch (e) {
+        console.error(`\x1b[31m[aih] proxy serve failed: ${e.message}\x1b[0m`);
+        process.exit(1);
+      }
+    })();
+    return;
+  }
+
+  if (action === 'sync-codex' || action === 'sync_codex') {
+    let syncOpts;
+    try {
+      syncOpts = parseProxySyncArgs(args.slice(2));
+    } catch (e) {
+      console.error(`\x1b[31m[aih] ${e.message}\x1b[0m`);
+      console.log('\x1b[90mUsage:\x1b[0m aih proxy sync-codex [--management-url <url>] [--key <management-key>] [--parallel <1-32>] [--limit <n>] [--dry-run]');
+      process.exit(1);
+    }
+    (async () => {
+      try {
+        const result = await syncCodexAccountsToProxy(syncOpts);
+        const modeLabel = result.dryRun ? 'dry-run' : 'write';
+        console.log(`\x1b[36m[aih]\x1b[0m proxy sync-codex done (${modeLabel})`);
+        console.log(`  management: ${result.managementUrl}`);
+        console.log(`  scanned: ${result.scanned}`);
+        console.log(`  eligible: ${result.eligible}`);
+        console.log(`  uploaded: ${result.uploaded}`);
+        console.log(`  invalid: ${result.skippedInvalid}`);
+        if (!result.dryRun) {
+          console.log(`  failed: ${result.failed}`);
+          if (result.firstError) {
+            console.log(`  first_error: ${result.firstError}`);
+          }
+        }
+        process.exit(result.failed > 0 ? 1 : 0);
+      } catch (e) {
+        console.error(`\x1b[31m[aih] proxy sync-codex failed: ${e.message}\x1b[0m`);
+        process.exit(1);
+      }
+    })();
+    return;
+  }
+
+  console.error(`\x1b[31m[aih] Unknown proxy action '${action}'.\x1b[0m`);
+  showProxyUsage();
+  process.exit(1);
+}
+
 const cliName = cmd;
 if (!CLI_CONFIGS[cliName]) {
   console.error(`\x1b[31m[aih] Unknown tool '${cliName}'. Supported: ${Object.keys(CLI_CONFIGS).join(', ')}\x1b[0m`);
@@ -2456,9 +4414,20 @@ let forwardArgs = [];
 const UNLOCK_ACTIONS = new Set(['unlock', '--unlock', 'unexhaust', 'unban', 'release']);
 const USAGE_ACTIONS = new Set(['usage', '--usage', 'stats']);
 const USAGES_ACTIONS = new Set(['usages', 'usage-all', 'all-usage', 'all-usages']);
-const KNOWN_ACTIONS = new Set(['ls', 'set-default', 'add', 'login', 'auto', ...UNLOCK_ACTIONS, ...USAGE_ACTIONS, ...USAGES_ACTIONS]);
+const IMPORT_OUTPUT_ACTIONS = new Set(['import-output', 'import_output', 'bulk-import', 'bulk_import']);
+const KNOWN_ACTIONS = new Set(['ls', 'set-default', 'add', 'login', 'auto', ...UNLOCK_ACTIONS, ...USAGE_ACTIONS, ...USAGES_ACTIONS, ...IMPORT_OUTPUT_ACTIONS]);
+
+if (idOrAction === 'help') {
+  showCliUsage(cliName);
+  process.exit(0);
+}
 
 if (idOrAction === 'ls') {
+  const lsArg = String(args[2] || '').trim();
+  if (lsArg === '--help' || lsArg === '-h' || lsArg === 'help') {
+    showLsHelp(cliName);
+    process.exit(0);
+  }
   listProfiles(cliName);
   process.exit(0);
 }
@@ -2512,6 +4481,46 @@ if (idOrAction && USAGE_ACTIONS.has(idOrAction)) {
 if (idOrAction && USAGES_ACTIONS.has(idOrAction)) {
   printAllUsageSnapshots(cliName);
   process.exit(0);
+}
+
+if (idOrAction && IMPORT_OUTPUT_ACTIONS.has(idOrAction)) {
+  if (cliName !== 'codex') {
+    console.error(`\x1b[31m[aih] ${idOrAction} is currently supported only for codex.\x1b[0m`);
+    process.exit(1);
+  }
+  let parsedOptions;
+  try {
+    parsedOptions = parseCodexBulkImportArgs(args.slice(2));
+  } catch (e) {
+    console.error(`\x1b[31m[aih] ${e.message}\x1b[0m`);
+    console.log(`\x1b[90mUsage:\x1b[0m aih codex import-output [sourceDir] [--parallel <1-32>] [--limit <n>] [--dry-run]`);
+    process.exit(1);
+  }
+
+  (async () => {
+    try {
+      const result = await importCodexTokensFromOutput(parsedOptions);
+      const modeLabel = result.dryRun ? 'dry-run' : 'write';
+      console.log(`\x1b[36m[aih]\x1b[0m codex import-output done (${modeLabel})`);
+      console.log(`  source: ${result.sourceDir}`);
+      console.log(`  files: ${result.scannedFiles}`);
+      console.log(`  parsed: ${result.parsedLines}`);
+      console.log(`  imported: ${result.imported}`);
+      console.log(`  duplicates: ${result.duplicates}`);
+      console.log(`  invalid: ${result.invalid}`);
+      if (!result.dryRun) {
+        console.log(`  failed: ${result.failed || 0}`);
+        if (result.firstError) {
+          console.log(`  first_error: ${result.firstError}`);
+        }
+      }
+      process.exit(0);
+    } catch (e) {
+      console.error(`\x1b[31m[aih] import-output failed: ${e.message}\x1b[0m`);
+      process.exit(1);
+    }
+  })();
+  return;
 }
 
 if (idOrAction === 'set-default') {
