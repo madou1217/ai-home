@@ -3,7 +3,7 @@
 - plan_id: roadmap-m4-remote-runtime-2026-03-01
 - coordinator: ai-coordinator
 - created_at: 2026-03-01T21:34:22+08:00
-- updated_at: 2026-03-01T22:18:54+08:00
+- updated_at: 2026-03-01T22:37:35+08:00
 - status: active
 
 ## Global Rules
@@ -17,7 +17,7 @@
 - [x] T001 Remote daemon core lifecycle
 - [x] T002 Remote transport contract
 - [ ] T003 Remote connector auth/reconnect
-- [ ] T004 Remote workspace runner
+- [x] T004 Remote workspace runner
 - [ ] T005 Remote project session bridge
 - [ ] T006 Remote patch return channel
 - [x] T007 Runtime isolation templates
@@ -88,14 +88,14 @@ Keep this checklist synced with `status`:
 - id: T004
   title: Remote workspace runner
   scope: Implement remote workspace command execution loop for project-scoped operations
-  status: doing
+  status: done
   owner: frank
   claimed_at: 2026-03-01T22:16:27+08:00
-  done_at:
+  done_at: 2026-03-01T22:37:35+08:00
   priority: P0
   depends_on: [T001]
   branch: feat/frank-m4-t004
-  pr_or_commit:
+  pr_or_commit: c08ef97
   blocker:
   deliverable: Workspace runner supporting command execution in isolated project dirs
   acceptance:
@@ -243,3 +243,4 @@ Keep this checklist synced with `status`:
 - 2026-03-01T22:18:54+08:00 [aih-auto] Claimed T008 (m4-t008-bob) owner=bob branch=feat/bob-m4-t008.
 
 - 2026-03-01T22:18:54+08:00 [aih-auto] Claimed T009 (m4-t009-carol) owner=carol branch=feat/carol-m4-t009.
+- 2026-03-01T22:37:35+08:00 [frank] Completed T004 implementation in scoped file; set status=done with pr_or_commit=c08ef97.

@@ -3,7 +3,7 @@
 - plan_id: roadmap-m3-desktop-production-2026-03-01
 - coordinator: ai-coordinator
 - created_at: 2026-03-01T21:34:22+08:00
-- updated_at: 2026-03-01T22:36:51+08:00
+- updated_at: 2026-03-01T22:37:50+08:00
 - status: active
 
 ## Global Rules
@@ -16,12 +16,12 @@
 ## Checklist
 - [x] T001 Tauri command registration
 - [x] T002 Desktop accounts command module
-- [ ] T003 Desktop migration command module
+- [x] T003 Desktop migration command module
 - [ ] T004 Desktop audit command module
-- [ ] T005 Desktop dashboard and launcher UI
+- [x] T005 Desktop dashboard and launcher UI
 - [ ] T006 Desktop migration and audit UI
 - [x] T007 Desktop packaging config
-- [ ] T008 Desktop release workflow and checklist
+- [x] T008 Desktop release workflow and checklist
 
 Keep this checklist synced with `status`:
 - `status: done` => `[x]`
@@ -68,14 +68,14 @@ Keep this checklist synced with `status`:
 - id: T003
   title: Desktop migration command module
   scope: Implement Rust command module for export/import trigger and progress/result reporting
-  status: doing
+  status: done
   owner: bob
   claimed_at: 2026-03-01T22:16:27+08:00
-  done_at:
+  done_at: 2026-03-01T22:37:15+08:00
   priority: P0
   depends_on: [T001]
   branch: feat/bob-m3-t003
-  pr_or_commit:
+  pr_or_commit: c586997
   blocker:
   deliverable: Migration command module with explicit result contract
   acceptance:
@@ -106,14 +106,14 @@ Keep this checklist synced with `status`:
 - id: T005
   title: Desktop dashboard and launcher UI
   scope: Build desktop dashboard and one-click session launcher core UI flows
-  status: doing
+  status: done
   owner: dave
   claimed_at: 2026-03-01T22:16:27+08:00
-  done_at:
+  done_at: 2026-03-01T22:37:32+08:00
   priority: P0
   depends_on: [T002]
   branch: feat/dave-m3-t005
-  pr_or_commit:
+  pr_or_commit: 4ce70e1
   blocker:
   deliverable: Dashboard view with account/tool status and session launch controls
   acceptance:
@@ -166,14 +166,14 @@ Keep this checklist synced with `status`:
 - id: T008
   title: Desktop release workflow and checklist
   scope: Create CI release workflow and release-verification checklist for desktop production
-  status: doing
+  status: done
   owner: judy
   claimed_at: 2026-03-01T22:16:53+08:00
-  done_at:
+  done_at: 2026-03-01T22:37:50+08:00
   priority: P1
   depends_on: [T007]
   branch: feat/judy-m3-t008
-  pr_or_commit:
+  pr_or_commit: 60915f1
   blocker:
   deliverable: Repeatable release workflow with quality gate checklist
   acceptance:
@@ -229,3 +229,8 @@ Keep this checklist synced with `status`:
 - 2026-03-01T22:18:40+08:00 [aih-auto] Claimed T003 (m3-t003-bob) owner=bob branch=feat/bob-m3-t003.
 
 - 2026-03-01T22:36:51+08:00 [alice] Completed T002 (m3-t002-alice); set status=done, synced checklist, and recorded pr_or_commit=822715f.
+
+- 2026-03-01T22:37:15+08:00 [bob] Completed T003 (m3-t003-bob); set status=done, done_at, synced checklist, and recorded pr_or_commit=c586997.
+
+- 2026-03-01T22:37:32+08:00 [dave] Completed T005 (m3-t005-dave); set status=done, done_at, synced checklist, and recorded pr_or_commit=4ce70e1.
+- 2026-03-01T22:37:50+08:00 [judy] Completed T008 (m3-t008-judy); set status=done, done_at, synced checklist, and recorded pr_or_commit=60915f1.
