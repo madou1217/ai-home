@@ -73,3 +73,43 @@ test('project session blocks path escape for file operations', async () => {
     /path escapes workspace/
   );
 });
+
+test('project session returns structured failure and supports reconnect-style retry', async () => {
+  const workspaceRoot = await createTempWorkspace();
+  const projectDir = 'proj-d';
+  await fs.mkdir(path.join(workspaceRoot, projectDir), { recursive: true });
+
+  const runtimeRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'aih-runtime-artifacts-'));
+  const missingContainerFile = path.join(runtimeRoot, 'container-template.Dockerfile');
+
+  const session = createProjectSession({
+    workspaceRoot,
+    projectDir,
+    runtimeProfile: 'local',
+    runtimeRoot
+  });
+
+  await assert.rejects(
+    () => session.runCommand({
+      runtimeProfile: 'container',
+      command: process.execPath,
+      args: ['-e', 'process.exit(0)']
+    }),
+    /runtime artifact not found/
+  );
+
+  await fs.writeFile(missingContainerFile, '# synthetic runtime file\n', 'utf8');
+
+  const retry = await session.runCommand({
+    runtimeProfile: 'container',
+    command: process.execPath,
+    args: ['-e', "process.stdout.write(process.env.AIH_RUNTIME_PROFILE || '')"]
+  });
+
+  assert.equal(retry.kind, 'command_result');
+  assert.equal(retry.result.ok, true);
+  assert.equal(retry.result.stdout, 'container');
+  assert.equal(retry.profile, 'container');
+  assert.equal(typeof retry.sessionId, 'string');
+  assert.equal(retry.sessionId.length > 0, true);
+});

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import OpsQuickActions from './OpsQuickActions';
 import SessionScreen from './SessionScreen';
 import { DaemonClient, TaskSnapshot } from '../services/daemonClient';
@@ -27,16 +27,59 @@ function prettyJson(value: unknown): string {
   }
 }
 
+function isTerminalStatus(status: string): boolean {
+  return status === 'succeeded' || status === 'failed' || status === 'canceled';
+}
+
+function summarizeResult(result: unknown): string {
+  if (!result || typeof result !== 'object') {
+    return result ? String(result) : 'No structured result payload.';
+  }
+
+  const payload = result as Record<string, unknown>;
+  const lines: string[] = [];
+  if (typeof payload.exitCode === 'number') lines.push(`Exit Code: ${payload.exitCode}`);
+  if (typeof payload.durationMs === 'number') lines.push(`Duration: ${payload.durationMs}ms`);
+  if (typeof payload.summary === 'string' && payload.summary.trim()) lines.push(`Summary: ${payload.summary.trim()}`);
+  if (typeof payload.stdout === 'string' && payload.stdout.trim()) {
+    lines.push(`Stdout: ${payload.stdout.trim().slice(0, 180)}${payload.stdout.length > 180 ? '…' : ''}`);
+  }
+  if (typeof payload.stderr === 'string' && payload.stderr.trim()) {
+    lines.push(`Stderr: ${payload.stderr.trim().slice(0, 180)}${payload.stderr.length > 180 ? '…' : ''}`);
+  }
+
+  return lines.length > 0 ? lines.join('\n') : 'Result received. Expand raw payload for more details.';
+}
+
+function buildGuidance(task: TaskSnapshot | null, runtimeError: string): string {
+  if (runtimeError) {
+    if (runtimeError.includes('daemon_unreachable')) {
+      return 'Daemon unreachable. Check network or retry connection from quick actions.';
+    }
+    return 'Request failed. Confirm daemon health and retry the task.';
+  }
+  if (!task) return 'Fill command and tap Start Task to trigger execution.';
+  if (task.status === 'queued') return 'Task is queued. Keep this screen open to track transitions.';
+  if (task.status === 'running') return 'Task is running. You can refresh or cancel from quick actions.';
+  if (task.status === 'failed') return 'Task failed. Review error details, adjust command, then retry.';
+  if (task.status === 'canceled') return 'Task canceled. You can restart with the same command.';
+  if (task.status === 'succeeded') return 'Task completed successfully. Review summary and raw result payload.';
+  return 'Task state updated.';
+}
+
 export default function TaskScreen(props: TaskScreenProps): JSX.Element {
   const [command, setCommand] = useState<string>('aih ls');
   const [sessionId, setSessionId] = useState<string>('');
   const [task, setTask] = useState<TaskSnapshot | null>(null);
   const [resultText, setResultText] = useState<string>('');
+  const [resultSummary, setResultSummary] = useState<string>('');
   const [errorText, setErrorText] = useState<string>('');
   const [isStarting, setIsStarting] = useState<boolean>(false);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
   const [watchStatus, setWatchStatus] = useState<string>('No active task.');
+  const [statusHistory, setStatusHistory] = useState<string[]>([]);
   const watchStopRef = useRef<(() => void) | null>(null);
+  const lastStatusRef = useRef<string>('');
 
   useEffect(() => {
     return () => {
@@ -49,6 +92,13 @@ export default function TaskScreen(props: TaskScreenProps): JSX.Element {
 
   const canStart = useMemo(() => !isStarting && command.trim().length > 0, [isStarting, command]);
   const canCancel = useMemo(() => Boolean(task && (task.status === 'queued' || task.status === 'running')), [task]);
+  const guidanceText = useMemo(() => buildGuidance(task, errorText), [task, errorText]);
+
+  const appendStatusHistory = (nextTask: TaskSnapshot): void => {
+    if (lastStatusRef.current === nextTask.status) return;
+    lastStatusRef.current = nextTask.status;
+    setStatusHistory((prev) => [`${new Date().toLocaleTimeString()}  ${nextTask.status}`, ...prev].slice(0, 8));
+  };
 
   const beginWatch = (taskId: string): void => {
     if (watchStopRef.current) {
@@ -60,8 +110,10 @@ export default function TaskScreen(props: TaskScreenProps): JSX.Element {
       pollIntervalMs: 1_250,
       onUpdate: (nextTask) => {
         setTask(nextTask);
+        appendStatusHistory(nextTask);
         setWatchStatus(`Tracking ${nextTask.taskId} (${nextTask.status})`);
-        if (nextTask.status === 'succeeded' || nextTask.status === 'failed' || nextTask.status === 'canceled') {
+        if (isTerminalStatus(nextTask.status)) {
+          setResultSummary(summarizeResult(nextTask.result));
           setResultText(prettyJson(nextTask.result));
           void props.pushNotifications.notifyTaskCompleted(nextTask);
         } else {
@@ -86,14 +138,20 @@ export default function TaskScreen(props: TaskScreenProps): JSX.Element {
   const startTask = async (): Promise<void> => {
     if (!canStart) return;
     setIsStarting(true);
+    setWatchStatus('Starting task...');
     setErrorText('');
     setResultText('');
+    setResultSummary('');
+    setStatusHistory([]);
+    lastStatusRef.current = '';
     try {
       const created = await props.daemonClient.startTask({
         command: command.trim(),
         sessionId: sessionId.trim() || undefined
       });
       setTask(created);
+      setStatusHistory([`${new Date().toLocaleTimeString()}  ${created.status}`]);
+      lastStatusRef.current = created.status;
       setWatchStatus(`Task ${created.taskId} started.`);
       beginWatch(created.taskId);
       await props.pushNotifications.notifyTaskStarted(created);
@@ -111,7 +169,9 @@ export default function TaskScreen(props: TaskScreenProps): JSX.Element {
     try {
       const fresh = await props.daemonClient.getTask(task.taskId);
       setTask(fresh);
-      if (fresh.status === 'succeeded' || fresh.status === 'failed' || fresh.status === 'canceled') {
+      appendStatusHistory(fresh);
+      if (isTerminalStatus(fresh.status)) {
+        setResultSummary(summarizeResult(fresh.result));
         setResultText(prettyJson(fresh.result));
       }
     } catch (error) {
@@ -170,9 +230,14 @@ export default function TaskScreen(props: TaskScreenProps): JSX.Element {
 
         <Text style={styles.metaText}>{isRefreshing ? 'Refreshing status...' : watchStatus}</Text>
         <Text style={styles.metaText}>{canStart ? 'Ready to start task.' : 'Command required.'}</Text>
-        <Text style={styles.startLink} onPress={() => void startTask()}>
-          {isStarting ? 'Starting task...' : 'Start Task'}
-        </Text>
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => void startTask()}
+          disabled={!canStart}
+          style={({ pressed }) => [styles.startButton, (!canStart || pressed) && styles.startButtonDisabled]}
+        >
+          <Text style={styles.startButtonText}>{isStarting ? 'Starting task...' : 'Start Task'}</Text>
+        </Pressable>
       </View>
 
       <View style={styles.card}>
@@ -181,10 +246,29 @@ export default function TaskScreen(props: TaskScreenProps): JSX.Element {
         {task?.message ? <Text style={styles.metaText}>{task.message}</Text> : null}
         {task?.error ? <Text style={styles.errorText}>{task.error}</Text> : null}
         {errorText ? <Text style={styles.errorText}>{errorText}</Text> : null}
+        <Text style={styles.guidanceText}>{guidanceText}</Text>
       </View>
 
       <View style={styles.card}>
-        <Text style={styles.label}>Result</Text>
+        <Text style={styles.label}>Lifecycle</Text>
+        {statusHistory.length === 0 ? (
+          <Text style={styles.metaText}>No transitions yet.</Text>
+        ) : (
+          statusHistory.map((entry, index) => (
+            <Text key={`${entry}-${index}`} style={styles.timelineText}>
+              {entry}
+            </Text>
+          ))
+        )}
+      </View>
+
+      <View style={styles.card}>
+        <Text style={styles.label}>Result Summary</Text>
+        <Text style={styles.resultSummaryText}>{resultSummary || 'Task summary will appear after completion.'}</Text>
+      </View>
+
+      <View style={styles.card}>
+        <Text style={styles.label}>Raw Result</Text>
         <Text style={styles.resultText}>{resultText || 'Task result will appear here when available.'}</Text>
       </View>
     </ScrollView>
@@ -247,10 +331,34 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontFamily: 'Menlo'
   },
-  startLink: {
-    color: '#60a5fa',
+  startButton: {
+    marginTop: 4,
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    backgroundColor: '#2563eb',
+    alignItems: 'center'
+  },
+  startButtonDisabled: {
+    opacity: 0.6
+  },
+  startButtonText: {
+    color: '#eff6ff',
     fontSize: 14,
     fontWeight: '700'
+  },
+  timelineText: {
+    color: '#cbd5e1',
+    fontSize: 12,
+    fontFamily: 'Menlo'
+  },
+  guidanceText: {
+    color: '#fbbf24',
+    fontSize: 12
+  },
+  resultSummaryText: {
+    color: '#dbeafe',
+    fontSize: 12,
+    lineHeight: 18
   }
 });
-

@@ -6,9 +6,12 @@ export interface OpsQuickActionsProps {
   onRetryConnection: () => Promise<void> | void;
   onCancelTask?: () => Promise<void> | void;
   cancelDisabled?: boolean;
+  onSwitchAccount?: (nextAccount: string) => Promise<void> | void;
+  accounts?: string[];
+  initialAccount?: string;
 }
 
-type ActionKind = 'refresh' | 'retry' | 'cancel' | null;
+type ActionKind = 'retry' | 'stop' | 'switch' | null;
 
 function toErrorMessage(error: unknown): string {
   if (!error) return 'Unknown error';
@@ -16,24 +19,32 @@ function toErrorMessage(error: unknown): string {
   return String(error);
 }
 
-export default function OpsQuickActions(props: OpsQuickActionsProps): JSX.Element {
-  const [pendingAction, setPendingAction] = useState<ActionKind>(null);
-  const [lastMessage, setLastMessage] = useState<string>('No action executed yet.');
+function uniqueAccounts(accounts?: string[]): string[] {
+  const candidates = (accounts ?? []).map((item) => item.trim()).filter(Boolean);
+  return Array.from(new Set(candidates));
+}
 
-  const actions = useMemo(
-    () => [
-      { key: 'refresh' as const, label: 'Refresh Status', onPress: props.onRefreshStatus },
-      { key: 'retry' as const, label: 'Retry Connection', onPress: props.onRetryConnection },
-      { key: 'cancel' as const, label: 'Cancel Task', onPress: props.onCancelTask, disabled: props.cancelDisabled }
-    ],
-    [props]
-  );
+export default function OpsQuickActions(props: OpsQuickActionsProps): JSX.Element {
+  const accountOptions = useMemo(() => {
+    const values = uniqueAccounts(props.accounts);
+    return values.length > 0 ? values : ['default', 'backup'];
+  }, [props.accounts]);
+
+  const initialAccount = props.initialAccount && accountOptions.includes(props.initialAccount)
+    ? props.initialAccount
+    : accountOptions[0];
+
+  const [activeAccount, setActiveAccount] = useState<string>(initialAccount);
+  const [pendingAction, setPendingAction] = useState<ActionKind>(null);
+  const [lastMessage, setLastMessage] = useState<string>('Ready.');
+
+  const canStop = Boolean(props.onCancelTask) && !props.cancelDisabled;
 
   const runAction = async (
     action: Exclude<ActionKind, null>,
-    execute?: () => Promise<void> | void
+    execute: () => Promise<void> | void
   ): Promise<void> => {
-    if (!execute || pendingAction) return;
+    if (pendingAction) return;
     try {
       setPendingAction(action);
       await execute();
@@ -45,25 +56,62 @@ export default function OpsQuickActions(props: OpsQuickActionsProps): JSX.Elemen
     }
   };
 
+  const retryNow = async (): Promise<void> => {
+    await props.onRetryConnection();
+    await props.onRefreshStatus();
+  };
+
+  const stopNow = async (): Promise<void> => {
+    if (!props.onCancelTask || !canStop) return;
+    await props.onCancelTask();
+    await props.onRefreshStatus();
+  };
+
+  const switchAccountNow = async (): Promise<void> => {
+    if (accountOptions.length === 0) return;
+
+    const currentIndex = accountOptions.findIndex((item) => item === activeAccount);
+    const safeIndex = currentIndex >= 0 ? currentIndex : 0;
+    const nextAccount = accountOptions[(safeIndex + 1) % accountOptions.length];
+
+    setActiveAccount(nextAccount);
+    if (props.onSwitchAccount) {
+      await props.onSwitchAccount(nextAccount);
+    }
+    await props.onRefreshStatus();
+    setLastMessage(`Switched to account: ${nextAccount}`);
+  };
+
+  const controlsDisabled = pendingAction !== null;
+
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Ops Quick Actions</Text>
+      <Text style={styles.title}>Quick Actions</Text>
+      <Text style={styles.metaText}>Active account: {activeAccount}</Text>
       <View style={styles.row}>
-        {actions.map((action) => {
-          if (!action.onPress) return null;
-          const disabled = Boolean(action.disabled) || pendingAction !== null;
-          const isPending = pendingAction === action.key;
-          return (
-            <Pressable
-              key={action.key}
-              onPress={() => void runAction(action.key, action.onPress)}
-              style={[styles.button, disabled && styles.buttonDisabled]}
-              disabled={disabled}
-            >
-              <Text style={styles.buttonText}>{isPending ? 'Working...' : action.label}</Text>
-            </Pressable>
-          );
-        })}
+        <Pressable
+          onPress={() => void runAction('retry', retryNow)}
+          style={[styles.button, styles.retryButton, controlsDisabled && styles.buttonDisabled]}
+          disabled={controlsDisabled}
+        >
+          <Text style={styles.buttonText}>{pendingAction === 'retry' ? 'Retrying...' : 'Retry'}</Text>
+        </Pressable>
+
+        <Pressable
+          onPress={() => void runAction('stop', stopNow)}
+          style={[styles.button, styles.stopButton, (!canStop || controlsDisabled) && styles.buttonDisabled]}
+          disabled={!canStop || controlsDisabled}
+        >
+          <Text style={styles.buttonText}>{pendingAction === 'stop' ? 'Stopping...' : 'Stop'}</Text>
+        </Pressable>
+
+        <Pressable
+          onPress={() => void runAction('switch', switchAccountNow)}
+          style={[styles.button, styles.switchButton, controlsDisabled && styles.buttonDisabled]}
+          disabled={controlsDisabled}
+        >
+          <Text style={styles.buttonText}>{pendingAction === 'switch' ? 'Switching...' : 'Switch Account'}</Text>
+        </Pressable>
       </View>
       <Text style={styles.message}>{lastMessage}</Text>
     </View>
@@ -82,16 +130,30 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '600'
   },
+  metaText: {
+    color: '#9ca3af',
+    fontSize: 12
+  },
   row: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8
   },
   button: {
-    backgroundColor: '#2563eb',
     borderRadius: 10,
     paddingVertical: 8,
-    paddingHorizontal: 12
+    paddingHorizontal: 12,
+    minWidth: 96,
+    alignItems: 'center'
+  },
+  retryButton: {
+    backgroundColor: '#2563eb'
+  },
+  stopButton: {
+    backgroundColor: '#b91c1c'
+  },
+  switchButton: {
+    backgroundColor: '#0f766e'
   },
   buttonDisabled: {
     opacity: 0.55
@@ -106,4 +168,3 @@ const styles = StyleSheet.create({
     fontSize: 12
   }
 });
-

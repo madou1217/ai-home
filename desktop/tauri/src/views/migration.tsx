@@ -1,9 +1,33 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
-interface CommandResult {
-  code: number;
+type RunPhase = "idle" | "running" | "success" | "error";
+
+interface ProgressEvent {
+  channel: string;
+  current?: number;
+  total?: number;
+  message: string;
+}
+
+interface MigrationResult {
+  operation: "export" | "import";
+  success: boolean;
+  exitCode: number;
+  reasonCode?: string;
+  summary?: string;
+  command: string[];
+  progress: ProgressEvent[];
   stdout: string;
   stderr: string;
+}
+
+interface RunSnapshot {
+  phase: RunPhase;
+  commandLabel: string;
+  result?: MigrationResult;
+  message: string;
+  startedAt?: number;
+  finishedAt?: number;
 }
 
 declare global {
@@ -25,11 +49,34 @@ async function invokeTauri<T>(cmd: string, args?: Record<string, unknown>): Prom
   return invokeFn<T>(cmd, args ?? {});
 }
 
-function formatResult(result: CommandResult): string {
-  const lines = [`exit_code=${result.code}`];
+function formatProgress(progress: ProgressEvent[]): string {
+  if (!progress.length) return "none";
+  return progress
+    .map((event) => {
+      const stage = event.current && event.total ? ` [${event.current}/${event.total}]` : "";
+      return `[${event.channel}]${stage} ${event.message}`;
+    })
+    .join("\n");
+}
+
+function formatResult(result: MigrationResult): string {
+  const lines = [
+    `operation=${result.operation}`,
+    `success=${result.success}`,
+    `exit_code=${result.exitCode}`,
+  ];
+  if (result.reasonCode) lines.push(`reason=${result.reasonCode}`);
+  if (result.summary) lines.push(`summary=${result.summary}`);
+  if (result.command?.length) lines.push(`command=${result.command.join(" ")}`);
+  lines.push(`progress:\n${formatProgress(result.progress || [])}`);
   if (result.stdout.trim()) lines.push(`stdout:\n${result.stdout.trimEnd()}`);
   if (result.stderr.trim()) lines.push(`stderr:\n${result.stderr.trimEnd()}`);
   return lines.join("\n\n");
+}
+
+function formatTime(ts?: number): string {
+  if (!ts) return "-";
+  return new Date(ts).toLocaleString();
 }
 
 export default function MigrationView() {
@@ -37,48 +84,97 @@ export default function MigrationView() {
   const [selectors, setSelectors] = useState("");
   const [importFile, setImportFile] = useState("backup.aes");
   const [overwrite, setOverwrite] = useState(false);
-  const [running, setRunning] = useState(false);
-  const [status, setStatus] = useState("No migration command executed.");
+  const [snapshot, setSnapshot] = useState<RunSnapshot>({
+    phase: "idle",
+    commandLabel: "-",
+    message: "No migration command executed.",
+  });
+
+  const running = snapshot.phase === "running";
+
+  const phaseColor = useMemo(() => {
+    if (snapshot.phase === "success") return "#166534";
+    if (snapshot.phase === "error") return "#991b1b";
+    if (snapshot.phase === "running") return "#1d4ed8";
+    return "#4b5563";
+  }, [snapshot.phase]);
+
+  async function runCommand(
+    commandLabel: "export" | "import",
+    command: string,
+    payload: Record<string, unknown>,
+  ) {
+    const startedAt = Date.now();
+    setSnapshot({
+      phase: "running",
+      commandLabel,
+      message: "Command started...",
+      startedAt,
+    });
+
+    try {
+      const result = await invokeTauri<MigrationResult>(command, payload);
+      const success = result.success;
+      setSnapshot({
+        phase: success ? "success" : "error",
+        commandLabel,
+        result,
+        message: success ? "Command completed successfully." : "Command finished with errors.",
+        startedAt,
+        finishedAt: Date.now(),
+      });
+    } catch (error) {
+      setSnapshot({
+        phase: "error",
+        commandLabel,
+        message: `Command failed: ${(error as Error).message}`,
+        startedAt,
+        finishedAt: Date.now(),
+      });
+    }
+  }
 
   async function runExport() {
     const exportTarget = exportFile.trim();
     if (!exportTarget) {
-      setStatus("Export file path is required.");
+      setSnapshot({
+        phase: "error",
+        commandLabel: "export",
+        message: "Export file path is required.",
+      });
       return;
     }
+
     const selectorList = selectors
       .split(/\s+/)
       .map((item) => item.trim())
       .filter(Boolean);
-    const args = ["export", exportTarget, ...selectorList];
-    setRunning(true);
-    try {
-      const result = await invokeTauri<CommandResult>("run_aih", { args });
-      setStatus(formatResult(result));
-    } catch (error) {
-      setStatus(`Export failed: ${(error as Error).message}`);
-    } finally {
-      setRunning(false);
-    }
+
+    await runCommand("export", "migration_export_trigger", {
+      request: {
+        targetFile: exportTarget,
+        selectors: selectorList,
+      },
+    });
   }
 
   async function runImport() {
     const importTarget = importFile.trim();
     if (!importTarget) {
-      setStatus("Import file path is required.");
+      setSnapshot({
+        phase: "error",
+        commandLabel: "import",
+        message: "Import file path is required.",
+      });
       return;
     }
 
-    const args = overwrite ? ["import", "-o", importTarget] : ["import", importTarget];
-    setRunning(true);
-    try {
-      const result = await invokeTauri<CommandResult>("run_aih", { args });
-      setStatus(formatResult(result));
-    } catch (error) {
-      setStatus(`Import failed: ${(error as Error).message}`);
-    } finally {
-      setRunning(false);
-    }
+    await runCommand("import", "migration_import_trigger", {
+      request: {
+        sourceFile: importTarget,
+        overwrite,
+      },
+    });
   }
 
   return (
@@ -107,7 +203,7 @@ export default function MigrationView() {
             />
           </label>
           <button onClick={() => void runExport()} disabled={running}>
-            Run Export
+            {running && snapshot.commandLabel === "export" ? "Running Export..." : "Run Export"}
           </button>
         </div>
       </div>
@@ -133,13 +229,28 @@ export default function MigrationView() {
             Overwrite existing accounts (`-o`)
           </label>
           <button onClick={() => void runImport()} disabled={running}>
-            Run Import
+            {running && snapshot.commandLabel === "import" ? "Running Import..." : "Run Import"}
           </button>
         </div>
       </div>
 
       <div style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: 12 }}>
-        <h3 style={{ marginTop: 0 }}>Command Output</h3>
+        <h3 style={{ marginTop: 0 }}>Execution Status</h3>
+        <div style={{ display: "grid", gap: 6, marginBottom: 10 }}>
+          <div>
+            Phase: <strong style={{ color: phaseColor }}>{snapshot.phase}</strong>
+          </div>
+          <div>
+            Command: <strong>{snapshot.commandLabel}</strong>
+          </div>
+          <div>
+            Started: <strong>{formatTime(snapshot.startedAt)}</strong>
+          </div>
+          <div>
+            Finished: <strong>{formatTime(snapshot.finishedAt)}</strong>
+          </div>
+          <div>{snapshot.message}</div>
+        </div>
         <pre
           style={{
             margin: 0,
@@ -150,7 +261,7 @@ export default function MigrationView() {
             minHeight: 80,
           }}
         >
-          {status}
+          {snapshot.result ? formatResult(snapshot.result) : "No command output yet."}
         </pre>
       </div>
     </section>

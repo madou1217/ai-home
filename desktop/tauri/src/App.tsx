@@ -27,7 +27,7 @@ export default function App() {
       <header style={{ marginBottom: 18 }}>
         <h1 style={{ margin: 0, fontSize: 26 }}>AI Home Desktop</h1>
         <p style={{ margin: "8px 0 0", color: "#4b5563" }}>
-          Desktop control center for account routing, migration operations, and audit visibility.
+          Desktop control center for dashboard monitoring, one-click session launch, migration, and audit visibility.
         </p>
       </header>
 

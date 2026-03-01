@@ -5,6 +5,7 @@ export interface ReconnectSnapshot {
   attempt: number;
   nextRetryAt?: string;
   reason?: string;
+  hint?: string;
   updatedAt: string;
 }
 
@@ -12,6 +13,7 @@ export interface ReconnectManagerOptions {
   baseDelayMs?: number;
   maxDelayMs?: number;
   maxAttempts?: number;
+  connectTimeoutMs?: number;
   jitterRatio?: number;
   now?: () => number;
   setTimeoutFn?: typeof setTimeout;
@@ -24,7 +26,9 @@ type ReconnectListener = (snapshot: ReconnectSnapshot) => void;
 const DEFAULT_BASE_DELAY_MS = 1_000;
 const DEFAULT_MAX_DELAY_MS = 30_000;
 const DEFAULT_MAX_ATTEMPTS = 8;
+const DEFAULT_CONNECT_TIMEOUT_MS = 8_000;
 const DEFAULT_JITTER_RATIO = 0.2;
+const CONNECTION_TIMEOUT_REASON = 'connect_timeout';
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -40,6 +44,7 @@ export class ReconnectManager {
   private readonly baseDelayMs: number;
   private readonly maxDelayMs: number;
   private readonly maxAttempts: number;
+  private readonly connectTimeoutMs: number;
   private readonly jitterRatio: number;
   private readonly now: () => number;
   private readonly setTimeoutFn: typeof setTimeout;
@@ -61,6 +66,7 @@ export class ReconnectManager {
     this.baseDelayMs = options.baseDelayMs ?? DEFAULT_BASE_DELAY_MS;
     this.maxDelayMs = options.maxDelayMs ?? DEFAULT_MAX_DELAY_MS;
     this.maxAttempts = options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
+    this.connectTimeoutMs = options.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS;
     this.jitterRatio = options.jitterRatio ?? DEFAULT_JITTER_RATIO;
     this.now = options.now || Date.now;
     this.setTimeoutFn = options.setTimeoutFn || setTimeout;
@@ -87,6 +93,7 @@ export class ReconnectManager {
       state: 'connecting',
       attempt: 0,
       reason: undefined,
+      hint: 'Attempting initial connection.',
       nextRetryAt: undefined
     });
     void this.tryConnect('connecting');
@@ -101,6 +108,7 @@ export class ReconnectManager {
       state: 'idle',
       attempt: 0,
       reason: undefined,
+      hint: undefined,
       nextRetryAt: undefined
     });
   }
@@ -110,7 +118,8 @@ export class ReconnectManager {
     this.clearRetryTimer();
     this.updateSnapshot({
       state: 'reconnecting',
-      reason: reason || 'connection_lost'
+      reason: reason || 'connection_lost',
+      hint: 'Connection dropped. Retrying automatically.'
     });
     this.scheduleRetry();
   }
@@ -153,6 +162,7 @@ export class ReconnectManager {
       this.updateSnapshot({
         state: 'offline',
         attempt: nextAttempt - 1,
+        hint: 'Auto-retry stopped. Tap reconnect to try again.',
         nextRetryAt: undefined
       });
       return;
@@ -163,6 +173,7 @@ export class ReconnectManager {
     this.updateSnapshot({
       state: 'reconnecting',
       attempt: nextAttempt,
+      hint: `Retrying automatically (${nextAttempt}/${this.maxAttempts}).`,
       nextRetryAt
     });
 
@@ -177,26 +188,82 @@ export class ReconnectManager {
     this.connecting = true;
     this.updateSnapshot({
       state: state === 'idle' ? 'connecting' : state,
+      hint: state === 'reconnecting' ? 'Attempting to reconnect.' : 'Attempting connection.',
       nextRetryAt: undefined
     });
 
     try {
-      await this.connectOperation();
+      await this.runConnectWithTimeout(this.connectOperation);
+      if (!this.active) return;
       this.updateSnapshot({
         state: 'connected',
         attempt: 0,
         reason: undefined,
+        hint: 'Connected.',
         nextRetryAt: undefined
       });
     } catch (error) {
+      if (!this.active) return;
+      const normalizedReason = this.normalizeFailureReason(error);
       this.updateSnapshot({
         state: 'reconnecting',
-        reason: toErrorMessage(error)
+        reason: normalizedReason,
+        hint: this.toReconnectHint(normalizedReason)
       });
       this.scheduleRetry();
     } finally {
       this.connecting = false;
     }
   }
-}
 
+  private runConnectWithTimeout(operation: ConnectOperation): Promise<void> {
+    const timeoutMs = this.connectTimeoutMs;
+    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+      return operation();
+    }
+
+    return new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const timer = this.setTimeoutFn(() => {
+        if (settled) return;
+        settled = true;
+        reject(new Error(CONNECTION_TIMEOUT_REASON));
+      }, timeoutMs);
+
+      operation()
+        .then(() => {
+          if (settled) return;
+          settled = true;
+          this.clearTimeoutFn(timer);
+          resolve();
+        })
+        .catch((error) => {
+          if (settled) return;
+          settled = true;
+          this.clearTimeoutFn(timer);
+          reject(error);
+        });
+    });
+  }
+
+  private normalizeFailureReason(error: unknown): string {
+    const message = toErrorMessage(error);
+    if (!message) return 'unknown_error';
+    const lowered = message.toLowerCase();
+    if (lowered.includes('timeout') || lowered.includes('timed out')) return CONNECTION_TIMEOUT_REASON;
+    if (lowered.includes('disconnect') || lowered.includes('network') || lowered.includes('socket')) {
+      return 'connection_lost';
+    }
+    return message;
+  }
+
+  private toReconnectHint(reason: string): string {
+    if (reason === CONNECTION_TIMEOUT_REASON) {
+      return 'Connection timed out. Retrying with backoff.';
+    }
+    if (reason === 'connection_lost') {
+      return 'Network interrupted. Retrying automatically.';
+    }
+    return 'Reconnect failed. Will retry automatically.';
+  }
+}

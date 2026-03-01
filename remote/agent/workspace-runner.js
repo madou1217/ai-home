@@ -35,18 +35,34 @@ function createWorkspaceRunner(options = {}, deps = {}) {
   const projectDir = options.projectDir || '.';
   const workspaceDir = resolveWorkspacePath(workspaceRoot, projectDir, pathImpl);
 
+  function emitEvent(emit, event) {
+    if (typeof emit === 'function') {
+      try {
+        emit(event);
+      } catch (_) {
+        // Keep command execution stable even if observers fail.
+      }
+    }
+  }
+
   async function run(request = {}) {
-    const command = request.command || request.cmd;
-    if (!command || typeof command !== 'string') {
+    const commandRaw = request.command || request.cmd;
+    const command = typeof commandRaw === 'string' ? commandRaw.trim() : '';
+    if (!command) {
       throw new Error('command is required');
     }
 
     const args = Array.isArray(request.args) ? request.args.map((item) => String(item)) : [];
     const cwd = resolveSubPath(workspaceDir, request.cwd || '.', pathImpl);
-    const env = { ...(request.env || {}) };
+    const env = request.inheritEnv === false
+      ? { ...(request.env || {}) }
+      : { ...process.env, ...(request.env || {}) };
     const timeoutMs = Number(request.timeoutMs) > 0 ? Number(request.timeoutMs) : 0;
+    const killAfterMs = Number(request.killAfterMs) > 0 ? Number(request.killAfterMs) : 1000;
+    const maxOutputBytes = Number(request.maxOutputBytes) > 0 ? Number(request.maxOutputBytes) : 1024 * 1024;
     const shell = Boolean(request.shell);
     const input = request.input == null ? '' : String(request.input);
+    const emit = request.onEvent;
 
     return new Promise((resolve) => {
       const startedAtMs = clock();
@@ -59,39 +75,107 @@ function createWorkspaceRunner(options = {}, deps = {}) {
 
       let timedOut = false;
       let timeout = null;
+      let hardKillTimeout = null;
       let spawnError = null;
       let stdout = '';
       let stderr = '';
+      let outputTruncated = false;
+
+      function appendChunk(base, chunk) {
+        const currentSize = Buffer.byteLength(base, 'utf8');
+        if (currentSize >= maxOutputBytes) {
+          outputTruncated = true;
+          return base;
+        }
+        const chunkBuffer = Buffer.from(chunk, 'utf8');
+        const remaining = maxOutputBytes - currentSize;
+        if (chunkBuffer.length <= remaining) {
+          return base + chunk;
+        }
+        outputTruncated = true;
+        return base + chunkBuffer.subarray(0, remaining).toString('utf8');
+      }
+
+      emitEvent(emit, {
+        type: 'start',
+        command,
+        args,
+        cwd,
+        pid: child.pid || null,
+        startedAt
+      });
 
       if (timeoutMs > 0) {
         timeout = setTimeout(() => {
           timedOut = true;
           child.kill('SIGTERM');
+          emitEvent(emit, {
+            type: 'timeout',
+            command,
+            args,
+            cwd,
+            timeoutMs,
+            at: new Date(clock()).toISOString()
+          });
+          hardKillTimeout = setTimeout(() => {
+            if (child.exitCode == null) {
+              child.kill('SIGKILL');
+            }
+          }, killAfterMs);
         }, timeoutMs);
       }
 
       child.stdout.on('data', (chunk) => {
-        stdout += String(chunk);
+        const text = String(chunk);
+        stdout = appendChunk(stdout, text);
+        emitEvent(emit, {
+          type: 'stdout',
+          command,
+          args,
+          cwd,
+          chunk: text,
+          at: new Date(clock()).toISOString()
+        });
       });
 
       child.stderr.on('data', (chunk) => {
-        stderr += String(chunk);
+        const text = String(chunk);
+        stderr = appendChunk(stderr, text);
+        emitEvent(emit, {
+          type: 'stderr',
+          command,
+          args,
+          cwd,
+          chunk: text,
+          at: new Date(clock()).toISOString()
+        });
       });
 
       child.on('error', (error) => {
         spawnError = error;
+        emitEvent(emit, {
+          type: 'error',
+          command,
+          args,
+          cwd,
+          message: error && error.message ? error.message : String(error),
+          at: new Date(clock()).toISOString()
+        });
       });
 
       child.on('close', (exitCode, signal) => {
         if (timeout) {
           clearTimeout(timeout);
         }
+        if (hardKillTimeout) {
+          clearTimeout(hardKillTimeout);
+        }
         const finishedAtMs = clock();
         const finishedAt = new Date(finishedAtMs).toISOString();
         if (spawnError && !stderr) {
           stderr = spawnError.message || String(spawnError);
         }
-        resolve({
+        const result = {
           command,
           args,
           cwd,
@@ -101,10 +185,17 @@ function createWorkspaceRunner(options = {}, deps = {}) {
           ok: !timedOut && exitCode === 0 && !spawnError,
           stdout,
           stderr,
+          outputTruncated,
+          error: spawnError ? (spawnError.message || String(spawnError)) : null,
           startedAt,
           finishedAt,
           durationMs: Math.max(0, finishedAtMs - startedAtMs)
+        };
+        emitEvent(emit, {
+          type: 'exit',
+          ...result
         });
+        resolve(result);
       });
 
       if (input) {
