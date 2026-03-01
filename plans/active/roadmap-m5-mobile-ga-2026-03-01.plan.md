@@ -3,7 +3,7 @@
 - plan_id: roadmap-m5-mobile-ga-2026-03-01
 - coordinator: ai-coordinator
 - created_at: 2026-03-01T23:48:40+08:00
-- updated_at: 2026-03-01T16:03:48Z
+- updated_at: 2026-03-01T16:37:44Z
 - status: active
 
 ## Global Rules
@@ -16,7 +16,7 @@
 ## Checklist
 - [x] T001 Mobile daemon client reliability
 - [x] T002 Mobile reconnect strategy hardening
-- [ ] T003 Mobile push notification bridge hardening
+- [x] T003 Mobile push notification bridge hardening
 - [x] T004 Mobile session screen UX hardening
 - [x] T005 Mobile task screen UX hardening
 - [x] T006 Mobile quick actions panel hardening
@@ -69,14 +69,14 @@ Keep this checklist synced with `status`:
 - id: T003
   title: Mobile push notification bridge hardening
   scope: Harden lifecycle for completion failure quota alert notifications
-  status: doing
+  status: done
   owner: mob03
   claimed_at: 2026-03-01T23:48:56+08:00
-  done_at: 
+  done_at: 2026-03-01T16:37:44Z
   priority: P1
   depends_on: [T001]
   branch: feat/mob03-m5-t003
-  pr_or_commit:
+  pr_or_commit: local:working-tree@b726b79
   blocker:
   deliverable: Reliable notification bridge for operational alerts
   acceptance:
@@ -232,3 +232,6 @@ Keep this checklist synced with `status`:
 - 2026-03-01T15:58:26Z [mob09] Completed T009 in test/proxy.smoke.test.js; expanded smoke regression coverage for key auth gates and unsupported-route failure metrics, set status=done and synced checklist.
 - 2026-03-01T16:00:29Z [codex] Completed T001 in mobile/app/src/services/daemonClient.ts; implemented retry-after aware HTTP backoff and explicit JSON parse failure normalization, set status=done and synced checklist.
 - 2026-03-01T16:03:48Z [mob05] Completed T005 in mobile/app/src/screens/TaskScreen.tsx; hardened trigger-to-result flow with terminal watch stop and auto-result focus, added clear retry-task/retry-connection/escalation actions for failures, set status=done and synced checklist.
+
+- 2026-03-02T00:35:08+08:00 [ai-watchdog] Relaunched T003 (m5-t003-mob03) via resume session 019caa16-af13-7c73-973b-1e502e5c3b60.
+- 2026-03-01T16:37:44Z [mob03] Resumed T003 in recovered session 019caa16-af13-7c73-973b-1e502e5c3b60; hardened push notification duplicate/stale suppression in mobile/app/src/services/pushNotifications.ts, added coverage in test/mobile.push.bridge.test.js, set status=done and synced checklist.
