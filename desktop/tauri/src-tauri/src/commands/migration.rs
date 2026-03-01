@@ -127,20 +127,22 @@ pub fn migration_import_trigger(request: MigrationImportRequest) -> crate::Front
 
 fn run_migration_command(operation: &'static str, args: &[String]) -> crate::FrontendResult<MigrationCommandResult> {
   let output = run_aih(args)?;
-  let progress = collect_progress(&output.stdout, &output.stderr);
+  let mut progress = collect_progress(&output.stdout, &output.stderr);
   let success = detect_success(operation, output.code, &output.stdout, &output.stderr);
+  let summary = extract_summary(operation, &output.stdout, &output.stderr);
   let reason_code = if success {
     None
   } else {
     Some(classify_failure(operation, output.code, &output.stdout, &output.stderr))
   };
+  progress = stabilize_progress(operation, success, progress, summary.as_deref(), reason_code);
 
   Ok(MigrationCommandResult {
     operation,
     success,
     exit_code: output.code,
     reason_code,
-    summary: extract_summary(operation, &output.stdout, &output.stderr),
+    summary,
     command: command_preview(args),
     progress,
     stdout: output.stdout,
@@ -220,6 +222,11 @@ fn detect_success(operation: &str, code: i32, stdout: &str, stderr: &str) -> boo
     || combined.contains("failed to export")
     || combined.contains("failed to import")
     || combined.contains("file not found")
+    || combined.contains("passwords do not match")
+    || combined.contains("cannot be empty")
+    || combined.contains("unsupported envelope mode")
+    || combined.contains("no age-compatible ssh")
+    || combined.contains("no rsa ssh private keys found")
   {
     return false;
   }
@@ -248,11 +255,23 @@ fn classify_failure(operation: &str, code: i32, stdout: &str, stderr: &str) -> &
   if combined.contains("password") && combined.contains("empty") {
     return "MIGRATION_SECRET_INVALID";
   }
+  if combined.contains("passwords do not match") {
+    return "MIGRATION_SECRET_MISMATCH";
+  }
   if combined.contains("decrypt") {
     return "MIGRATION_DECRYPT_FAILED";
   }
   if combined.contains("encrypt") {
     return "MIGRATION_ENCRYPT_FAILED";
+  }
+  if combined.contains("no age-compatible ssh") || combined.contains("no rsa ssh private keys found") {
+    return "MIGRATION_KEY_UNAVAILABLE";
+  }
+  if combined.contains("age cli not found") || combined.contains("age cli is required") || combined.contains("age cli is not installed") {
+    return "MIGRATION_DEPENDENCY_MISSING";
+  }
+  if combined.contains("unsupported envelope mode") || combined.contains("unsupported export format version") {
+    return "MIGRATION_FORMAT_UNSUPPORTED";
   }
   if combined.contains("no matching profiles") {
     return "MIGRATION_SELECTOR_EMPTY";
@@ -278,7 +297,7 @@ fn extract_summary(operation: &str, stdout: &str, stderr: &str) -> Option<String
   let mut fallback: Option<String> = None;
   let stdout_clean = strip_ansi(stdout);
   let stderr_clean = strip_ansi(stderr);
-  for line in stdout_clean.lines().chain(stderr_clean.lines()) {
+  for line in split_output_lines(&stdout_clean).into_iter().chain(split_output_lines(&stderr_clean).into_iter()) {
     let trimmed = line.trim();
     let lower = trimmed.to_lowercase();
     if !success_hint.is_empty() && lower.contains(success_hint) {
@@ -296,9 +315,17 @@ fn collect_progress(stdout: &str, stderr: &str) -> Vec<MigrationProgressEvent> {
   let mut events = Vec::new();
   let stdout_clean = strip_ansi(stdout);
   let stderr_clean = strip_ansi(stderr);
-  for line in stdout_clean.lines().chain(stderr_clean.lines()) {
+  for line in split_output_lines(&stdout_clean).into_iter().chain(split_output_lines(&stderr_clean).into_iter()) {
     if let Some(event) = parse_progress_line(line) {
-      events.push(event);
+      let duplicated = events.last().map(|last: &MigrationProgressEvent| {
+        last.channel == event.channel
+          && last.current == event.current
+          && last.total == event.total
+          && last.message == event.message
+      }).unwrap_or(false);
+      if !duplicated {
+        events.push(event);
+      }
     }
   }
   events
@@ -334,12 +361,100 @@ fn parse_progress_line(line: &str) -> Option<MigrationProgressEvent> {
     }
   }
 
+  if current.is_none() {
+    if let Some((pct, message)) = parse_percent_progress(rest) {
+      current = Some(pct);
+      total = Some(100);
+      rest = message;
+    }
+  }
+
+  let message = if rest.is_empty() {
+    "progress update".to_string()
+  } else {
+    rest.to_string()
+  };
+
   Some(MigrationProgressEvent {
     channel,
     current,
     total,
-    message: rest.to_string(),
+    message,
   })
+}
+
+fn parse_percent_progress(input: &str) -> Option<(u32, &str)> {
+  let mut rest = input.trim_start();
+  if rest.starts_with('[') {
+    let rbracket = rest.find(']')?;
+    rest = rest[(rbracket + 1)..].trim_start();
+  }
+
+  let digit_len = rest.chars().take_while(|ch| ch.is_ascii_digit()).count();
+  if digit_len == 0 {
+    return None;
+  }
+
+  let pct = rest[..digit_len].parse::<u32>().ok()?.min(100);
+  let after_digits = rest[digit_len..].trim_start();
+  if !after_digits.starts_with('%') {
+    return None;
+  }
+  let message = after_digits[1..].trim_start();
+  Some((pct, message))
+}
+
+fn split_output_lines(text: &str) -> Vec<&str> {
+  text
+    .split(|ch| ch == '\n' || ch == '\r')
+    .filter(|line| !line.trim().is_empty())
+    .collect()
+}
+
+fn stabilize_progress(
+  operation: &str,
+  success: bool,
+  mut progress: Vec<MigrationProgressEvent>,
+  summary: Option<&str>,
+  reason_code: Option<&str>,
+) -> Vec<MigrationProgressEvent> {
+  let channel = format!("aih {operation}");
+  if progress.is_empty() {
+    progress.push(MigrationProgressEvent {
+      channel: channel.clone(),
+      current: Some(0),
+      total: Some(100),
+      message: "started".to_string(),
+    });
+  }
+
+  let final_message = if success {
+    summary.unwrap_or("completed").to_string()
+  } else {
+    match reason_code {
+      Some(code) => format!("failed ({code})"),
+      None => "failed".to_string(),
+    }
+  };
+
+  let final_current = if success { Some(100) } else { None };
+  let final_total = if success { Some(100) } else { None };
+  let should_append_terminal = progress.last().map(|last| {
+    let same_message = last.message == final_message;
+    let terminal_progress = success && last.current == Some(100);
+    !(same_message || terminal_progress)
+  }).unwrap_or(true);
+
+  if should_append_terminal {
+    progress.push(MigrationProgressEvent {
+      channel,
+      current: final_current,
+      total: final_total,
+      message: final_message,
+    });
+  }
+
+  progress
 }
 
 fn strip_ansi(text: &str) -> String {

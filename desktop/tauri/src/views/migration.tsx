@@ -1,6 +1,7 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
-type RunPhase = "idle" | "running" | "success" | "error";
+type RunPhase = "idle" | "validating" | "running" | "success" | "error";
+type MigrationOperation = "export" | "import";
 
 interface ProgressEvent {
   channel: string;
@@ -10,7 +11,7 @@ interface ProgressEvent {
 }
 
 interface MigrationResult {
-  operation: "export" | "import";
+  operation: MigrationOperation;
   success: boolean;
   exitCode: number;
   reasonCode?: string;
@@ -23,12 +24,34 @@ interface MigrationResult {
 
 interface RunSnapshot {
   phase: RunPhase;
-  commandLabel: string;
+  commandLabel: MigrationOperation | "-";
   result?: MigrationResult;
   message: string;
   startedAt?: number;
   finishedAt?: number;
+  reasonCode?: string;
 }
+
+interface RunAction {
+  commandLabel: MigrationOperation;
+  command: string;
+  payload: Record<string, unknown>;
+}
+
+const REASON_GUIDANCE: Record<string, string> = {
+  MIGRATION_INVALID_INPUT: "Check file path and selector format, then retry.",
+  MIGRATION_SOURCE_NOT_FOUND: "Confirm the source file exists and is readable.",
+  MIGRATION_SELECTOR_EMPTY: "No profiles matched selectors. Remove or broaden selectors.",
+  MIGRATION_INTERACTIVE_REQUIRED: "Run migration from terminal if interactive prompts are required.",
+  MIGRATION_SECRET_INVALID: "Use a non-empty secret and retry.",
+  MIGRATION_SECRET_MISMATCH: "Ensure secrets match before retrying.",
+  MIGRATION_DECRYPT_FAILED: "Verify archive secret/key and retry import.",
+  MIGRATION_ENCRYPT_FAILED: "Check secret/key setup and retry export.",
+  MIGRATION_KEY_UNAVAILABLE: "Configure SSH/age keys before running migration.",
+  MIGRATION_DEPENDENCY_MISSING: "Install required dependency (age CLI) and retry.",
+  MIGRATION_FORMAT_UNSUPPORTED: "Use a supported export archive/version.",
+  MIGRATION_PROCESS_EXIT_NONZERO: "Inspect stderr details and retry after fixing root cause.",
+};
 
 declare global {
   interface Window {
@@ -53,7 +76,8 @@ function formatProgress(progress: ProgressEvent[]): string {
   if (!progress.length) return "none";
   return progress
     .map((event) => {
-      const stage = event.current && event.total ? ` [${event.current}/${event.total}]` : "";
+      const hasStage = Number.isFinite(event.current) && Number.isFinite(event.total);
+      const stage = hasStage ? ` [${event.current}/${event.total}]` : "";
       return `[${event.channel}]${stage} ${event.message}`;
     })
     .join("\n");
@@ -79,55 +103,108 @@ function formatTime(ts?: number): string {
   return new Date(ts).toLocaleString();
 }
 
+function formatDuration(ms: number): string {
+  const totalSec = Math.max(0, Math.floor(ms / 1000));
+  const mins = Math.floor(totalSec / 60).toString().padStart(2, "0");
+  const secs = (totalSec % 60).toString().padStart(2, "0");
+  return `${mins}:${secs}`;
+}
+
+function resolveRecoveryText(result?: MigrationResult, fallbackMessage?: string): string {
+  if (result?.reasonCode && REASON_GUIDANCE[result.reasonCode]) {
+    return REASON_GUIDANCE[result.reasonCode];
+  }
+  if (result?.reasonCode) {
+    return `Review command output and retry. reason=${result.reasonCode}`;
+  }
+  if (fallbackMessage) {
+    return "Confirm Tauri bridge/command availability, then retry.";
+  }
+  return "Adjust input or environment and retry.";
+}
+
 export default function MigrationView() {
   const [exportFile, setExportFile] = useState("backup.aes");
   const [selectors, setSelectors] = useState("");
   const [importFile, setImportFile] = useState("backup.aes");
   const [overwrite, setOverwrite] = useState(false);
+  const [lastAction, setLastAction] = useState<RunAction | null>(null);
+  const [clock, setClock] = useState(() => Date.now());
   const [snapshot, setSnapshot] = useState<RunSnapshot>({
     phase: "idle",
     commandLabel: "-",
     message: "No migration command executed.",
   });
 
-  const running = snapshot.phase === "running";
+  const running = snapshot.phase === "running" || snapshot.phase === "validating";
+
+  useEffect(() => {
+    if (!running) return;
+    const timer = window.setInterval(() => {
+      setClock(Date.now());
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [running]);
 
   const phaseColor = useMemo(() => {
     if (snapshot.phase === "success") return "#166534";
     if (snapshot.phase === "error") return "#991b1b";
+    if (snapshot.phase === "validating") return "#7c3aed";
     if (snapshot.phase === "running") return "#1d4ed8";
     return "#4b5563";
   }, [snapshot.phase]);
 
+  const elapsed = useMemo(() => {
+    if (!snapshot.startedAt) return "-";
+    const end = running ? clock : (snapshot.finishedAt || clock);
+    return formatDuration(Math.max(0, end - snapshot.startedAt));
+  }, [snapshot.startedAt, snapshot.finishedAt, running, clock]);
+
+  const recoveryText = useMemo(() => {
+    if (snapshot.phase !== "error") return "";
+    return resolveRecoveryText(snapshot.result, snapshot.message);
+  }, [snapshot.phase, snapshot.result, snapshot.message]);
+
   async function runCommand(
-    commandLabel: "export" | "import",
+    commandLabel: MigrationOperation,
     command: string,
     payload: Record<string, unknown>,
   ) {
     const startedAt = Date.now();
     setSnapshot({
-      phase: "running",
+      phase: "validating",
       commandLabel,
-      message: "Command started...",
+      message: "Checking migration command availability...",
       startedAt,
     });
+    setLastAction({ commandLabel, command, payload });
 
     try {
+      await invokeTauri("migration_namespace_info", {});
+      setSnapshot({
+        phase: "running",
+        commandLabel,
+        message: "Command is running...",
+        startedAt,
+      });
+
       const result = await invokeTauri<MigrationResult>(command, payload);
       const success = result.success;
       setSnapshot({
         phase: success ? "success" : "error",
         commandLabel,
         result,
+        reasonCode: result.reasonCode,
         message: success ? "Command completed successfully." : "Command finished with errors.",
         startedAt,
         finishedAt: Date.now(),
       });
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       setSnapshot({
         phase: "error",
         commandLabel,
-        message: `Command failed: ${(error as Error).message}`,
+        message: `Command failed: ${message}`,
         startedAt,
         finishedAt: Date.now(),
       });
@@ -175,6 +252,11 @@ export default function MigrationView() {
         overwrite,
       },
     });
+  }
+
+  async function retryLastAction() {
+    if (!lastAction || running) return;
+    await runCommand(lastAction.commandLabel, lastAction.command, lastAction.payload);
   }
 
   return (
@@ -244,12 +326,62 @@ export default function MigrationView() {
             Command: <strong>{snapshot.commandLabel}</strong>
           </div>
           <div>
+            Elapsed: <strong>{elapsed}</strong>
+          </div>
+          <div>
             Started: <strong>{formatTime(snapshot.startedAt)}</strong>
           </div>
           <div>
             Finished: <strong>{formatTime(snapshot.finishedAt)}</strong>
           </div>
           <div>{snapshot.message}</div>
+          {snapshot.reasonCode ? (
+            <div>
+              Reason code: <strong>{snapshot.reasonCode}</strong>
+            </div>
+          ) : null}
+          {snapshot.phase === "error" ? (
+            <div style={{ color: "#991b1b" }}>
+              Next action: <strong>{recoveryText}</strong>
+            </div>
+          ) : null}
+          {snapshot.result?.progress?.length ? (
+            <div style={{ display: "grid", gap: 4 }}>
+              <strong>Progress timeline</strong>
+              {snapshot.result.progress.map((event, idx) => {
+                const hasStage = Number.isFinite(event.current) && Number.isFinite(event.total);
+                const stage = hasStage ? ` (${event.current}/${event.total})` : "";
+                return (
+                  <div key={`${event.channel}-${idx}`} style={{ color: "#374151" }}>
+                    [{event.channel}]{stage} {event.message}
+                  </div>
+                );
+              })}
+            </div>
+          ) : null}
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button onClick={() => void retryLastAction()} disabled={!lastAction || running}>
+              Retry Last Command
+            </button>
+            <button
+              onClick={() => setImportFile(exportFile.trim() || importFile)}
+              disabled={running}
+            >
+              Use Export Path For Import
+            </button>
+            <button
+              onClick={() =>
+                setSnapshot({
+                  phase: "idle",
+                  commandLabel: "-",
+                  message: "Status reset. Ready for next migration command.",
+                })
+              }
+              disabled={running}
+            >
+              Reset Status
+            </button>
+          </div>
         </div>
         <pre
           style={{

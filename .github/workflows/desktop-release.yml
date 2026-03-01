@@ -6,6 +6,10 @@ on:
       - "desktop-v*"
   workflow_dispatch:
 
+concurrency:
+  group: desktop-release-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: write
 
@@ -19,17 +23,24 @@ jobs:
         include:
           - os: macos-latest
             label: macOS
-            artifact_name: desktop-bundle-macos
+            artifact_suffix: macos
           - os: ubuntu-22.04
             label: Linux
-            artifact_name: desktop-bundle-linux
+            artifact_suffix: linux
           - os: windows-latest
             label: Windows
-            artifact_name: desktop-bundle-windows
+            artifact_suffix: windows
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Preflight release config checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -d desktop/tauri/src-tauri
+          test -f desktop/tauri/src-tauri/tauri.conf.json
 
       - name: Install Linux system dependencies
         if: matrix.os == 'ubuntu-22.04'
@@ -55,9 +66,41 @@ jobs:
           releaseDraft: false
           prerelease: false
 
+      - name: Validate Unix bundle outputs
+        if: matrix.os != 'windows-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUNDLE_DIR="desktop/tauri/src-tauri/target/release/bundle"
+          test -d "${BUNDLE_DIR}"
+          if [[ "${{ matrix.os }}" == "macos-latest" ]]; then
+            FOUND="$(find "${BUNDLE_DIR}" -type f \( -iname "*.dmg" -o -iname "*.app.tar.gz" \) | head -n 1 || true)"
+          else
+            FOUND="$(find "${BUNDLE_DIR}" -type f \( -iname "*.appimage" -o -iname "*.deb" -o -iname "*.rpm" \) | head -n 1 || true)"
+          fi
+          if [[ -z "${FOUND}" ]]; then
+            echo "No installable bundle found in ${BUNDLE_DIR}"
+            exit 1
+          fi
+          echo "Validated bundle: ${FOUND}"
+
+      - name: Validate Windows bundle outputs
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $bundleDir = "desktop/tauri/src-tauri/target/release/bundle"
+          if (!(Test-Path $bundleDir)) {
+            Write-Error "Bundle directory missing: $bundleDir"
+          }
+          $files = Get-ChildItem -Path $bundleDir -Recurse -File -Include *.msi,*.exe
+          if ($files.Count -eq 0) {
+            Write-Error "No installable Windows bundle found in $bundleDir"
+          }
+          Write-Host "Validated bundle: $($files[0].FullName)"
+
       - name: Upload installable artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact_name }}
+          name: desktop-bundle-${{ matrix.artifact_suffix }}
           path: desktop/tauri/src-tauri/target/release/bundle/
           if-no-files-found: error

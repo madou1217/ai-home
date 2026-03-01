@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const EXHAUSTED_COOLDOWN_MS: u128 = 3_600_000;
+const ACCOUNTS_COMMANDS: [&str; 3] = ["accounts_namespace_info", "list", "set_default"];
 
 #[derive(Serialize)]
 pub struct AccountsNamespaceInfo {
@@ -262,6 +263,35 @@ fn collect_account_ids(tool_dir: &Path) -> Vec<String> {
   ids
 }
 
+fn sanitize_account_id(value: Option<String>) -> Option<String> {
+  let id = value?;
+  if id.chars().all(|c| c.is_ascii_digit()) {
+    Some(id)
+  } else {
+    None
+  }
+}
+
+fn write_default_account_id(tool_dir: &Path, account_id: &str) -> crate::FrontendResult<()> {
+  let target = tool_dir.join(".aih_default");
+  let tmp = tool_dir.join(".aih_default.tmp");
+  fs::write(&tmp, account_id).map_err(|e| {
+    crate::map_command_error(
+      "accounts",
+      "ACCOUNTS_DEFAULT_WRITE_FAILED",
+      format!("failed to write default account temp file: {e}"),
+    )
+  })?;
+  fs::rename(&tmp, &target).map_err(|e| {
+    crate::map_command_error(
+      "accounts",
+      "ACCOUNTS_DEFAULT_WRITE_FAILED",
+      format!("failed to finalize default account write: {e}"),
+    )
+  })?;
+  Ok(())
+}
+
 fn list_accounts(cli_name: &str) -> crate::FrontendResult<AccountsCommandResponse> {
   if !supported_cli(cli_name) {
     return Err(crate::map_command_error(
@@ -272,7 +302,7 @@ fn list_accounts(cli_name: &str) -> crate::FrontendResult<AccountsCommandRespons
   }
 
   let tool_dir = profiles_root()?.join(cli_name);
-  let default_id = read_text_file(&tool_dir.join(".aih_default"));
+  let default_id = sanitize_account_id(read_text_file(&tool_dir.join(".aih_default")));
 
   if !tool_dir.exists() {
     return Ok(AccountsCommandResponse {
@@ -286,7 +316,7 @@ fn list_accounts(cli_name: &str) -> crate::FrontendResult<AccountsCommandRespons
       default_exists: Some(false),
       updated_default_id: None,
       accounts: vec![],
-      commands: vec!["accounts_namespace_info"],
+      commands: ACCOUNTS_COMMANDS.to_vec(),
     });
   }
 
@@ -322,7 +352,7 @@ fn list_accounts(cli_name: &str) -> crate::FrontendResult<AccountsCommandRespons
     default_exists: Some(default_exists),
     updated_default_id: None,
     accounts,
-    commands: vec!["accounts_namespace_info"],
+    commands: ACCOUNTS_COMMANDS.to_vec(),
   })
 }
 
@@ -345,7 +375,7 @@ fn set_default_account(cli_name: &str, account_id: &str) -> crate::FrontendResul
 
   let tool_dir = profiles_root()?.join(cli_name);
   let account_dir = tool_dir.join(account_id);
-  if !account_dir.exists() {
+  if !account_dir.is_dir() {
     return Err(crate::map_command_error(
       "accounts",
       "ACCOUNTS_NOT_FOUND",
@@ -353,13 +383,7 @@ fn set_default_account(cli_name: &str, account_id: &str) -> crate::FrontendResul
     ));
   }
 
-  fs::write(tool_dir.join(".aih_default"), account_id).map_err(|e| {
-    crate::map_command_error(
-      "accounts",
-      "ACCOUNTS_DEFAULT_WRITE_FAILED",
-      format!("failed to write default account: {e}"),
-    )
-  })?;
+  write_default_account_id(&tool_dir, account_id)?;
 
   Ok(AccountsCommandResponse {
     namespace: "accounts",
@@ -372,7 +396,7 @@ fn set_default_account(cli_name: &str, account_id: &str) -> crate::FrontendResul
     default_exists: Some(true),
     updated_default_id: Some(account_id.to_string()),
     accounts: vec![],
-    commands: vec!["accounts_namespace_info"],
+    commands: ACCOUNTS_COMMANDS.to_vec(),
   })
 }
 
@@ -405,7 +429,7 @@ pub fn accounts_namespace_info(
       default_exists: None,
       updated_default_id: None,
       accounts: vec![],
-      commands: vec!["accounts_namespace_info", "list", "set_default"],
+      commands: ACCOUNTS_COMMANDS.to_vec(),
     }),
     AccountsAction::List => {
       let cli = cli_name
