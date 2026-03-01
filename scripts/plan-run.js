@@ -2,11 +2,24 @@
 
 const path = require('path');
 const { spawn } = require('child_process');
+const fs = require('fs');
 
 const rootDir = path.resolve(__dirname, '..');
 
+function resolveWorkerSkillToken() {
+  const candidates = [
+    { token: '$aih-task-worker', file: path.join(rootDir, 'skills', 'aih-task-worker', 'SKILL.md') },
+    { token: '$plan-worker', file: path.join(rootDir, 'skills', 'plan-worker', 'SKILL.md') }
+  ];
+  for (const c of candidates) {
+    if (fs.existsSync(c.file)) return c.token;
+  }
+  return '$plan-worker';
+}
+
 const DEFAULT_PROMPT = [
-  '你是本仓库执行 AI，严格按 plan-worker/aih-task-worker 闭环。',
+  `使用 ${resolveWorkerSkillToken()} skill。`,
+  '你是本仓库执行 AI，严格按 worker skill 闭环。',
   '先确认并保持本任务为 doing（owner/claimed_at/branch）。',
   '只允许修改该任务 files 范围内文件并完成可运行实现。',
   '完成后必须在当前会话内回写计划文件：status=done、done_at、pr_or_commit、Checklist=[x]、Activity Log。',
