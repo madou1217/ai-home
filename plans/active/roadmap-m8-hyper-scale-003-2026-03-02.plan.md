@@ -3,7 +3,7 @@
 - plan_id: roadmap-m8-hyper-scale-003-2026-03-02
 - coordinator: ai-coordinator
 - created_at: 2026-03-02T00:11:45+08:00
-- updated_at: 2026-03-01T16:17:29Z
+- updated_at: 2026-03-01T16:18:07Z
 - status: active
 
 ## Global Rules
@@ -81,7 +81,7 @@ Keep this checklist synced with `status`:
   priority: P1
   depends_on: []
   branch: feat/hs003001-m8-t001
-  pr_or_commit: local-uncommitted
+  pr_or_commit: 069f157
   blocker:
   deliverable: Complete task 0101 deliverable
   acceptance:
@@ -131,7 +131,7 @@ Keep this checklist synced with `status`:
 - id: T004
   title: Hyper-scale task 0104
   scope: Deliver scoped output for scaleout task 0104
-  status: doing
+  status: blocked
   owner: codex
   claimed_at: 2026-03-01T16:17:29Z
   done_at:
@@ -150,13 +150,13 @@ Keep this checklist synced with `status`:
 - id: T005
   title: Hyper-scale task 0105
   scope: Deliver scoped output for scaleout task 0105
-  status: todo
-  owner: unassigned
-  claimed_at:
+  status: doing
+  owner: hs003005
+  claimed_at: 2026-03-01T16:18:07Z
   done_at:
   priority: P1
   depends_on: []
-  branch:
+  branch: feat/hs003005-m8-t005
   pr_or_commit:
   blocker:
   deliverable: Complete task 0105 deliverable
@@ -1039,3 +1039,8 @@ Keep this checklist synced with `status`:
 - 2026-03-02T00:17:28+08:00 [ai-watchdog] Marked T004 blocked: worker offline and no recoverable session.
 
 - 2026-03-01T16:17:29Z [codex] Claimed T004 owner=codex branch=feat/codex-m8-t004.
+
+- 2026-03-02T00:17:48+08:00 [ai-watchdog] Marked T004 blocked: worker offline and no recoverable session.
+
+- 2026-03-01T16:17:45Z [hs003001] Updated T001 pr_or_commit to 069f157 (plan closure commit).
+- 2026-03-01T16:18:07Z [hs003005] Claimed T005 owner=hs003005 branch=feat/hs003005-m8-t005.
