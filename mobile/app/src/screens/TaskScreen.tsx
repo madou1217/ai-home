@@ -138,6 +138,7 @@ export default function TaskScreen(props: TaskScreenProps): JSX.Element {
   const startTask = async (): Promise<void> => {
     if (!canStart) return;
     setIsStarting(true);
+    setWatchStatus('Starting task...');
     setErrorText('');
     setResultText('');
     setResultSummary('');
