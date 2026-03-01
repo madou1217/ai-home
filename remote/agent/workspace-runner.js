@@ -35,6 +35,12 @@ function createWorkspaceRunner(options = {}, deps = {}) {
   const projectDir = options.projectDir || '.';
   const workspaceDir = resolveWorkspacePath(workspaceRoot, projectDir, pathImpl);
 
+  function emitEvent(emit, event) {
+    if (typeof emit === 'function') {
+      emit(event);
+    }
+  }
+
   async function run(request = {}) {
     const command = request.command || request.cmd;
     if (!command || typeof command !== 'string') {
@@ -43,10 +49,11 @@ function createWorkspaceRunner(options = {}, deps = {}) {
 
     const args = Array.isArray(request.args) ? request.args.map((item) => String(item)) : [];
     const cwd = resolveSubPath(workspaceDir, request.cwd || '.', pathImpl);
-    const env = { ...(request.env || {}) };
+    const env = { ...process.env, ...(request.env || {}) };
     const timeoutMs = Number(request.timeoutMs) > 0 ? Number(request.timeoutMs) : 0;
     const shell = Boolean(request.shell);
     const input = request.input == null ? '' : String(request.input);
+    const emit = request.onEvent;
 
     return new Promise((resolve) => {
       const startedAtMs = clock();
@@ -63,6 +70,15 @@ function createWorkspaceRunner(options = {}, deps = {}) {
       let stdout = '';
       let stderr = '';
 
+      emitEvent(emit, {
+        type: 'start',
+        command,
+        args,
+        cwd,
+        pid: child.pid || null,
+        startedAt
+      });
+
       if (timeoutMs > 0) {
         timeout = setTimeout(() => {
           timedOut = true;
@@ -71,11 +87,29 @@ function createWorkspaceRunner(options = {}, deps = {}) {
       }
 
       child.stdout.on('data', (chunk) => {
-        stdout += String(chunk);
+        const text = String(chunk);
+        stdout += text;
+        emitEvent(emit, {
+          type: 'stdout',
+          command,
+          args,
+          cwd,
+          chunk: text,
+          at: new Date(clock()).toISOString()
+        });
       });
 
       child.stderr.on('data', (chunk) => {
-        stderr += String(chunk);
+        const text = String(chunk);
+        stderr += text;
+        emitEvent(emit, {
+          type: 'stderr',
+          command,
+          args,
+          cwd,
+          chunk: text,
+          at: new Date(clock()).toISOString()
+        });
       });
 
       child.on('error', (error) => {
@@ -91,7 +125,7 @@ function createWorkspaceRunner(options = {}, deps = {}) {
         if (spawnError && !stderr) {
           stderr = spawnError.message || String(spawnError);
         }
-        resolve({
+        const result = {
           command,
           args,
           cwd,
@@ -104,7 +138,12 @@ function createWorkspaceRunner(options = {}, deps = {}) {
           startedAt,
           finishedAt,
           durationMs: Math.max(0, finishedAtMs - startedAtMs)
+        };
+        emitEvent(emit, {
+          type: 'exit',
+          ...result
         });
+        resolve(result);
       });
 
       if (input) {
