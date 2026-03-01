@@ -1,0 +1,71 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { spawnSync } = require('node:child_process');
+
+const REPO_ROOT = path.resolve(__dirname, '..');
+
+function mkTmpDir() {
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'aih-cli-baseline-'));
+}
+
+function runCli(args, hostHomeDir) {
+  return spawnSync(process.execPath, ['bin/ai-home.js', ...args], {
+    cwd: REPO_ROOT,
+    env: {
+      ...process.env,
+      AIH_HOST_HOME: hostHomeDir,
+      HOME: hostHomeDir
+    },
+    encoding: 'utf8'
+  });
+}
+
+test('`aih ls` is read-only and does not create profile directories', (t) => {
+  const homeDir = mkTmpDir();
+  t.after(() => fs.rmSync(homeDir, { recursive: true, force: true }));
+
+  const result = runCli(['ls'], homeDir);
+  assert.equal(result.status, 0, `stdout=${result.stdout}\nstderr=${result.stderr}`);
+
+  const aiHomeDir = path.join(homeDir, '.ai_home');
+  assert.equal(fs.existsSync(aiHomeDir), false, 'read-only list command should not create ~/.ai_home');
+});
+
+test('`set-default` updates default pointer without mutating session topology', (t) => {
+  const homeDir = mkTmpDir();
+  t.after(() => fs.rmSync(homeDir, { recursive: true, force: true }));
+
+  const toolDir = path.join(homeDir, '.ai_home', 'profiles', 'codex');
+  const accountDir = path.join(toolDir, '1');
+  const sandboxConfigDir = path.join(accountDir, '.codex');
+  const sandboxSessionsDir = path.join(sandboxConfigDir, 'sessions');
+  fs.mkdirSync(sandboxSessionsDir, { recursive: true });
+  fs.writeFileSync(path.join(sandboxSessionsDir, 'local-session.json'), '{"local":true}\n');
+
+  const globalCodexDir = path.join(homeDir, '.codex');
+  fs.mkdirSync(globalCodexDir, { recursive: true });
+  fs.writeFileSync(path.join(globalCodexDir, 'history.jsonl'), '{"global":true}\n');
+
+  const result = runCli(['codex', 'set-default', '1'], homeDir);
+  assert.equal(result.status, 0, `stdout=${result.stdout}\nstderr=${result.stderr}`);
+
+  const defaultPath = path.join(toolDir, '.aih_default');
+  assert.equal(fs.readFileSync(defaultPath, 'utf8').trim(), '1');
+
+  const sandboxSessionsStat = fs.lstatSync(sandboxSessionsDir);
+  assert.equal(sandboxSessionsStat.isDirectory(), true, 'sandbox sessions path should remain a directory');
+  assert.equal(sandboxSessionsStat.isSymbolicLink(), false, 'set-default must not rewrite sessions into symlink topology');
+  assert.equal(
+    fs.existsSync(path.join(sandboxSessionsDir, 'local-session.json')),
+    true,
+    'existing sandbox session content should remain untouched'
+  );
+  assert.equal(
+    fs.existsSync(path.join(globalCodexDir, 'history.jsonl')),
+    true,
+    'native global codex topology should remain untouched'
+  );
+});
