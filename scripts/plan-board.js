@@ -98,7 +98,7 @@ function parseChecklist(content) {
 }
 
 function renderTable(rows) {
-  const header = ['plan', 'task', 'check', 'status', 'owner', 'ai_type', 'account_id', 'session_id', 'pid', 'alive', 'title', 'branch', 'claimed_at'];
+  const header = ['plan', 'task', 'check', 'status', 'owner', 'task_key', 'binding_state', 'ai_type', 'account_id', 'session_id', 'pid', 'alive', 'title', 'branch', 'claimed_at'];
   const all = [header, ...rows];
   const widths = header.map((_, idx) => Math.max(...all.map((r) => String(r[idx] || '').length)));
   const fmt = (r) => r.map((v, i) => String(v || '').padEnd(widths[i], ' ')).join(' | ');
@@ -119,26 +119,58 @@ function isPidAlive(pid) {
   }
 }
 
+function normalizeString(value) {
+  if (value === null || value === undefined) return '';
+  return String(value).trim();
+}
+
 function readTaskSessionMap() {
-  if (!fs.existsSync(sessionRegistryPath)) return new Map();
+  const result = {
+    validByTaskKey: new Map(),
+    invalidByTaskKey: new Map(),
+    registryError: ''
+  };
+
+  if (!fs.existsSync(sessionRegistryPath)) return result;
   try {
     const parsed = JSON.parse(fs.readFileSync(sessionRegistryPath, 'utf8'));
-    const tasks = parsed && typeof parsed === 'object' && parsed.tasks && typeof parsed.tasks === 'object'
+    const tasks = parsed && typeof parsed === 'object' && parsed.tasks && typeof parsed.tasks === 'object' && !Array.isArray(parsed.tasks)
       ? parsed.tasks
       : {};
-    const map = new Map();
     Object.entries(tasks).forEach(([taskKey, entry]) => {
-      if (!taskKey || !entry || !entry.sessionId) return;
-      map.set(String(taskKey), {
-        sessionId: String(entry.sessionId),
-        cli: entry.cli ? String(entry.cli) : '',
-        accountId: entry.accountId ? String(entry.accountId) : '',
-        pid: entry.pid ? String(entry.pid) : ''
+      const key = normalizeString(taskKey);
+      if (!key) return;
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+        result.invalidByTaskKey.set(key, { code: 'INVALID_ENTRY_OBJECT' });
+        return;
+      }
+
+      const sessionId = normalizeString(entry.sessionId);
+      if (!sessionId) {
+        result.invalidByTaskKey.set(key, { code: 'MISSING_SESSION_ID' });
+        return;
+      }
+
+      const cli = normalizeString(entry.cli);
+      const accountId = normalizeString(entry.accountId);
+      const pidRaw = normalizeString(entry.pid);
+      const pid = pidRaw && /^\d+$/.test(pidRaw) ? pidRaw : '';
+      if (pidRaw && !pid) {
+        result.invalidByTaskKey.set(key, { code: 'INVALID_PID' });
+        return;
+      }
+
+      result.validByTaskKey.set(key, {
+        sessionId,
+        cli,
+        accountId,
+        pid
       });
     });
-    return map;
+    return result;
   } catch (e) {
-    return new Map();
+    result.registryError = 'SESSION_REGISTRY_PARSE_ERROR';
+    return result;
   }
 }
 
@@ -210,13 +242,15 @@ if (planFiles.length === 0) {
 }
 
 const rows = [];
-const taskSessionMap = readTaskSessionMap();
+const taskSessionRegistry = readTaskSessionMap();
 const runningProcessIndex = readRunningProcessIndex();
 let total = 0;
 let doing = 0;
 let blocked = 0;
 let todo = 0;
 let done = 0;
+let staleBindingCount = 0;
+let invalidBindingCount = 0;
 
 for (const absPath of planFiles) {
   const planName = path.basename(absPath);
@@ -236,7 +270,8 @@ for (const absPath of planFiles) {
       const doneByStatus = t.status === 'done';
       const checked = checklist.has(t.id) ? checklist.get(t.id) : doneByStatus;
       const taskKey = deriveTaskKey(planName, t);
-      const binding = (taskKey && taskSessionMap.get(taskKey)) || null;
+      const binding = (taskKey && taskSessionRegistry.validByTaskKey.get(taskKey)) || null;
+      const invalidBinding = (taskKey && taskSessionRegistry.invalidByTaskKey.get(taskKey)) || null;
       const sid = binding && binding.sessionId ? binding.sessionId : '-';
       const aiType = binding && binding.cli ? binding.cli : '-';
       const accountId = binding && binding.accountId ? binding.accountId : '-';
@@ -244,12 +279,35 @@ for (const absPath of planFiles) {
       const runtimePidBySession = sid !== '-' ? runningProcessIndex.bySessionId.get(sid) : '';
       const pid = runtimePidByTaskKey || runtimePidBySession || (binding && binding.pid ? binding.pid : '-');
       const alive = pid !== '-' ? (isPidAlive(pid) ? 'yes' : 'no') : '-';
+      let bindingState = '-';
+      if (t.status === 'doing' || t.status === 'blocked') {
+        if (!taskKey) {
+          bindingState = 'UNBOUND_TASK_KEY';
+          invalidBindingCount += 1;
+        } else if (invalidBinding) {
+          bindingState = invalidBinding.code;
+          invalidBindingCount += 1;
+        } else if (!binding) {
+          bindingState = 'MISSING_SESSION_BINDING';
+          invalidBindingCount += 1;
+        } else if (alive === 'yes') {
+          bindingState = 'ATTACHED';
+        } else if (pid !== '-') {
+          bindingState = 'STALE_PID';
+          staleBindingCount += 1;
+        } else {
+          bindingState = 'DETACHED_SESSION';
+          staleBindingCount += 1;
+        }
+      }
       rows.push([
         planName,
         t.id,
         checked ? '[x]' : '[ ]',
         t.status || '-',
         t.owner || '-',
+        taskKey || '-',
+        bindingState,
         aiType,
         accountId,
         sid,
@@ -264,7 +322,8 @@ for (const absPath of planFiles) {
 }
 
 console.log('AIH Subagent Task Board');
-console.log(`summary: total=${total}, doing=${doing}, blocked=${blocked}, todo=${todo}, done=${done}`);
+const registryErr = taskSessionRegistry.registryError ? `, registry_error=${taskSessionRegistry.registryError}` : '';
+console.log(`summary: total=${total}, doing=${doing}, blocked=${blocked}, todo=${todo}, done=${done}, stale_bindings=${staleBindingCount}, invalid_bindings=${invalidBindingCount}${registryErr}`);
 
 if (rows.length === 0) {
   console.log(showAll ? '[board] no tasks found' : '[board] no active tasks (doing/blocked)');
