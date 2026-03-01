@@ -85,6 +85,7 @@ export default function SessionScreen(props: SessionScreenProps): JSX.Element {
   }, [snapshot.nextRetryAt]);
 
   const stateAccent = useMemo(() => statusColor(snapshot.state), [snapshot.state]);
+  const reconnectDisabled = snapshot.state === 'connecting';
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.screenContent}>
@@ -120,16 +121,37 @@ export default function SessionScreen(props: SessionScreenProps): JSX.Element {
       <View style={styles.actionPanel}>
         <Text style={styles.actionTitle}>Quick Actions</Text>
         <View style={styles.actions}>
-          <Pressable style={styles.buttonPrimary} onPress={reconnectNow}>
+          <Pressable
+            style={[styles.buttonPrimary, reconnectDisabled && styles.buttonDisabled]}
+            onPress={reconnectNow}
+            disabled={reconnectDisabled}
+            accessibilityRole="button"
+            accessibilityLabel="Reconnect session now"
+          >
             <Text style={styles.buttonText}>Reconnect Now</Text>
           </Pressable>
-          <Pressable style={styles.buttonSecondary} onPress={simulateDisconnect}>
+          <Pressable
+            style={styles.buttonSecondary}
+            onPress={simulateDisconnect}
+            accessibilityRole="button"
+            accessibilityLabel="Simulate connection disconnect"
+          >
             <Text style={styles.buttonText}>Simulate Disconnect</Text>
           </Pressable>
-          <Pressable style={styles.buttonGhost} onPress={reconnectNow}>
+          <Pressable
+            style={styles.buttonGhost}
+            onPress={reconnectNow}
+            accessibilityRole="button"
+            accessibilityLabel="Refresh session state"
+          >
             <Text style={styles.buttonGhostText}>Refresh Session</Text>
           </Pressable>
-          <Pressable style={styles.buttonGhost} onPress={simulateDisconnect}>
+          <Pressable
+            style={styles.buttonGhost}
+            onPress={simulateDisconnect}
+            accessibilityRole="button"
+            accessibilityLabel="Force retry flow"
+          >
             <Text style={styles.buttonGhostText}>Force Retry Flow</Text>
           </Pressable>
         </View>
@@ -261,6 +283,9 @@ const styles = StyleSheet.create({
     paddingVertical: 9,
     paddingHorizontal: 12,
     minWidth: 140
+  },
+  buttonDisabled: {
+    opacity: 0.5
   },
   buttonSecondary: {
     backgroundColor: '#475569',
