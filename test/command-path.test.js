@@ -25,6 +25,28 @@ test('resolveCommandPath uses where on win32 and returns first match', () => {
   assert.deepEqual(calls[0].args, ['codex']);
 });
 
+test('resolveCommandPath prefers .cmd over extensionless on win32', () => {
+  const out = resolveCommandPath('codex', {
+    platform: 'win32',
+    spawnSyncImpl: () => ({
+      status: 0,
+      stdout: 'D:\\\\nvm4w\\\\nodejs\\\\codex\r\nD:\\\\nvm4w\\\\nodejs\\\\codex.cmd\r\n'
+    })
+  });
+  assert.equal(out, 'D:\\\\nvm4w\\\\nodejs\\\\codex.cmd');
+});
+
+test('resolveCommandPath falls back to command name when win32 result has no extension', () => {
+  const out = resolveCommandPath('codex', {
+    platform: 'win32',
+    spawnSyncImpl: () => ({
+      status: 0,
+      stdout: 'D:\\\\nvm4w\\\\nodejs\\\\codex\r\n'
+    })
+  });
+  assert.equal(out, 'codex');
+});
+
 test('resolveCommandPath returns empty on win32 probe failure', () => {
   const out = resolveCommandPath('codex', {
     platform: 'win32',
