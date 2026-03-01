@@ -3,6 +3,9 @@
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 
+const DEFAULT_KILL_AFTER_MS = 1000;
+const DEFAULT_MAX_OUTPUT_BYTES = 1024 * 1024;
+
 function resolveWorkspacePath(workspaceRoot, projectDir, pathImpl = path) {
   if (!workspaceRoot || typeof workspaceRoot !== 'string') {
     throw new Error('workspaceRoot is required');
@@ -51,28 +54,55 @@ function createWorkspaceRunner(options = {}, deps = {}) {
     if (!command) {
       throw new Error('command is required');
     }
+    if (command.includes('\u0000')) {
+      throw new Error('command contains unsupported null bytes');
+    }
 
+    if (request.shell === true) {
+      throw new Error('shell execution is blocked');
+    }
+
+    if (request.args != null && !Array.isArray(request.args)) {
+      throw new Error('args must be an array');
+    }
     const args = Array.isArray(request.args) ? request.args.map((item) => String(item)) : [];
-    const cwd = resolveSubPath(workspaceDir, request.cwd || '.', pathImpl);
+    for (const arg of args) {
+      if (arg.includes('\u0000')) {
+        throw new Error('args contain unsupported null bytes');
+      }
+    }
+
+    const cwdInput = request.cwd == null ? '.' : String(request.cwd).trim();
+    const cwd = resolveSubPath(workspaceDir, cwdInput || '.', pathImpl);
+
+    if (request.env != null && (Array.isArray(request.env) || typeof request.env !== 'object')) {
+      throw new Error('env must be an object');
+    }
+    const envEntries = Object.entries(request.env || {});
+    const safeEnv = {};
+    for (const [key, value] of envEntries) {
+      if (!key || key.includes('=') || key.includes('\u0000')) {
+        throw new Error(`invalid env key: ${key}`);
+      }
+      const normalized = String(value);
+      if (normalized.includes('\u0000')) {
+        throw new Error(`env value for ${key} contains unsupported null bytes`);
+      }
+      safeEnv[key] = normalized;
+    }
     const env = request.inheritEnv === false
-      ? { ...(request.env || {}) }
-      : { ...process.env, ...(request.env || {}) };
+      ? safeEnv
+      : { ...process.env, ...safeEnv };
+
     const timeoutMs = Number(request.timeoutMs) > 0 ? Number(request.timeoutMs) : 0;
-    const killAfterMs = Number(request.killAfterMs) > 0 ? Number(request.killAfterMs) : 1000;
-    const maxOutputBytes = Number(request.maxOutputBytes) > 0 ? Number(request.maxOutputBytes) : 1024 * 1024;
-    const shell = Boolean(request.shell);
+    const killAfterMs = Number(request.killAfterMs) > 0 ? Number(request.killAfterMs) : DEFAULT_KILL_AFTER_MS;
+    const maxOutputBytes = Number(request.maxOutputBytes) > 0 ? Number(request.maxOutputBytes) : DEFAULT_MAX_OUTPUT_BYTES;
     const input = request.input == null ? '' : String(request.input);
     const emit = request.onEvent;
 
     return new Promise((resolve) => {
       const startedAtMs = clock();
       const startedAt = new Date(startedAtMs).toISOString();
-      const child = spawnImpl(command, args, {
-        cwd,
-        env,
-        shell
-      });
-
       let timedOut = false;
       let timeout = null;
       let hardKillTimeout = null;
@@ -80,6 +110,7 @@ function createWorkspaceRunner(options = {}, deps = {}) {
       let stdout = '';
       let stderr = '';
       let outputTruncated = false;
+      let child = null;
 
       function appendChunk(base, chunk) {
         const currentSize = Buffer.byteLength(base, 'utf8');
@@ -94,6 +125,49 @@ function createWorkspaceRunner(options = {}, deps = {}) {
         }
         outputTruncated = true;
         return base + chunkBuffer.subarray(0, remaining).toString('utf8');
+      }
+
+      try {
+        child = spawnImpl(command, args, {
+          cwd,
+          env,
+          shell: false
+        });
+      } catch (error) {
+        spawnError = error;
+        const finishedAtMs = clock();
+        const finishedAt = new Date(finishedAtMs).toISOString();
+        const message = error && error.message ? error.message : String(error);
+        emitEvent(emit, {
+          type: 'error',
+          command,
+          args,
+          cwd,
+          message,
+          at: finishedAt
+        });
+        const result = {
+          command,
+          args,
+          cwd,
+          exitCode: null,
+          signal: null,
+          timedOut: false,
+          ok: false,
+          stdout: '',
+          stderr: message,
+          outputTruncated: false,
+          error: message,
+          startedAt,
+          finishedAt,
+          durationMs: Math.max(0, finishedAtMs - startedAtMs)
+        };
+        emitEvent(emit, {
+          type: 'exit',
+          ...result
+        });
+        resolve(result);
+        return;
       }
 
       emitEvent(emit, {
