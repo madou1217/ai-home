@@ -114,6 +114,9 @@ const TRUSTED_CLAUDE_USAGE_SOURCES = new Set([
   USAGE_SOURCE_CLAUDE_AUTH_TOKEN
 ]);
 const LIST_PAGE_SIZE = 10;
+const AUTO_POOL_LEASE_MS_DEFAULT = 20 * 60 * 1000;
+const AUTO_POOL_LOCK_TIMEOUT_MS = 2500;
+const AUTO_POOL_LOCK_RETRY_MS = 40;
 const EXPORT_MAGIC = 'AIH_EXPORT_V2:';
 const EXPORT_VERSION = 2;
 const AGE_SSH_KEY_TYPES = new Set(['ssh-ed25519', 'ssh-rsa']);
@@ -1242,45 +1245,155 @@ function printAllUsageSnapshots(cliName) {
   console.log(`\x1b[90m[aih]\x1b[0m Summary: oauth=${oauthCount}, with_snapshot=${withSnapshot}, api_key_skipped=${skippedApiKey}, pending_skipped=${skippedPending}`);
 }
 
-function getNextAvailableId(cliName, currentId) {
+function getAutoPoolPaths(cliName) {
   const toolDir = path.join(PROFILES_DIR, cliName);
-  if (!fs.existsSync(toolDir)) return null;
-  const runDeepUsageCheck = process.env.AIH_DEEP_USAGE_CHECK === '1';
-  const ids = fs.readdirSync(toolDir, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory() && /^\d+$/.test(entry.name))
-    .map((entry) => entry.name)
-    .sort((a, b) => parseInt(a, 10) - parseInt(b, 10));
+  return {
+    toolDir,
+    statePath: path.join(toolDir, '.aih_auto_pool.json'),
+    lockPath: path.join(toolDir, '.aih_auto_pool.lock')
+  };
+}
 
-  const candidates = [];
-  for (const id of ids) {
-    if (!checkStatus(cliName, path.join(toolDir, id)).configured) continue;
-    if (runDeepUsageCheck && syncExhaustedStateFromUsage(cliName, id) === true) continue;
-    if (isExhausted(cliName, id)) continue;
-    candidates.push(id);
-  }
-  if (candidates.length === 0) return null;
-
-  const cursorPath = path.join(toolDir, '.aih_auto_cursor');
-  let anchor = '';
-  if (currentId && candidates.includes(String(currentId))) {
-    anchor = String(currentId);
-  } else {
-    try {
-      const raw = fs.existsSync(cursorPath) ? fs.readFileSync(cursorPath, 'utf8').trim() : '';
-      if (raw && candidates.includes(raw)) anchor = raw;
-    } catch (e) {}
-  }
-
-  let startIdx = 0;
-  if (anchor) {
-    const idx = candidates.indexOf(anchor);
-    if (idx >= 0) startIdx = (idx + 1) % candidates.length;
-  }
-  const selected = candidates[startIdx];
+function isPidAlive(pid) {
+  const n = Number(pid);
+  if (!Number.isFinite(n) || n <= 0) return false;
   try {
-    fs.writeFileSync(cursorPath, selected);
+    process.kill(n, 0);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+function sleepMs(ms) {
+  const n = Math.max(1, Number(ms) || 1);
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, n);
+}
+
+function withAutoPoolLock(cliName, fn) {
+  const { lockPath, toolDir } = getAutoPoolPaths(cliName);
+  if (!fs.existsSync(toolDir)) return fn();
+  const deadline = Date.now() + AUTO_POOL_LOCK_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    try {
+      fs.mkdirSync(lockPath);
+      try {
+        return fn();
+      } finally {
+        try { fs.rmdirSync(lockPath); } catch (e) {}
+      }
+    } catch (e) {
+      sleepMs(AUTO_POOL_LOCK_RETRY_MS);
+    }
+  }
+  throw new Error(`auto_pool_lock_timeout:${cliName}`);
+}
+
+function readAutoPoolState(cliName) {
+  const { statePath } = getAutoPoolPaths(cliName);
+  if (!fs.existsSync(statePath)) return { version: 1, leases: {}, stats: {} };
+  try {
+    const parsed = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+    if (!parsed || typeof parsed !== 'object') return { version: 1, leases: {}, stats: {} };
+    return {
+      version: 1,
+      leases: parsed.leases && typeof parsed.leases === 'object' ? parsed.leases : {},
+      stats: parsed.stats && typeof parsed.stats === 'object' ? parsed.stats : {}
+    };
+  } catch (e) {
+    return { version: 1, leases: {}, stats: {} };
+  }
+}
+
+function writeAutoPoolState(cliName, state) {
+  const { statePath } = getAutoPoolPaths(cliName);
+  try {
+    fs.writeFileSync(statePath, JSON.stringify(state, null, 2));
   } catch (e) {}
-  return selected;
+}
+
+function cleanupAutoPoolLeases(state) {
+  const now = Date.now();
+  const out = state && typeof state === 'object' ? state : { version: 1, leases: {}, stats: {} };
+  if (!out.leases || typeof out.leases !== 'object') out.leases = {};
+  if (!out.stats || typeof out.stats !== 'object') out.stats = {};
+  Object.keys(out.leases).forEach((id) => {
+    const lease = out.leases[id];
+    const expired = !lease || (lease.expireAt && Number(lease.expireAt) <= now);
+    const deadPid = !lease || !isPidAlive(lease.pid);
+    if (expired || deadPid) delete out.leases[id];
+  });
+  return out;
+}
+
+function allocateAutoAccount(cliName, currentId, options = {}) {
+  return withAutoPoolLock(cliName, () => {
+    const { toolDir } = getAutoPoolPaths(cliName);
+    if (!fs.existsSync(toolDir)) return null;
+    const runDeepUsageCheck = process.env.AIH_DEEP_USAGE_CHECK === '1';
+    const leaseMsRaw = Number(process.env.AIH_AUTO_LEASE_MS || options.leaseMs);
+    const leaseMs = Number.isFinite(leaseMsRaw) && leaseMsRaw > 1000 ? leaseMsRaw : AUTO_POOL_LEASE_MS_DEFAULT;
+    const exclude = new Set([String(currentId || ''), ...((options.excludeIds || []).map((x) => String(x)))].filter(Boolean));
+    const ids = fs.readdirSync(toolDir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && /^\d+$/.test(entry.name))
+      .map((entry) => entry.name)
+      .sort((a, b) => parseInt(a, 10) - parseInt(b, 10));
+
+    let state = cleanupAutoPoolLeases(readAutoPoolState(cliName));
+    const now = Date.now();
+    const candidates = [];
+    ids.forEach((id) => {
+      if (exclude.has(id)) return;
+      if (!checkStatus(cliName, path.join(toolDir, id)).configured) return;
+      if (runDeepUsageCheck && syncExhaustedStateFromUsage(cliName, id) === true) return;
+      if (isExhausted(cliName, id)) return;
+      if (state.leases[id]) return;
+      const stat = state.stats[id] || {};
+      candidates.push({
+        id,
+        assignedCount: Number(stat.assignedCount || 0),
+        lastAssignedAt: Number(stat.lastAssignedAt || 0)
+      });
+    });
+    if (candidates.length === 0) {
+      writeAutoPoolState(cliName, state);
+      return null;
+    }
+
+    candidates.sort((a, b) => {
+      if (a.assignedCount !== b.assignedCount) return a.assignedCount - b.assignedCount;
+      if (a.lastAssignedAt !== b.lastAssignedAt) return a.lastAssignedAt - b.lastAssignedAt;
+      return parseInt(a.id, 10) - parseInt(b.id, 10);
+    });
+    const selected = candidates[0];
+    const leaseToken = `${process.pid}-${crypto.randomBytes(6).toString('hex')}`;
+    state.leases[selected.id] = {
+      token: leaseToken,
+      pid: process.pid,
+      assignedAt: now,
+      expireAt: now + leaseMs
+    };
+    state.stats[selected.id] = {
+      assignedCount: selected.assignedCount + 1,
+      lastAssignedAt: now
+    };
+    writeAutoPoolState(cliName, state);
+    return { id: selected.id, leaseToken };
+  });
+}
+
+function releaseAutoAccount(cliName, id, leaseToken) {
+  if (!id || !leaseToken) return;
+  try {
+    withAutoPoolLock(cliName, () => {
+      const state = cleanupAutoPoolLeases(readAutoPoolState(cliName));
+      const cur = state.leases[String(id)];
+      if (cur && cur.token === leaseToken) {
+        delete state.leases[String(id)];
+        writeAutoPoolState(cliName, state);
+      }
+    });
+  } catch (e) {}
 }
 
 // Check if an account is configured and try to extract account info
@@ -1890,8 +2003,8 @@ function runCliPty(cliName, initialId, forwardArgs, isLogin = false, runtimeOpti
 
   const autoRotateOnLimit = !!runtimeOptions.autoRotateOnLimit;
   let activeId = String(initialId);
+  let activeLeaseToken = String(runtimeOptions.leaseToken || '');
   let limitTriggered = false;
-  let limitReason = '';
 
   console.log(`\n\x1b[36m[aih]\x1b[0m 🚀 Running \x1b[33m${cliName}\x1b[0m (Account ID: \x1b[32m${activeId}\x1b[0m) via PTY Sandbox`);
   const initialSessionSync = ensureSessionStoreLinks(cliName, activeId);
@@ -1932,6 +2045,20 @@ function runCliPty(cliName, initialId, forwardArgs, isLogin = false, runtimeOpti
 
   let outputBuffer = "";
   let isSwapping = false;
+  let cleanedUp = false;
+
+  function cleanupRuntime() {
+    if (cleanedUp) return;
+    cleanedUp = true;
+    clearInterval(waveInterval);
+    if (canUseRawMode) {
+      try { process.stdin.setRawMode(false); } catch (e) {}
+    }
+    if (autoRotateOnLimit && activeLeaseToken) {
+      releaseAutoAccount(cliName, activeId, activeLeaseToken);
+      activeLeaseToken = '';
+    }
+  }
 
   function attachOnData(proc) {
     proc.onData((data) => {
@@ -1965,7 +2092,6 @@ function runCliPty(cliName, initialId, forwardArgs, isLogin = false, runtimeOpti
 
       if (!isLogin && !limitTriggered && isRateLimitOutput(lowerOut)) {
         limitTriggered = true;
-        limitReason = 'runtime_rate_limit_detected';
         markExhaustedFromUsage(cliName, activeId);
         writeRuntimeExhaustedUsageSnapshot(cliName, activeId, 'rate-limit');
         process.stdout.write(`\r\n\x1b[33m[aih]\x1b[0m Account ${activeId} marked as exhausted (runtime limit detected).\r\n`);
@@ -1978,22 +2104,32 @@ function runCliPty(cliName, initialId, forwardArgs, isLogin = false, runtimeOpti
     proc.onExit(({ exitCode, signal }) => {
       if (!isSwapping) {
         if (isLogin && exitCode === 0) {
+           cleanupRuntime();
            console.log(`\n\x1b[32m[aih] Auth completed! Booting standard session...\x1b[0m`);
            setTimeout(() => {
              runCliPty(cliName, activeId, forwardArgs, false, runtimeOptions);
            }, 500);
         } else if (!isLogin && autoRotateOnLimit && limitTriggered) {
-           const nextId = getNextAvailableId(cliName, activeId);
-           if (!nextId) {
+           let next = null;
+           try {
+             next = allocateAutoAccount(cliName, activeId);
+           } catch (e) {
+             next = null;
+           }
+           if (!next || !next.id) {
+             cleanupRuntime();
              console.log(`\x1b[31m[aih auto]\x1b[0m No next account available after rate-limit on ${activeId}.`);
              process.stdout.write('\r\n');
              process.exit(exitCode || 1);
              return;
            }
-           console.log(`\x1b[36m[aih auto]\x1b[0m Switching from exhausted ${activeId} -> ${nextId}`);
-           activeId = String(nextId);
+           if (activeLeaseToken) {
+             releaseAutoAccount(cliName, activeId, activeLeaseToken);
+           }
+           console.log(`\x1b[36m[aih auto]\x1b[0m Switching from exhausted ${activeId} -> ${next.id}`);
+           activeLeaseToken = next.leaseToken || '';
+           activeId = String(next.id);
            limitTriggered = false;
-           limitReason = '';
            outputBuffer = '';
            hasReceivedData = false;
            const sessionSync = ensureSessionStoreLinks(cliName, activeId);
@@ -2011,6 +2147,7 @@ function runCliPty(cliName, initialId, forwardArgs, isLogin = false, runtimeOpti
              }
            }, 200);
         } else {
+           cleanupRuntime();
            process.stdout.write('\r\n');
            process.exit(exitCode || 0);
         }
@@ -2022,9 +2159,11 @@ function runCliPty(cliName, initialId, forwardArgs, isLogin = false, runtimeOpti
   
   // Cleanup on exit
   process.on('SIGINT', () => {
-    if (canUseRawMode) {
-      try { process.stdin.setRawMode(false); } catch (e) {}
-    }
+    cleanupRuntime();
+    process.exit(0);
+  });
+  process.on('SIGTERM', () => {
+    cleanupRuntime();
     process.exit(0);
   });
 }
@@ -3362,16 +3501,25 @@ if (idOrAction === 'auto') {
      process.exit(1);
   }
   
-  const nextId = getNextAvailableId(cliName, null);
-  if (!nextId) {
+  let allocation = null;
+  try {
+    allocation = allocateAutoAccount(cliName, null);
+  } catch (e) {
+    allocation = null;
+  }
+  if (!allocation || !allocation.id) {
     console.log(`\x1b[31mNo active (non-exhausted) accounts found to auto-route. Use 'aih ${cliName} add' first.\x1b[0m`);
     process.exit(1);
   }
   
+  const nextId = String(allocation.id);
   console.log(`\x1b[36m[aih auto]\x1b[0m Auto-selected Account ID: \x1b[32m${nextId}\x1b[0m`);
   
   forwardArgs = args.slice(2);
-  runCliPty(cliName, nextId, forwardArgs, false, { autoRotateOnLimit: true });
+  runCliPty(cliName, nextId, forwardArgs, false, {
+    autoRotateOnLimit: true,
+    leaseToken: allocation.leaseToken
+  });
   return;
 }
 
