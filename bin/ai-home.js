@@ -1393,7 +1393,7 @@ function showProxyUsage() {
   aih proxy serve [--host <ip>] [--port <n>] [--backend codex-local|openai-upstream] [--provider codex|gemini|auto] [--upstream <url>] [--strategy round-robin|random] [--client-key <key>] [--management-key <key>] [--cooldown-ms <ms>] [--max-attempts <n>] [--upstream-timeout-ms <ms>]
   aih proxy env [--base-url <url>] [--api-key <key>]
   aih proxy sync-codex [--management-url <url>] [--key <management-key>] [--parallel <1-32>] [--limit <n>] [--dry-run]
-  management APIs: /v0/management/status, /v0/management/metrics, /v0/management/accounts, /v0/management/models, /v0/management/reload
+  management APIs: /v0/management/status, /v0/management/metrics, /v0/management/accounts, /v0/management/models, /v0/management/reload, /v0/management/ui
 `);
 }
 
@@ -1584,7 +1584,10 @@ function parseProxyServeArgs(rawArgs) {
     backend: String(process.env.AIH_PROXY_BACKEND || 'codex-local').trim().toLowerCase(),
     provider: String(process.env.AIH_PROXY_PROVIDER || 'auto').trim().toLowerCase(),
     failureThreshold: Number(process.env.AIH_PROXY_FAILURE_THRESHOLD || 2),
-    logRequests: String(process.env.AIH_PROXY_LOG_REQUESTS || '1').trim() !== '0'
+    logRequests: String(process.env.AIH_PROXY_LOG_REQUESTS || '1').trim() !== '0',
+    codexMaxConcurrency: Number(process.env.AIH_PROXY_CODEX_MAX_CONCURRENCY || 2),
+    geminiMaxConcurrency: Number(process.env.AIH_PROXY_GEMINI_MAX_CONCURRENCY || 1),
+    queueLimit: Number(process.env.AIH_PROXY_QUEUE_LIMIT || 200)
   };
   const tokens = Array.isArray(rawArgs) ? rawArgs.slice() : [];
   for (let i = 0; i < tokens.length; i += 1) {
@@ -1692,6 +1695,27 @@ function parseProxyServeArgs(rawArgs) {
       out.logRequests = false;
       continue;
     }
+    if (arg === '--codex-max-concurrency') {
+      const val = String(tokens[i + 1] || '').trim();
+      if (!/^\d+$/.test(val)) throw new Error('Invalid --codex-max-concurrency value');
+      out.codexMaxConcurrency = Number(val);
+      i += 1;
+      continue;
+    }
+    if (arg === '--gemini-max-concurrency') {
+      const val = String(tokens[i + 1] || '').trim();
+      if (!/^\d+$/.test(val)) throw new Error('Invalid --gemini-max-concurrency value');
+      out.geminiMaxConcurrency = Number(val);
+      i += 1;
+      continue;
+    }
+    if (arg === '--queue-limit') {
+      const val = String(tokens[i + 1] || '').trim();
+      if (!/^\d+$/.test(val)) throw new Error('Invalid --queue-limit value');
+      out.queueLimit = Number(val);
+      i += 1;
+      continue;
+    }
     throw new Error(`Unknown option: ${arg}`);
   }
   out.upstream = out.upstream.replace(/\/+$/, '');
@@ -1702,6 +1726,9 @@ function parseProxyServeArgs(rawArgs) {
   if (!['codex-local', 'openai-upstream'].includes(out.backend)) out.backend = 'codex-local';
   if (!['codex', 'gemini', 'auto'].includes(out.provider)) out.provider = 'auto';
   out.failureThreshold = Math.max(1, Math.min(10, Number(out.failureThreshold) || 2));
+  out.codexMaxConcurrency = Math.max(1, Math.min(32, Number(out.codexMaxConcurrency) || 2));
+  out.geminiMaxConcurrency = Math.max(1, Math.min(16, Number(out.geminiMaxConcurrency) || 1));
+  out.queueLimit = Math.max(1, Math.min(5000, Number(out.queueLimit) || 200));
   return out;
 }
 
@@ -2227,15 +2254,14 @@ async function runCodexLocalCompletion(account, prompt, timeoutMs) {
   return text;
 }
 
-function parseGeminiJsonResponse(stdoutText) {
+function parseGeminiJsonPayload(stdoutText) {
   const text = String(stdoutText || '');
   const first = text.indexOf('{');
   const last = text.lastIndexOf('}');
   if (first < 0 || last <= first) return null;
   const candidate = text.slice(first, last + 1).trim();
   try {
-    const parsed = JSON.parse(candidate);
-    if (parsed && typeof parsed.response === 'string') return parsed.response;
+    return JSON.parse(candidate);
   } catch (e) {}
   return null;
 }
@@ -2268,14 +2294,18 @@ async function runGeminiLocalCompletion(account, prompt, timeoutMs) {
   };
   const run = await spawnWithTimeout('gemini', args, { env, cwd: process.cwd() }, timeoutMs);
   if (run.timedOut) throw new Error('gemini_exec_timeout');
-  let text = parseGeminiJsonResponse(run.stdout);
+  const payload = parseGeminiJsonPayload(run.stdout);
+  let text = payload && typeof payload.response === 'string' ? payload.response : '';
   if (!text) text = cleanGeminiTextOutput(run.stdout);
   if (!text && run.code !== 0) {
     const msg = String(run.stderr || run.stdout || '').trim();
     throw new Error(msg || `gemini_exec_exit_${run.code}`);
   }
   if (!text) throw new Error('gemini_empty_response');
-  return text;
+  const discoveredModels = payload && payload.stats && payload.stats.models && typeof payload.stats.models === 'object'
+    ? Object.keys(payload.stats.models).map((x) => String(x || '').trim()).filter(Boolean)
+    : [];
+  return { text, discoveredModels };
 }
 
 function initProxyMetrics() {
@@ -2311,6 +2341,83 @@ function appendProxyRequestLog(entry) {
   try {
     fs.appendFileSync(AIH_PROXY_LOG_FILE, `${line}\n`);
   } catch (e) {}
+}
+
+function createProviderExecutor(name, maxConcurrency, queueLimit) {
+  const queue = [];
+  let running = 0;
+  let totalScheduled = 0;
+  let totalRejected = 0;
+
+  const runNext = () => {
+    if (running >= maxConcurrency) return;
+    const job = queue.shift();
+    if (!job) return;
+    running += 1;
+    Promise.resolve()
+      .then(job.fn)
+      .then((result) => job.resolve(result))
+      .catch((error) => job.reject(error))
+      .finally(() => {
+        running -= 1;
+        runNext();
+      });
+  };
+
+  const schedule = (fn) => new Promise((resolve, reject) => {
+    if (queue.length >= queueLimit) {
+      totalRejected += 1;
+      reject(new Error(`${name}_queue_full`));
+      return;
+    }
+    totalScheduled += 1;
+    queue.push({ fn, resolve, reject });
+    runNext();
+  });
+
+  const snapshot = () => ({
+    name,
+    running,
+    queued: queue.length,
+    maxConcurrency,
+    queueLimit,
+    totalScheduled,
+    totalRejected
+  });
+
+  return { schedule, snapshot };
+}
+
+function initModelRegistry() {
+  return {
+    updatedAt: Date.now(),
+    providers: {
+      codex: new Set(['gpt-4o-mini', 'gpt-4.1-mini', 'gpt-4.1']),
+      gemini: new Set(['gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.0-flash'])
+    }
+  };
+}
+
+function addModelToRegistry(registry, provider, model) {
+  if (!registry || !registry.providers) return;
+  if (!provider || !registry.providers[provider]) return;
+  const m = normalizeModelId(model);
+  if (!m) return;
+  registry.providers[provider].add(m);
+  registry.updatedAt = Date.now();
+}
+
+function getRegistryModelList(registry, providerMode = 'auto') {
+  if (!registry || !registry.providers) return FALLBACK_MODELS.slice();
+  const out = new Set();
+  if (providerMode === 'codex' || providerMode === 'auto') {
+    registry.providers.codex.forEach((m) => out.add(m));
+  }
+  if (providerMode === 'gemini' || providerMode === 'auto') {
+    registry.providers.gemini.forEach((m) => out.add(m));
+  }
+  if (out.size === 0) return FALLBACK_MODELS.slice();
+  return Array.from(out).sort();
 }
 
 function buildChatCompletionPayload(model, text) {
@@ -2374,6 +2481,62 @@ function writeSseChatCompletion(res, model, text) {
   res.end();
 }
 
+function renderProxyStatusPage() {
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>AIH Proxy Status</title>
+  <style>
+    body { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background:#0f172a; color:#e2e8f0; margin:0; padding:16px; }
+    .grid { display:grid; grid-template-columns: repeat(auto-fit,minmax(320px,1fr)); gap:12px; }
+    .card { background:#111827; border:1px solid #334155; border-radius:10px; padding:12px; }
+    h1,h2 { margin:0 0 10px 0; }
+    h1 { font-size:18px; }
+    h2 { font-size:14px; color:#93c5fd; }
+    pre { white-space:pre-wrap; word-break:break-word; font-size:12px; }
+    .muted { color:#94a3b8; }
+  </style>
+</head>
+<body>
+  <h1>AIH Proxy Live Status</h1>
+  <p class="muted">Auto refresh every 2s</p>
+  <div class="grid">
+    <div class="card"><h2>/status</h2><pre id="status">loading...</pre></div>
+    <div class="card"><h2>/metrics</h2><pre id="metrics">loading...</pre></div>
+    <div class="card"><h2>/accounts (first 20)</h2><pre id="accounts">loading...</pre></div>
+    <div class="card"><h2>/models</h2><pre id="models">loading...</pre></div>
+  </div>
+  <script>
+    async function loadJson(path) {
+      const r = await fetch(path);
+      return await r.json();
+    }
+    async function tick() {
+      try {
+        const [status, metrics, accounts, models] = await Promise.all([
+          loadJson('/v0/management/status'),
+          loadJson('/v0/management/metrics'),
+          loadJson('/v0/management/accounts'),
+          loadJson('/v0/management/models')
+        ]);
+        document.getElementById('status').textContent = JSON.stringify(status, null, 2);
+        document.getElementById('metrics').textContent = JSON.stringify(metrics, null, 2);
+        const slimAccounts = { ...accounts, accounts: (accounts.accounts || []).slice(0, 20) };
+        document.getElementById('accounts').textContent = JSON.stringify(slimAccounts, null, 2);
+        document.getElementById('models').textContent = JSON.stringify(models, null, 2);
+      } catch (e) {
+        document.getElementById('status').textContent = String(e);
+      }
+    }
+    tick();
+    setInterval(tick, 2000);
+  </script>
+</body>
+</html>`;
+}
+
 async function startLocalProxyServer(options) {
   const codexAccounts = loadCodexProxyAccounts().map((a) => ({ ...a, provider: 'codex', consecutiveFailures: 0, successCount: 0, failCount: 0, lastError: '' }));
   const geminiAccounts = loadGeminiProxyAccounts();
@@ -2386,6 +2549,11 @@ async function startLocalProxyServer(options) {
     },
     startedAt: Date.now(),
     metrics: initProxyMetrics(),
+    executors: {
+      codex: createProviderExecutor('codex', options.codexMaxConcurrency, options.queueLimit),
+      gemini: createProviderExecutor('gemini', options.geminiMaxConcurrency, options.queueLimit)
+    },
+    modelRegistry: initModelRegistry(),
     modelsCache: {
       updatedAt: 0,
       ids: [],
@@ -2413,6 +2581,13 @@ async function startLocalProxyServer(options) {
           return writeJson(res, 401, { ok: false, error: 'unauthorized_management' });
         }
       }
+      if (method === 'GET' && pathname === '/v0/management/ui') {
+        const html = renderProxyStatusPage();
+        res.statusCode = 200;
+        res.setHeader('content-type', 'text/html; charset=utf-8');
+        res.end(html);
+        return;
+      }
       if (method === 'GET' && pathname === '/v0/management/status') {
         const now = Date.now();
         const codex = state.accounts.codex || [];
@@ -2435,8 +2610,13 @@ async function startLocalProxyServer(options) {
             codex: { total: codex.length, active: activeCodex },
             gemini: { total: gemini.length, active: activeGemini }
           },
+          queue: {
+            codex: state.executors.codex.snapshot(),
+            gemini: state.executors.gemini.snapshot()
+          },
           modelsCached: Array.isArray(state.modelsCache.ids) ? state.modelsCache.ids.length : 0,
           modelsUpdatedAt: state.modelsCache.updatedAt || 0,
+          modelRegistryUpdatedAt: state.modelRegistry.updatedAt || 0,
           successRate: Number((state.metrics.totalSuccess / requests).toFixed(4)),
           timeoutRate: Number((state.metrics.totalTimeouts / requests).toFixed(4)),
           totalRequests: state.metrics.totalRequests,
@@ -2457,10 +2637,24 @@ async function startLocalProxyServer(options) {
           providerCounts: state.metrics.providerCounts,
           providerSuccess: state.metrics.providerSuccess,
           providerFailures: state.metrics.providerFailures,
+          queue: {
+            codex: state.executors.codex.snapshot(),
+            gemini: state.executors.gemini.snapshot()
+          },
           lastErrors: state.metrics.lastErrors
         });
       }
       if (method === 'GET' && pathname === '/v0/management/models') {
+        if (options.backend === 'codex-local') {
+          const models = getRegistryModelList(state.modelRegistry, options.provider);
+          return writeJson(res, 200, {
+            ok: true,
+            backend: options.backend,
+            providerMode: options.provider,
+            updatedAt: state.modelRegistry.updatedAt || 0,
+            models
+          });
+        }
         const forceRefresh = ['1', 'true', 'yes'].includes(String(url.searchParams.get('refresh') || '').toLowerCase());
         const accountLimitRaw = String(url.searchParams.get('accounts') || '').trim();
         const accountLimit = /^\d+$/.test(accountLimitRaw) ? Math.max(1, Number(accountLimitRaw)) : 3;
@@ -2580,12 +2774,7 @@ async function startLocalProxyServer(options) {
 
     if (options.backend === 'codex-local') {
       if (method === 'GET' && pathname === '/v1/models') {
-        const modelList = [...new Set([
-          ...FALLBACK_MODELS,
-          'gemini-2.5-pro',
-          'gemini-2.5-flash',
-          'gemini-2.0-flash'
-        ])];
+        const modelList = getRegistryModelList(state.modelRegistry, options.provider);
         const payload = buildOpenAIModelsList(modelList);
         res.statusCode = 200;
         res.setHeader('content-type', 'application/json; charset=utf-8');
@@ -2607,9 +2796,18 @@ async function startLocalProxyServer(options) {
         state.metrics.providerCounts[provider] = Number(state.metrics.providerCounts[provider] || 0) + 1;
         const prompt = buildPromptFromChatRequest(requestJson || {});
         try {
-          const text = provider === 'gemini'
-            ? await runGeminiLocalCompletion(account, prompt, options.upstreamTimeoutMs)
-            : await runCodexLocalCompletion(account, prompt, options.upstreamTimeoutMs);
+          const exec = provider === 'gemini' ? state.executors.gemini : state.executors.codex;
+          let text = '';
+          await exec.schedule(async () => {
+            if (provider === 'gemini') {
+              const out = await runGeminiLocalCompletion(account, prompt, options.upstreamTimeoutMs);
+              text = out.text;
+              (out.discoveredModels || []).forEach((m) => addModelToRegistry(state.modelRegistry, 'gemini', m));
+              return;
+            }
+            text = await runCodexLocalCompletion(account, prompt, options.upstreamTimeoutMs);
+            addModelToRegistry(state.modelRegistry, 'codex', requestJson && requestJson.model);
+          });
           const isStream = !!(requestJson && requestJson.stream);
           const model = String((requestJson && requestJson.model) || 'gpt-4o-mini');
           if (isStream) {
@@ -2650,6 +2848,12 @@ async function startLocalProxyServer(options) {
           return;
         } catch (e) {
           const detail = String((e && e.message) || e);
+          if (detail.includes('_queue_full')) {
+            state.metrics.totalFailures += 1;
+            state.metrics.providerFailures[provider] = Number(state.metrics.providerFailures[provider] || 0) + 1;
+            pushMetricError(state.metrics, routeKey, provider, detail);
+            return writeJson(res, 429, { ok: false, error: 'queue_full', detail });
+          }
           if (detail.includes('timeout')) state.metrics.totalTimeouts += 1;
           state.metrics.totalFailures += 1;
           state.metrics.providerFailures[provider] = Number(state.metrics.providerFailures[provider] || 0) + 1;
@@ -2683,9 +2887,18 @@ async function startLocalProxyServer(options) {
         state.metrics.providerCounts[provider] = Number(state.metrics.providerCounts[provider] || 0) + 1;
         const prompt = buildPromptFromResponsesRequest(requestJson || {});
         try {
-          const text = provider === 'gemini'
-            ? await runGeminiLocalCompletion(account, prompt, options.upstreamTimeoutMs)
-            : await runCodexLocalCompletion(account, prompt, options.upstreamTimeoutMs);
+          const exec = provider === 'gemini' ? state.executors.gemini : state.executors.codex;
+          let text = '';
+          await exec.schedule(async () => {
+            if (provider === 'gemini') {
+              const out = await runGeminiLocalCompletion(account, prompt, options.upstreamTimeoutMs);
+              text = out.text;
+              (out.discoveredModels || []).forEach((m) => addModelToRegistry(state.modelRegistry, 'gemini', m));
+              return;
+            }
+            text = await runCodexLocalCompletion(account, prompt, options.upstreamTimeoutMs);
+            addModelToRegistry(state.modelRegistry, 'codex', requestJson && requestJson.model);
+          });
           const model = String((requestJson && requestJson.model) || 'gpt-4o-mini');
           const payload = {
             id: `resp_${Date.now()}`,
@@ -2715,6 +2928,12 @@ async function startLocalProxyServer(options) {
           return writeJson(res, 200, payload);
         } catch (e) {
           const detail = String((e && e.message) || e);
+          if (detail.includes('_queue_full')) {
+            state.metrics.totalFailures += 1;
+            state.metrics.providerFailures[provider] = Number(state.metrics.providerFailures[provider] || 0) + 1;
+            pushMetricError(state.metrics, routeKey, provider, detail);
+            return writeJson(res, 429, { ok: false, error: 'queue_full', detail });
+          }
           if (detail.includes('timeout')) state.metrics.totalTimeouts += 1;
           state.metrics.totalFailures += 1;
           state.metrics.providerFailures[provider] = Number(state.metrics.providerFailures[provider] || 0) + 1;
