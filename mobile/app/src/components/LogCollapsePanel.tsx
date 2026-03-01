@@ -16,6 +16,8 @@ export interface LogCollapsePanelProps {
   collapsedCount?: number;
 }
 
+type LevelStats = Record<LogLevel, number>;
+
 function normalizeCount(value: number | undefined, max: number): number {
   if (typeof value !== 'number' || Number.isNaN(value)) {
     return Math.min(3, max);
@@ -44,9 +46,29 @@ function levelTone(level: LogLevel): { text: string; badge: string; badgeText: s
   return { text: '#d1fae5', badge: '#065f46', badgeText: '#6ee7b7' };
 }
 
+function summarizeLevels(logs: LogEntry[]): LevelStats {
+  return logs.reduce<LevelStats>(
+    (acc, entry) => {
+      acc[entry.level] += 1;
+      return acc;
+    },
+    { debug: 0, info: 0, warn: 0, error: 0 }
+  );
+}
+
+function highestSeverity(stats: LevelStats): LogLevel | null {
+  if (stats.error > 0) return 'error';
+  if (stats.warn > 0) return 'warn';
+  if (stats.info > 0) return 'info';
+  if (stats.debug > 0) return 'debug';
+  return null;
+}
+
 export default function LogCollapsePanel(props: LogCollapsePanelProps): JSX.Element {
   const [expanded, setExpanded] = useState<boolean>(Boolean(props.defaultExpanded));
   const panelTitle = (props.title || 'Runtime Logs').trim() || 'Runtime Logs';
+  const levelStats = useMemo(() => summarizeLevels(props.logs), [props.logs]);
+  const topSeverity = useMemo(() => highestSeverity(levelStats), [levelStats]);
 
   const visibleLogs = useMemo(() => {
     if (props.logs.length === 0) return [];
@@ -82,6 +104,26 @@ export default function LogCollapsePanel(props: LogCollapsePanelProps): JSX.Elem
       </View>
 
       {hiddenCount > 0 ? <Text style={styles.hiddenHint}>Hidden {hiddenCount} earlier entries.</Text> : null}
+      {!expanded && props.logs.length > 0 ? (
+        <View style={styles.signalRow}>
+          {(['error', 'warn', 'info', 'debug'] as const).map((level) => {
+            const count = levelStats[level];
+            if (count <= 0) return null;
+            const tone = levelTone(level);
+            return (
+              <View key={level} style={[styles.signalBadge, { borderColor: tone.badge }]}>
+                <Text style={[styles.signalLabel, { color: tone.badgeText }]}>{level.toUpperCase()}</Text>
+                <Text style={[styles.signalCount, { color: tone.text }]}>{count}</Text>
+              </View>
+            );
+          })}
+          {topSeverity ? (
+            <Text style={styles.topSeverityText}>
+              Highest severity: {topSeverity.toUpperCase()}
+            </Text>
+          ) : null}
+        </View>
+      ) : null}
 
       <View style={styles.logList}>
         {visibleLogs.length === 0 ? (
@@ -91,11 +133,17 @@ export default function LogCollapsePanel(props: LogCollapsePanelProps): JSX.Elem
             const tone = levelTone(entry.level);
             return (
               <View key={`${entry.timestamp}:${entry.level}:${index}`} style={styles.logRow}>
-                <Text style={styles.timestamp}>{formatTimestamp(entry.timestamp)}</Text>
-                <View style={[styles.levelBadge, { backgroundColor: tone.badge }]}>
-                  <Text style={[styles.levelBadgeText, { color: tone.badgeText }]}>{entry.level.toUpperCase()}</Text>
+                <View style={styles.metaRow}>
+                  <Text style={styles.timestamp}>{formatTimestamp(entry.timestamp)}</Text>
+                  <View style={[styles.levelBadge, { backgroundColor: tone.badge }]}>
+                    <Text style={[styles.levelBadgeText, { color: tone.badgeText }]}>{entry.level.toUpperCase()}</Text>
+                  </View>
                 </View>
-                <Text style={[styles.message, { color: tone.text }]} numberOfLines={expanded ? undefined : 2}>
+                <Text
+                  style={[styles.message, styles.messageMono, { color: tone.text }]}
+                  numberOfLines={expanded ? undefined : 2}
+                  ellipsizeMode="tail"
+                >
                   {entry.message.trim() || '--'}
                 </Text>
               </View>
@@ -157,6 +205,36 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '600'
   },
+  signalRow: {
+    alignItems: 'center',
+    columnGap: 8,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    rowGap: 6
+  },
+  signalBadge: {
+    alignItems: 'center',
+    backgroundColor: '#0f172a',
+    borderRadius: 999,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 3
+  },
+  signalLabel: {
+    fontSize: 10,
+    fontWeight: '700'
+  },
+  signalCount: {
+    fontSize: 11,
+    fontWeight: '700'
+  },
+  topSeverityText: {
+    color: '#cbd5e1',
+    fontSize: 11,
+    fontWeight: '600'
+  },
   logList: {
     gap: 8
   },
@@ -172,16 +250,19 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 8
   },
+  metaRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 5
+  },
   timestamp: {
     color: '#93c5fd',
     fontSize: 11,
-    fontWeight: '600',
-    marginBottom: 4
+    fontWeight: '600'
   },
   levelBadge: {
-    alignSelf: 'flex-start',
     borderRadius: 999,
-    marginBottom: 5,
     paddingHorizontal: 7,
     paddingVertical: 2
   },
@@ -192,5 +273,8 @@ const styles = StyleSheet.create({
   message: {
     fontSize: 12,
     lineHeight: 17
+  },
+  messageMono: {
+    fontFamily: 'Menlo'
   }
 });

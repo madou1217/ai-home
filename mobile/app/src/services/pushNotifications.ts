@@ -42,6 +42,8 @@ class ConsolePushAdapter implements PushAdapter {
 
 export class PushNotifications {
   private readonly adapter: PushAdapter;
+  private readonly lastTaskUpdatedAtMs = new Map<string, number>();
+  private readonly lastTaskEventFingerprint = new Map<string, string>();
   private state: PushState = {
     ready: false,
     permission: 'prompt',
@@ -86,6 +88,37 @@ export class PushNotifications {
     return /quota|rate[\s-_]?limit|too many requests|429/.test(text);
   }
 
+  private parseTaskUpdatedAtMs(task: TaskSnapshot): number {
+    const parsed = Date.parse(task.updatedAt);
+    return Number.isFinite(parsed) ? parsed : Date.now();
+  }
+
+  private shouldSuppressTaskEvent(task: TaskSnapshot, event: 'started' | 'update' | 'completion' | 'failure' | 'quota'): boolean {
+    const updatedAtMs = this.parseTaskUpdatedAtMs(task);
+    const lastSeenMs = this.lastTaskUpdatedAtMs.get(task.taskId);
+    // Drop stale/out-of-order snapshots to avoid regressing notification state.
+    if (typeof lastSeenMs === 'number' && updatedAtMs < lastSeenMs) {
+      return true;
+    }
+
+    const eventKey = `${task.taskId}:${event}`;
+    const fingerprint = [
+      task.status,
+      String(task.progress ?? ''),
+      String(task.message ?? ''),
+      String(task.error ?? ''),
+      task.updatedAt
+    ].join('|');
+    const previousFingerprint = this.lastTaskEventFingerprint.get(eventKey);
+    if (previousFingerprint === fingerprint) {
+      return true;
+    }
+
+    this.lastTaskUpdatedAtMs.set(task.taskId, Math.max(lastSeenMs || 0, updatedAtMs));
+    this.lastTaskEventFingerprint.set(eventKey, fingerprint);
+    return false;
+  }
+
   getState(): PushState {
     return { ...this.state };
   }
@@ -109,6 +142,7 @@ export class PushNotifications {
   }
 
   async notifyTaskStarted(task: TaskSnapshot): Promise<void> {
+    if (this.shouldSuppressTaskEvent(task, 'started')) return;
     await this.send(
       'Task started',
       `Task ${task.taskId} is now ${task.status}.`,
@@ -127,6 +161,7 @@ export class PushNotifications {
   }
 
   async notifyTaskUpdated(task: TaskSnapshot): Promise<void> {
+    if (this.shouldSuppressTaskEvent(task, 'update')) return;
     if (this.hasQuotaSignal(task)) {
       await this.notifyQuotaAlert(task);
       return;
@@ -152,12 +187,13 @@ export class PushNotifications {
   }
 
   async notifyTaskCompleted(task: TaskSnapshot): Promise<void> {
+    const success = task.status === 'succeeded';
+    if (this.shouldSuppressTaskEvent(task, success ? 'completion' : 'failure')) return;
     if (this.hasQuotaSignal(task)) {
       await this.notifyQuotaAlert(task);
       return;
     }
 
-    const success = task.status === 'succeeded';
     const title = success ? 'Task completed' : 'Task failed';
     const body = success
       ? `Task ${task.taskId} completed successfully.`
@@ -170,6 +206,7 @@ export class PushNotifications {
   }
 
   async notifyQuotaAlert(task: TaskSnapshot): Promise<void> {
+    if (this.shouldSuppressTaskEvent(task, 'quota')) return;
     await this.send(
       'Quota limit reached',
       `Task ${task.taskId} hit a quota/rate limit. Open task details to retry or switch account.`,

@@ -286,6 +286,21 @@ function mapHttpErrorHint(status: number): { kind: ErrorHintKind; action: string
   return { kind: 'unexpected', action: 'inspect_daemon_logs', retryable: false };
 }
 
+function parseRetryAfterMs(value: string | null): number | undefined {
+  if (!value) return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  const seconds = Number(trimmed);
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return Math.floor(seconds * 1000);
+  }
+  const epoch = Date.parse(trimmed);
+  if (!Number.isFinite(epoch)) return undefined;
+  const delta = epoch - Date.now();
+  if (delta <= 0) return 0;
+  return delta;
+}
+
 function normalizeDaemonError(error: unknown): DaemonClientError {
   if (error && typeof error === 'object' && (error as { name?: string }).name === 'DaemonClientError') {
     return error as DaemonClientError;
@@ -384,8 +399,10 @@ export function createDaemonClient(options: CreateDaemonClientOptions): DaemonCl
           const details = parseErrorDetails(errBody);
           const hint = mapHttpErrorHint(response.status);
           const retryable = canRetry || hint.retryable;
+          const retryAfterMs = parseRetryAfterMs(response.headers.get('retry-after'));
           if (attempt < retryCount && canRetry) {
-            await sleep(retryDelayMs * (attempt + 1));
+            const backoffMs = retryAfterMs ?? retryDelayMs * (attempt + 1);
+            await sleep(backoffMs);
             continue;
           }
           throw createDaemonClientError({
@@ -393,14 +410,26 @@ export function createDaemonClient(options: CreateDaemonClientOptions): DaemonCl
             message: `daemon_http_${response.status}`,
             status: response.status,
             retryable,
-            details: { kind: hint.kind, action: hint.action, body: details }
+            details: { kind: hint.kind, action: hint.action, body: details, retryAfterMs }
           });
         }
 
         const contentType = response.headers.get('content-type') || '';
-        const body = contentType.includes('application/json')
-          ? await response.json()
-          : ((await response.text()) as unknown);
+        let body: unknown;
+        if (contentType.includes('application/json')) {
+          try {
+            body = await response.json();
+          } catch (error) {
+            throw createDaemonClientError({
+              code: 'daemon_parse_error',
+              message: 'daemon_invalid_json_response',
+              retryable: false,
+              details: { kind: 'invalid_payload', action: 'inspect_daemon_logs', error }
+            });
+          }
+        } else {
+          body = (await response.text()) as unknown;
+        }
         cleanup();
         return body as T;
       } catch (error) {

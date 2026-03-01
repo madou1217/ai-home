@@ -61,6 +61,7 @@ export class ReconnectManager {
   private active = false;
   private connecting = false;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
+  private pendingRecoveryMode: 'manual' | 'network' | null = null;
 
   constructor(options: ReconnectManagerOptions = {}) {
     this.baseDelayMs = options.baseDelayMs ?? DEFAULT_BASE_DELAY_MS;
@@ -116,17 +117,35 @@ export class ReconnectManager {
   notifyConnectionLost(reason?: string): void {
     if (!this.active) return;
     this.clearRetryTimer();
+    if (this.connecting) {
+      this.pendingRecoveryMode = 'network';
+    }
     this.updateSnapshot({
       state: 'reconnecting',
       reason: reason || 'connection_lost',
       hint: 'Connection dropped. Retrying automatically.'
     });
-    this.scheduleRetry();
+    if (!this.connecting) {
+      this.scheduleRetry();
+    }
   }
 
   retryNow(): void {
     if (!this.active) return;
     this.clearRetryTimer();
+    if (this.snapshot.state === 'offline') {
+      this.updateSnapshot({
+        state: 'reconnecting',
+        attempt: 0,
+        reason: undefined,
+        hint: 'Manual reconnect requested.',
+        nextRetryAt: undefined
+      });
+    }
+    if (this.connecting) {
+      this.pendingRecoveryMode = 'manual';
+      return;
+    }
     void this.tryConnect(this.snapshot.attempt > 0 ? 'reconnecting' : 'connecting');
   }
 
@@ -213,6 +232,16 @@ export class ReconnectManager {
       this.scheduleRetry();
     } finally {
       this.connecting = false;
+      if (!this.active) return;
+      if (this.pendingRecoveryMode === 'manual') {
+        this.pendingRecoveryMode = null;
+        void this.tryConnect('reconnecting');
+        return;
+      }
+      if (this.pendingRecoveryMode === 'network') {
+        this.pendingRecoveryMode = null;
+        this.scheduleRetry();
+      }
     }
   }
 
