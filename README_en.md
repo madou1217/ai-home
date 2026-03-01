@@ -8,13 +8,13 @@ When you hit a `429 Rate Limit`, your flow is broken. When you want to run two a
 
 `ai-home` (`aih`) is a lightweight, aggressive C++ PTY (Pseudo-Terminal) hijacker and environment multiplexer built for power users. 
 
-It forces these CLIs into strictly isolated sandboxes, allowing you to run **infinite concurrent instances** using different accounts, all while silently monitoring their stdout streams for rate limits to perform **sub-second Hot-Swaps**.
+It forces these CLIs into strictly isolated sandboxes, allowing you to run **infinite concurrent instances** using different accounts, while routing by trusted account state (including usage snapshots) instead of fragile stdout keyword matching.
 
 ## 🔥 Core Hacks
 
 *   **Zero-Pollution Sandboxing**: Modifies process environment trees (`HOME`, `USERPROFILE`, tool-specific config dirs) on the fly. `aih gemini 1` and `aih gemini 2` have zero knowledge of each other.
-*   **Deep PTY Hijacking**: We don't just spawn processes; we inject a `node-pty` layer. We listen to the raw byte stream of the AI's response before it hits your terminal.
-*   **Auto Hot-Swap (The Clip Reload)**: If the PTY intercepts a `429 Too Many Requests` or `Quota Exceeded` string in the stdout, it instantly takes over the child process, marks the Account ID as `[Exhausted]`, and seamlessly spawns your next available account. *You don't even need to lift your hands off the keyboard.*
+*   **Deep PTY Hijacking**: We don't just spawn processes; we inject a `node-pty` layer for terminal isolation, session continuity, and account-scoped runtime environments.
+*   **Trusted Exhausted Routing**: `aih` no longer marks accounts exhausted from runtime stdout keywords. Exhausted state is managed by trusted usage-remaining snapshots and explicit account state operations.
 *   **API Key Phantom Routing**: If `ai-home` detects `OPENAI_API_KEY` (or other supported keys) in your shell environment, it bypasses standard auth. It automatically creates a dedicated sandbox bound to that specific key and base URL, and routes you to it seamlessly.
 *   **Ghost Migration**: Instantly clones your existing global `~/.gemini` or `~/.codex` configs into Sandbox 1 without requiring re-authentication.
 *   **Auto-Install**: If you don't have the CLI installed, `ai-home` will automatically download and install the global npm package for you.
@@ -55,12 +55,12 @@ Window A: `aih gemini 1 "Refactor this monolith"`
 Window B: `aih gemini 2 "Write unit tests for the monolith"`
 They share nothing. They conflict with nothing.
 
-### 5. The Auto-Swapper
+### 5. Auto Account Routing
 When you know you are burning through tokens, don't hardcode an ID.
 ```bash
 aih gemini auto "Build a React app"
 ```
-*If Account 1 gets rate-limited mid-sentence, the PTY intercepts the crash, exits the agent, and swaps to Account 2 within 800ms. The prompt redraws and you continue.*
+*`auto` selects the next non-exhausted account at launch time. It does not switch accounts mid-session based on terminal output text.*
 
 ### 6. Recon
 ```bash

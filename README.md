@@ -8,13 +8,13 @@
 
 `ai-home` (`aih`) 是一个轻量级、极具极客精神的 C++ PTY（伪终端）劫持器和环境多路复用工具。
 
-它通过巧妙的底层机制将原生的 CLI 压入物理隔离的沙箱中，让你能够使用不同的账号运行**无限并发实例**。最重要的是，它会在底层静默监听 AI 输出的字节流，一旦发现限流报错，就能实现**亚秒级的账号热切换 (Hot-Swap)**。
+它通过巧妙的底层机制将原生的 CLI 压入物理隔离的沙箱中，让你能够使用不同的账号运行**无限并发实例**。账号路由基于可信状态（包括 usage 快照），不再依赖脆弱的终端输出关键词匹配。
 
 ## 🔥 核心极客机制 (Core Hacks)
 
 *   **零污染环境隔离 (Zero-Pollution Sandboxing)**: 运行时动态修改进程的环境树（如 `HOME`, `USERPROFILE`, 及其特定的隐藏文件夹）。`aih gemini 1` 和 `aih gemini 2` 在文件系统层面完全互不感知。
-*   **深度 PTY 拦截 (Deep PTY Hijacking)**: 我们不仅是 `spawn` 进程，我们注入了 `node-pty` 层。我们在 AI 的回复渲染到你的终端之前，拦截并分析其原始字节流。
-*   **毫秒级热切换 (Auto Hot-Swap)**: 如果 PTY 捕获到了 `429 Too Many Requests` 或 `Quota Exceeded` 等限流关键字，它会在后台瞬间接管当前的子进程，将该账号标记为 `[Exhausted]`（已耗尽），并**无缝为你启动下一个空闲账号**。*你的手甚至不需要离开键盘，聊天就能继续。*
+*   **深度 PTY 劫持 (Deep PTY Hijacking)**: 我们不仅是 `spawn` 进程，我们注入了 `node-pty` 层，用于终端隔离、会话连续性和账号级运行环境管理。
+*   **可信耗尽路由 (Trusted Exhausted Routing)**: `aih` 不再根据运行时 stdout 关键词将账号标记为 exhausted。账号耗尽状态由可信 usage-remaining 快照与显式状态操作管理。
 *   **API Key 幽灵路由 (Phantom Routing)**: 如果你在终端里 `export OPENAI_API_KEY`，`ai-home` 会自动嗅探。它会将你的 Key 和 Base URL 生成哈希签名，自动为你创建一个专属的免登沙箱，并自动路由过去。
 *   **无感迁移 (Ghost Migration)**: 自动嗅探你本机已有的 `~/.gemini` 或 `~/.codex` 全局登录状态，并在你第一次使用时无损克隆进 1 号沙箱，无需重新扫码登录。
 *   **自动装备 (Auto-Install)**: 如果你没有安装对应的 CLI 工具，`ai-home` 会在运行时自动为你下载安装对应的 npm 全局包。
@@ -56,12 +56,12 @@ aih codex
 窗口 B 执行：`aih gemini 2 "帮我写刚才那段代码的单元测试"`
 它们同时思考，互不干扰。
 
-### 5. 自动弹匣 (Auto-Swapper)
+### 5. 自动账号路由 (Auto Routing)
 当你预感到即将触碰账号的 Token 限制时，不要硬编码 ID。
 ```bash
 aih gemini auto "帮我开发一个 React 应用"
 ```
-*如果在对话中途，账号 1 突然被限流拦截，PTY 会接管报错，退出账号 1，并在 800毫秒内切到账号 2 重新接管终端。*
+*`auto` 会在启动时选择下一个非 exhausted 账号，不会在会话中基于终端输出文本自动切号。*
 
 ### 6. 资产侦察
 ```bash

@@ -2310,57 +2310,6 @@ function applyCodexDefaultArgs(args) {
   return out;
 }
 
-function isRateLimitOutput(lowerOut) {
-  if (!lowerOut) return false;
-  const patterns = [
-    'too many requests',
-    'rate limit',
-    'rate_limit',
-    'quota exceeded',
-    'usage limit',
-    "you've hit your usage limit",
-    'you have hit your usage limit',
-    'limit reached',
-    'request limit exceeded',
-    'token limit exceeded'
-  ];
-  return patterns.some((p) => lowerOut.includes(p));
-}
-
-function writeRuntimeExhaustedUsageSnapshot(cliName, id, reason) {
-  const now = Date.now();
-  const textReason = String(reason || 'runtime_rate_limit');
-  if (cliName === 'codex') {
-    writeUsageCache(cliName, id, {
-      schemaVersion: USAGE_SNAPSHOT_SCHEMA_VERSION,
-      kind: 'codex_oauth_status',
-      source: USAGE_SOURCE_CODEX,
-      capturedAt: now,
-      entries: [{ window: `runtime-limit (${textReason})`, remainingPct: 0, resetIn: '' }]
-    });
-    return;
-  }
-  if (cliName === 'claude') {
-    writeUsageCache(cliName, id, {
-      schemaVersion: USAGE_SNAPSHOT_SCHEMA_VERSION,
-      kind: 'claude_oauth_usage',
-      source: USAGE_SOURCE_CLAUDE_AUTH_TOKEN,
-      capturedAt: now,
-      entries: [{ window: `runtime-limit (${textReason})`, remainingPct: 0, resetIn: '' }]
-    });
-    return;
-  }
-  if (cliName === 'gemini') {
-    writeUsageCache(cliName, id, {
-      schemaVersion: USAGE_SNAPSHOT_SCHEMA_VERSION,
-      kind: 'gemini_oauth_stats',
-      source: USAGE_SOURCE_GEMINI,
-      capturedAt: now,
-      models: [{ model: 'runtime-limit', remainingPct: 0, resetIn: '' }]
-    });
-  }
-}
-
 function runCliPty(cliName, initialId, forwardArgs, isLogin = false, runtimeOptions = {}) {
   try {
     execSync(`which ${cliName}`, { stdio: 'ignore' });
@@ -2377,12 +2326,10 @@ function runCliPty(cliName, initialId, forwardArgs, isLogin = false, runtimeOpti
     }
   }
 
-  const autoRotateOnLimit = !!runtimeOptions.autoRotateOnLimit;
   const taskKey = sanitizeTaskKey(runtimeOptions.taskKey || '');
   const planPath = normalizePlanPath(runtimeOptions.planPath || '');
   let activeId = String(initialId);
   let activeLeaseToken = String(runtimeOptions.leaseToken || '');
-  let limitTriggered = false;
   let lastCapturedSessionId = '';
 
   console.log(`\n\x1b[36m[aih]\x1b[0m 🚀 Running \x1b[33m${cliName}\x1b[0m (Account ID: \x1b[32m${activeId}\x1b[0m) via PTY Sandbox`);
@@ -2433,7 +2380,7 @@ function runCliPty(cliName, initialId, forwardArgs, isLogin = false, runtimeOpti
     if (canUseRawMode) {
       try { process.stdin.setRawMode(false); } catch (e) {}
     }
-    if (autoRotateOnLimit && activeLeaseToken) {
+    if (activeLeaseToken) {
       releaseAutoAccount(cliName, activeId, activeLeaseToken);
       activeLeaseToken = '';
     }
@@ -2500,15 +2447,6 @@ function runCliPty(cliName, initialId, forwardArgs, isLogin = false, runtimeOpti
         }, 1500);
       }
 
-      if (!isLogin && !limitTriggered && isRateLimitOutput(lowerOut)) {
-        limitTriggered = true;
-        markExhaustedFromUsage(cliName, activeId);
-        writeRuntimeExhaustedUsageSnapshot(cliName, activeId, 'rate-limit');
-        process.stdout.write(`\r\n\x1b[33m[aih]\x1b[0m Account ${activeId} marked as exhausted (runtime limit detected).\r\n`);
-        if (autoRotateOnLimit) {
-          try { proc.kill(); } catch (e) {}
-        }
-      }
     });
 
     proc.onExit(({ exitCode, signal }) => {
@@ -2519,43 +2457,6 @@ function runCliPty(cliName, initialId, forwardArgs, isLogin = false, runtimeOpti
            setTimeout(() => {
              runCliPty(cliName, activeId, forwardArgs, false, runtimeOptions);
            }, 500);
-        } else if (!isLogin && autoRotateOnLimit && limitTriggered) {
-           let next = null;
-           try {
-             next = allocateAutoAccount(cliName, activeId);
-           } catch (e) {
-             next = null;
-           }
-           if (!next || !next.id) {
-             cleanupRuntime();
-             console.log(`\x1b[31m[aih auto]\x1b[0m No next account available after rate-limit on ${activeId}.`);
-             process.stdout.write('\r\n');
-             process.exit(exitCode || 1);
-             return;
-           }
-           if (activeLeaseToken) {
-             releaseAutoAccount(cliName, activeId, activeLeaseToken);
-           }
-           console.log(`\x1b[36m[aih auto]\x1b[0m Switching from exhausted ${activeId} -> ${next.id}`);
-           activeLeaseToken = next.leaseToken || '';
-           activeId = String(next.id);
-           limitTriggered = false;
-           outputBuffer = '';
-           hasReceivedData = false;
-           const sessionSync = ensureSessionStoreLinks(cliName, activeId);
-           if (sessionSync.migrated > 0 || sessionSync.linked > 0) {
-             console.log(`\x1b[36m[aih]\x1b[0m Session links ready (${cliName}): migrated ${sessionSync.migrated}, linked ${sessionSync.linked}.`);
-           }
-           ptyProc = spawnPty(cliName, activeId, forwardArgs, false);
-           attachOnData(ptyProc);
-           waveIdx = 0;
-           clearInterval(waveInterval);
-           waveInterval = setInterval(() => {
-             if (!hasReceivedData) {
-               process.stdout.write(`\r\x1b[36m[aih]\x1b[0m Waiting for ${cliName} to boot${waveFrames[waveIdx++]}\x1b[K`);
-               waveIdx %= waveFrames.length;
-             }
-           }, 200);
         } else {
            cleanupRuntime();
            process.stdout.write('\r\n');
@@ -4085,7 +3986,6 @@ if (idOrAction === 'auto') {
     }
   }
   runCliPty(cliName, nextId, forwardArgs, false, {
-    autoRotateOnLimit: true,
     leaseToken: allocation.leaseToken,
     taskKey,
     planPath
