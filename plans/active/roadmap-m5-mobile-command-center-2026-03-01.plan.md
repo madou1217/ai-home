@@ -3,7 +3,7 @@
 - plan_id: roadmap-m5-mobile-command-center-2026-03-01
 - coordinator: ai-coordinator
 - created_at: 2026-03-01T21:34:22+08:00
-- updated_at: 2026-03-01T21:57:34+08:00
+- updated_at: 2026-03-01T22:09:01+08:00
 - status: active
 
 ## Global Rules
@@ -30,13 +30,13 @@ Keep this checklist synced with `status`:
 - id: T001
   title: Mobile session screen flow
   scope: Build session-centric mobile control screen for remote node status and entry actions
-  status: doing
-  owner: frank
-  claimed_at: 2026-03-01T21:38:58+08:00
+  status: todo
+  owner: unassigned
+  claimed_at: 
   done_at:
   priority: P0
   depends_on: []
-  branch: feat/frank-m5-t001
+  branch: 
   pr_or_commit:
   blocker:
   deliverable: Session screen optimized for small-screen control and monitoring
@@ -49,13 +49,13 @@ Keep this checklist synced with `status`:
 - id: T002
   title: Mobile task screen flow
   scope: Build task-centric mobile screen for start/track/result interactions
-  status: doing
-  owner: grace
-  claimed_at: 2026-03-01T21:38:58+08:00
+  status: todo
+  owner: unassigned
+  claimed_at: 
   done_at:
   priority: P0
   depends_on: []
-  branch: feat/grace-m5-t002
+  branch: 
   pr_or_commit:
   blocker:
   deliverable: Task screen supporting full task trigger-to-result path
@@ -68,13 +68,13 @@ Keep this checklist synced with `status`:
 - id: T003
   title: Mobile daemon client
   scope: Implement mobile-side client API for remote daemon control calls
-  status: doing
-  owner: heidi
-  claimed_at: 2026-03-01T21:38:58+08:00
+  status: todo
+  owner: unassigned
+  claimed_at: 
   done_at:
   priority: P0
   depends_on: []
-  branch: feat/heidi-m5-t003
+  branch: 
   pr_or_commit:
   blocker:
   deliverable: Mobile daemon client service with stable request contract
@@ -87,13 +87,13 @@ Keep this checklist synced with `status`:
 - id: T004
   title: Mobile reconnect manager
   scope: Implement reconnect strategy for intermittent network and daemon restarts
-  status: doing
-  owner: ivan
-  claimed_at: 2026-03-01T21:38:58+08:00
+  status: todo
+  owner: unassigned
+  claimed_at: 
   done_at:
   priority: P0
   depends_on: [T003]
-  branch: feat/ivan-m5-t004
+  branch: 
   pr_or_commit:
   blocker:
   deliverable: Reconnect manager with explicit recoverability state transitions
@@ -106,13 +106,13 @@ Keep this checklist synced with `status`:
 - id: T005
   title: Mobile push notification bridge
   scope: Implement notification service for completion/failure/quota alert events
-  status: doing
-  owner: judy
-  claimed_at: 2026-03-01T21:38:58+08:00
+  status: todo
+  owner: unassigned
+  claimed_at: 
   done_at:
   priority: P0
   depends_on: [T003]
-  branch: feat/judy-m5-t005
+  branch: 
   pr_or_commit:
   blocker:
   deliverable: Push notification channel integrated with task lifecycle events
@@ -190,3 +190,5 @@ Keep this checklist synced with `status`:
 - 2026-03-01T21:38:58+08:00 [ai-coordinator] Force-claimed T004 for ivan (feat/ivan-m5-t004) to enable conflict-free parallel coding.
 - 2026-03-01T21:38:58+08:00 [ai-coordinator] Force-claimed T005 for judy (feat/judy-m5-t005) to enable conflict-free parallel coding.
 - 2026-03-01T21:57:34+08:00 [ai-coordinator] Normalized in-flight task metadata for stable board rendering (claimed_at/branch cleanup).
+
+- 2026-03-01T22:09:01+08:00 [ai-coordinator] Reconciled stale doing tasks to todo (no live worker process): T001, T002, T003, T004, T005.

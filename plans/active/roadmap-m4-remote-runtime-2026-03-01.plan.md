@@ -3,7 +3,7 @@
 - plan_id: roadmap-m4-remote-runtime-2026-03-01
 - coordinator: ai-coordinator
 - created_at: 2026-03-01T21:34:22+08:00
-- updated_at: 2026-03-01T21:57:34+08:00
+- updated_at: 2026-03-01T22:09:01+08:00
 - status: active
 
 ## Global Rules
@@ -31,13 +31,13 @@ Keep this checklist synced with `status`:
 - id: T001
   title: Remote daemon core lifecycle
   scope: Implement daemon lifecycle and remote control host behavior (Linux-first)
-  status: doing
-  owner: carol
-  claimed_at: 2026-03-01T21:38:58+08:00
+  status: todo
+  owner: unassigned
+  claimed_at: 
   done_at:
   priority: P0
   depends_on: []
-  branch: feat/carol-m4-t001
+  branch: 
   pr_or_commit:
   blocker:
   deliverable: Stable remote daemon lifecycle control surface
@@ -50,13 +50,13 @@ Keep this checklist synced with `status`:
 - id: T002
   title: Remote transport contract
   scope: Define and stabilize control transport protocol for auth/session/project operations
-  status: doing
-  owner: dave
-  claimed_at: 2026-03-01T21:38:58+08:00
+  status: todo
+  owner: unassigned
+  claimed_at: 
   done_at:
   priority: P0
   depends_on: []
-  branch: feat/dave-m4-t002
+  branch: 
   pr_or_commit:
   blocker:
   deliverable: Versioned transport contract for local<->remote control channel
@@ -145,13 +145,13 @@ Keep this checklist synced with `status`:
 - id: T007
   title: Runtime isolation templates
   scope: Deliver deterministic container/sandbox templates for remote tool execution
-  status: doing
-  owner: erin
-  claimed_at: 2026-03-01T21:38:58+08:00
+  status: todo
+  owner: unassigned
+  claimed_at: 
   done_at:
   priority: P1
   depends_on: []
-  branch: feat/erin-m4-t007
+  branch: 
   pr_or_commit:
   blocker:
   deliverable: Rebuildable isolation templates for codex/claude/gemini runtime
@@ -209,3 +209,5 @@ Keep this checklist synced with `status`:
 - 2026-03-01T21:38:58+08:00 [ai-coordinator] Force-claimed T002 for dave (feat/dave-m4-t002) to enable conflict-free parallel coding.
 - 2026-03-01T21:38:58+08:00 [ai-coordinator] Force-claimed T007 for erin (feat/erin-m4-t007) to enable conflict-free parallel coding.
 - 2026-03-01T21:57:34+08:00 [ai-coordinator] Normalized in-flight task metadata for stable board rendering (claimed_at/branch cleanup).
+
+- 2026-03-01T22:09:01+08:00 [ai-coordinator] Reconciled stale doing tasks to todo (no live worker process): T001, T002, T007.
