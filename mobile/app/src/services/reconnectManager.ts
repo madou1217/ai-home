@@ -194,6 +194,7 @@ export class ReconnectManager {
 
     try {
       await this.runConnectWithTimeout(this.connectOperation);
+      if (!this.active) return;
       this.updateSnapshot({
         state: 'connected',
         attempt: 0,
@@ -202,6 +203,7 @@ export class ReconnectManager {
         nextRetryAt: undefined
       });
     } catch (error) {
+      if (!this.active) return;
       const normalizedReason = this.normalizeFailureReason(error);
       this.updateSnapshot({
         state: 'reconnecting',
