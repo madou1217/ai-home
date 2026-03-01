@@ -188,6 +188,8 @@ fn main() {
       read_audit_log,
       commands::accounts::accounts_namespace_info,
       commands::migration::migration_namespace_info,
+      commands::migration::migration_export_trigger,
+      commands::migration::migration_import_trigger,
       commands::audit::audit_namespace_info
     ])
     .run(tauri::generate_context!())

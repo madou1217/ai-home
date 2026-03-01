@@ -3,7 +3,7 @@
 - plan_id: roadmap-m3-desktop-production-2026-03-01
 - coordinator: ai-coordinator
 - created_at: 2026-03-01T21:34:22+08:00
-- updated_at: 2026-03-01T22:14:55+08:00
+- updated_at: 2026-03-01T22:18:40+08:00
 - status: active
 
 ## Global Rules
@@ -49,13 +49,13 @@ Keep this checklist synced with `status`:
 - id: T002
   title: Desktop accounts command module
   scope: Implement Rust command module for account list/status/default switch operations
-  status: todo
-  owner: unassigned
-  claimed_at:
+  status: doing
+  owner: alice
+  claimed_at: 2026-03-01T22:16:27+08:00
   done_at:
   priority: P0
   depends_on: [T001]
-  branch:
+  branch: feat/alice-m3-t002
   pr_or_commit:
   blocker:
   deliverable: Accounts command module callable from GUI
@@ -68,13 +68,13 @@ Keep this checklist synced with `status`:
 - id: T003
   title: Desktop migration command module
   scope: Implement Rust command module for export/import trigger and progress/result reporting
-  status: todo
-  owner: unassigned
-  claimed_at:
+  status: doing
+  owner: bob
+  claimed_at: 2026-03-01T22:16:27+08:00
   done_at:
   priority: P0
   depends_on: [T001]
-  branch:
+  branch: feat/bob-m3-t003
   pr_or_commit:
   blocker:
   deliverable: Migration command module with explicit result contract
@@ -87,13 +87,13 @@ Keep this checklist synced with `status`:
 - id: T004
   title: Desktop audit command module
   scope: Implement Rust command module for local audit query and filtering
-  status: todo
-  owner: unassigned
-  claimed_at:
+  status: doing
+  owner: carol
+  claimed_at: 2026-03-01T22:16:27+08:00
   done_at:
   priority: P1
   depends_on: [T001]
-  branch:
+  branch: feat/carol-m3-t004
   pr_or_commit:
   blocker:
   deliverable: Audit command module for local searchable operation logs
@@ -106,13 +106,13 @@ Keep this checklist synced with `status`:
 - id: T005
   title: Desktop dashboard and launcher UI
   scope: Build desktop dashboard and one-click session launcher core UI flows
-  status: todo
-  owner: unassigned
-  claimed_at:
+  status: doing
+  owner: dave
+  claimed_at: 2026-03-01T22:16:27+08:00
   done_at:
   priority: P0
   depends_on: [T002]
-  branch:
+  branch: feat/dave-m3-t005
   pr_or_commit:
   blocker:
   deliverable: Dashboard view with account/tool status and session launch controls
@@ -127,13 +127,13 @@ Keep this checklist synced with `status`:
 - id: T006
   title: Desktop migration and audit UI
   scope: Build visual export/import workflow and local audit browsing UI
-  status: todo
-  owner: unassigned
-  claimed_at:
+  status: doing
+  owner: ivan
+  claimed_at: 2026-03-01T22:16:53+08:00
   done_at:
   priority: P1
   depends_on: [T003, T004]
-  branch:
+  branch: feat/ivan-m3-t006
   pr_or_commit:
   blocker:
   deliverable: GUI flows for migration and audit visibility
@@ -166,13 +166,13 @@ Keep this checklist synced with `status`:
 - id: T008
   title: Desktop release workflow and checklist
   scope: Create CI release workflow and release-verification checklist for desktop production
-  status: todo
-  owner: unassigned
-  claimed_at:
+  status: doing
+  owner: judy
+  claimed_at: 2026-03-01T22:16:53+08:00
   done_at:
   priority: P1
   depends_on: [T007]
-  branch:
+  branch: feat/judy-m3-t008
   pr_or_commit:
   blocker:
   deliverable: Repeatable release workflow with quality gate checklist
@@ -203,3 +203,27 @@ Keep this checklist synced with `status`:
 - 2026-03-01T22:14:10+08:00 [ai-coordinator] Marked done by worker commits: T007@fbcebe7.
 
 - 2026-03-01T22:14:55+08:00 [ai-coordinator] Marked done by worker commits: T001@e5d0966.
+
+- 2026-03-01T22:16:27+08:00 [aih-auto] Claimed T002 (m3-t002-alice) owner=alice branch=feat/alice-m3-t002.
+
+- 2026-03-01T22:16:27+08:00 [aih-auto] Claimed T003 (m3-t003-bob) owner=bob branch=feat/bob-m3-t003.
+
+- 2026-03-01T22:16:27+08:00 [aih-auto] Claimed T004 (m3-t004-carol) owner=carol branch=feat/carol-m3-t004.
+
+- 2026-03-01T22:16:27+08:00 [aih-auto] Claimed T005 (m3-t005-dave) owner=dave branch=feat/dave-m3-t005.
+
+- 2026-03-01T22:16:53+08:00 [aih-auto] Claimed T006 (m3-t006-ivan) owner=ivan branch=feat/ivan-m3-t006.
+
+- 2026-03-01T22:16:53+08:00 [aih-auto] Claimed T008 (m3-t008-judy) owner=judy branch=feat/judy-m3-t008.
+
+- 2026-03-01T22:18:39+08:00 [aih-auto] Claimed T002 (m3-t002-alice) owner=alice branch=feat/alice-m3-t002.
+
+- 2026-03-01T22:18:39+08:00 [aih-auto] Claimed T006 (m3-t006-ivan) owner=ivan branch=feat/ivan-m3-t006.
+
+- 2026-03-01T22:18:39+08:00 [aih-auto] Claimed T008 (m3-t008-judy) owner=judy branch=feat/judy-m3-t008.
+
+- 2026-03-01T22:18:39+08:00 [aih-auto] Claimed T004 (m3-t004-carol) owner=carol branch=feat/carol-m3-t004.
+
+- 2026-03-01T22:18:39+08:00 [aih-auto] Claimed T005 (m3-t005-dave) owner=dave branch=feat/dave-m3-t005.
+
+- 2026-03-01T22:18:40+08:00 [aih-auto] Claimed T003 (m3-t003-bob) owner=bob branch=feat/bob-m3-t003.

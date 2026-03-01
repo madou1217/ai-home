@@ -3,7 +3,7 @@
 - plan_id: roadmap-m4-remote-runtime-2026-03-01
 - coordinator: ai-coordinator
 - created_at: 2026-03-01T21:34:22+08:00
-- updated_at: 2026-03-01T22:14:10+08:00
+- updated_at: 2026-03-01T22:18:54+08:00
 - status: active
 
 ## Global Rules
@@ -69,13 +69,13 @@ Keep this checklist synced with `status`:
 - id: T003
   title: Remote connector auth/reconnect
   scope: Implement connector-side auth handshake and reconnect/session reattach behavior
-  status: todo
-  owner: unassigned
-  claimed_at:
+  status: doing
+  owner: erin
+  claimed_at: 2026-03-01T22:16:27+08:00
   done_at:
   priority: P0
   depends_on: [T002]
-  branch:
+  branch: feat/erin-m4-t003
   pr_or_commit:
   blocker:
   deliverable: Local connector with robust reconnect behavior
@@ -88,13 +88,13 @@ Keep this checklist synced with `status`:
 - id: T004
   title: Remote workspace runner
   scope: Implement remote workspace command execution loop for project-scoped operations
-  status: todo
-  owner: unassigned
-  claimed_at:
+  status: doing
+  owner: frank
+  claimed_at: 2026-03-01T22:16:27+08:00
   done_at:
   priority: P0
   depends_on: [T001]
-  branch:
+  branch: feat/frank-m4-t004
   pr_or_commit:
   blocker:
   deliverable: Workspace runner supporting command execution in isolated project dirs
@@ -107,13 +107,13 @@ Keep this checklist synced with `status`:
 - id: T005
   title: Remote project session bridge
   scope: Bridge local CLI task/session operations to remote workspace runner control
-  status: todo
-  owner: unassigned
-  claimed_at:
+  status: doing
+  owner: grace
+  claimed_at: 2026-03-01T22:16:27+08:00
   done_at:
   priority: P0
   depends_on: [T003, T004]
-  branch:
+  branch: feat/grace-m4-t005
   pr_or_commit:
   blocker:
   deliverable: Project session bridge for remote CLI development loop
@@ -126,13 +126,13 @@ Keep this checklist synced with `status`:
 - id: T006
   title: Remote patch return channel
   scope: Implement minimal patch/file return path from remote agent to local controller
-  status: todo
-  owner: unassigned
-  claimed_at:
+  status: doing
+  owner: alice
+  claimed_at: 2026-03-01T22:16:53+08:00
   done_at:
   priority: P1
   depends_on: [T004]
-  branch:
+  branch: feat/alice-m4-t006
   pr_or_commit:
   blocker:
   deliverable: Patch-return channel for remote file modifications
@@ -165,13 +165,13 @@ Keep this checklist synced with `status`:
 - id: T008
   title: Runtime environment manager
   scope: Implement profile binding/rebind/restart state manager for isolated runtimes
-  status: todo
-  owner: unassigned
-  claimed_at:
+  status: doing
+  owner: bob
+  claimed_at: 2026-03-01T22:16:53+08:00
   done_at:
   priority: P1
   depends_on: [T007]
-  branch:
+  branch: feat/bob-m4-t008
   pr_or_commit:
   blocker:
   deliverable: Runtime manager with deterministic binding state machine
@@ -184,13 +184,13 @@ Keep this checklist synced with `status`:
 - id: T009
   title: Remote session integration tests
   scope: Add integration coverage for remote project session and runtime isolation behavior
-  status: todo
-  owner: unassigned
-  claimed_at:
+  status: doing
+  owner: carol
+  claimed_at: 2026-03-01T22:16:53+08:00
   done_at:
   priority: P1
   depends_on: [T005, T006, T008]
-  branch:
+  branch: feat/carol-m4-t009
   pr_or_commit:
   blocker:
   deliverable: Test coverage validating end-to-end remote session loop
@@ -219,3 +219,27 @@ Keep this checklist synced with `status`:
 - 2026-03-01T22:11:54+08:00 [aih-auto] Claimed T007 (m4-t007-erin) owner=erin branch=feat/erin-m4-t007.
 
 - 2026-03-01T22:14:10+08:00 [ai-coordinator] Marked done by worker commits: T001@604b595, T002@a056478, T007@b674ffd.
+
+- 2026-03-01T22:16:27+08:00 [aih-auto] Claimed T003 (m4-t003-erin) owner=erin branch=feat/erin-m4-t003.
+
+- 2026-03-01T22:16:27+08:00 [aih-auto] Claimed T005 (m4-t005-grace) owner=grace branch=feat/grace-m4-t005.
+
+- 2026-03-01T22:16:27+08:00 [aih-auto] Claimed T004 (m4-t004-frank) owner=frank branch=feat/frank-m4-t004.
+
+- 2026-03-01T22:16:53+08:00 [aih-auto] Claimed T008 (m4-t008-bob) owner=bob branch=feat/bob-m4-t008.
+
+- 2026-03-01T22:16:53+08:00 [aih-auto] Claimed T006 (m4-t006-alice) owner=alice branch=feat/alice-m4-t006.
+
+- 2026-03-01T22:16:53+08:00 [aih-auto] Claimed T009 (m4-t009-carol) owner=carol branch=feat/carol-m4-t009.
+
+- 2026-03-01T22:18:39+08:00 [aih-auto] Claimed T005 (m4-t005-grace) owner=grace branch=feat/grace-m4-t005.
+
+- 2026-03-01T22:18:39+08:00 [aih-auto] Claimed T003 (m4-t003-erin) owner=erin branch=feat/erin-m4-t003.
+
+- 2026-03-01T22:18:39+08:00 [aih-auto] Claimed T006 (m4-t006-alice) owner=alice branch=feat/alice-m4-t006.
+
+- 2026-03-01T22:18:39+08:00 [aih-auto] Claimed T004 (m4-t004-frank) owner=frank branch=feat/frank-m4-t004.
+
+- 2026-03-01T22:18:54+08:00 [aih-auto] Claimed T008 (m4-t008-bob) owner=bob branch=feat/bob-m4-t008.
+
+- 2026-03-01T22:18:54+08:00 [aih-auto] Claimed T009 (m4-t009-carol) owner=carol branch=feat/carol-m4-t009.

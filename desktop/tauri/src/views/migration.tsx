@@ -2,8 +2,21 @@ import { useMemo, useState } from "react";
 
 type RunPhase = "idle" | "running" | "success" | "error";
 
-interface CommandResult {
-  code: number;
+interface ProgressEvent {
+  channel: string;
+  current?: number;
+  total?: number;
+  message: string;
+}
+
+interface MigrationResult {
+  operation: "export" | "import";
+  success: boolean;
+  exitCode: number;
+  reasonCode?: string;
+  summary?: string;
+  command: string[];
+  progress: ProgressEvent[];
   stdout: string;
   stderr: string;
 }
@@ -11,7 +24,7 @@ interface CommandResult {
 interface RunSnapshot {
   phase: RunPhase;
   commandLabel: string;
-  result?: CommandResult;
+  result?: MigrationResult;
   message: string;
   startedAt?: number;
   finishedAt?: number;
@@ -36,8 +49,26 @@ async function invokeTauri<T>(cmd: string, args?: Record<string, unknown>): Prom
   return invokeFn<T>(cmd, args ?? {});
 }
 
-function formatResult(result: CommandResult): string {
-  const lines = [`exit_code=${result.code}`];
+function formatProgress(progress: ProgressEvent[]): string {
+  if (!progress.length) return "none";
+  return progress
+    .map((event) => {
+      const stage = event.current && event.total ? ` [${event.current}/${event.total}]` : "";
+      return `[${event.channel}]${stage} ${event.message}`;
+    })
+    .join("\n");
+}
+
+function formatResult(result: MigrationResult): string {
+  const lines = [
+    `operation=${result.operation}`,
+    `success=${result.success}`,
+    `exit_code=${result.exitCode}`,
+  ];
+  if (result.reasonCode) lines.push(`reason=${result.reasonCode}`);
+  if (result.summary) lines.push(`summary=${result.summary}`);
+  if (result.command?.length) lines.push(`command=${result.command.join(" ")}`);
+  lines.push(`progress:\n${formatProgress(result.progress || [])}`);
   if (result.stdout.trim()) lines.push(`stdout:\n${result.stdout.trimEnd()}`);
   if (result.stderr.trim()) lines.push(`stderr:\n${result.stderr.trimEnd()}`);
   return lines.join("\n\n");
@@ -68,7 +99,11 @@ export default function MigrationView() {
     return "#4b5563";
   }, [snapshot.phase]);
 
-  async function runCommand(commandLabel: string, args: string[]) {
+  async function runCommand(
+    commandLabel: "export" | "import",
+    command: string,
+    payload: Record<string, unknown>,
+  ) {
     const startedAt = Date.now();
     setSnapshot({
       phase: "running",
@@ -78,8 +113,8 @@ export default function MigrationView() {
     });
 
     try {
-      const result = await invokeTauri<CommandResult>("run_aih", { args });
-      const success = result.code === 0;
+      const result = await invokeTauri<MigrationResult>(command, payload);
+      const success = result.success;
       setSnapshot({
         phase: success ? "success" : "error",
         commandLabel,
@@ -115,7 +150,12 @@ export default function MigrationView() {
       .map((item) => item.trim())
       .filter(Boolean);
 
-    await runCommand("export", ["export", exportTarget, ...selectorList]);
+    await runCommand("export", "migration_export_trigger", {
+      request: {
+        targetFile: exportTarget,
+        selectors: selectorList,
+      },
+    });
   }
 
   async function runImport() {
@@ -129,8 +169,12 @@ export default function MigrationView() {
       return;
     }
 
-    const args = overwrite ? ["import", "-o", importTarget] : ["import", importTarget];
-    await runCommand("import", args);
+    await runCommand("import", "migration_import_trigger", {
+      request: {
+        sourceFile: importTarget,
+        overwrite,
+      },
+    });
   }
 
   return (

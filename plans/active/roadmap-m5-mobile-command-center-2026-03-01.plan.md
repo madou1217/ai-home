@@ -3,7 +3,7 @@
 - plan_id: roadmap-m5-mobile-command-center-2026-03-01
 - coordinator: ai-coordinator
 - created_at: 2026-03-01T21:34:22+08:00
-- updated_at: 2026-03-01T22:14:55+08:00
+- updated_at: 2026-03-01T22:18:55+08:00
 - status: active
 
 ## Global Rules
@@ -125,13 +125,13 @@ Keep this checklist synced with `status`:
 - id: T006
   title: Mobile quick actions panel
   scope: Build one-handed quick action panel for retry/stop/switch-account operations
-  status: todo
-  owner: unassigned
-  claimed_at:
+  status: doing
+  owner: heidi
+  claimed_at: 2026-03-01T22:16:27+08:00
   done_at:
   priority: P1
   depends_on: [T001, T002]
-  branch:
+  branch: feat/heidi-m5-t006
   pr_or_commit:
   blocker:
   deliverable: High-frequency quick actions optimized for mobile ergonomics
@@ -144,13 +144,13 @@ Keep this checklist synced with `status`:
 - id: T007
   title: Mobile status priority card
   scope: Build compact component to surface critical state before secondary details
-  status: todo
-  owner: unassigned
-  claimed_at:
+  status: doing
+  owner: dave
+  claimed_at: 2026-03-01T22:16:53+08:00
   done_at:
   priority: P1
   depends_on: [T001]
-  branch:
+  branch: feat/dave-m5-t007
   pr_or_commit:
   blocker:
   deliverable: Status-first card component for mobile command center hierarchy
@@ -163,13 +163,13 @@ Keep this checklist synced with `status`:
 - id: T008
   title: Mobile collapsible log panel
   scope: Build foldable log panel to keep signal-first UI while preserving diagnostics access
-  status: todo
-  owner: unassigned
-  claimed_at:
+  status: doing
+  owner: erin
+  claimed_at: 2026-03-01T22:16:53+08:00
   done_at:
   priority: P1
   depends_on: [T002]
-  branch:
+  branch: feat/erin-m5-t008
   pr_or_commit:
   blocker:
   deliverable: Collapsible log component that preserves mobile readability
@@ -206,3 +206,15 @@ Keep this checklist synced with `status`:
 - 2026-03-01T22:14:10+08:00 [ai-coordinator] Marked done by worker commits: T001@72bf0c7, T002@fcc6d52, T003@2421fb6, T004@f692532.
 
 - 2026-03-01T22:14:55+08:00 [ai-coordinator] Marked done by worker commits: T005@1c445f3.
+
+- 2026-03-01T22:16:27+08:00 [aih-auto] Claimed T006 (m5-t006-heidi) owner=heidi branch=feat/heidi-m5-t006.
+
+- 2026-03-01T22:16:53+08:00 [aih-auto] Claimed T008 (m5-t008-erin) owner=erin branch=feat/erin-m5-t008.
+
+- 2026-03-01T22:16:53+08:00 [aih-auto] Claimed T007 (m5-t007-dave) owner=dave branch=feat/dave-m5-t007.
+
+- 2026-03-01T22:18:55+08:00 [aih-auto] Claimed T007 (m5-t007-dave) owner=dave branch=feat/dave-m5-t007.
+
+- 2026-03-01T22:18:55+08:00 [aih-auto] Claimed T008 (m5-t008-erin) owner=erin branch=feat/erin-m5-t008.
+
+- 2026-03-01T22:18:55+08:00 [aih-auto] Claimed T006 (m5-t006-heidi) owner=heidi branch=feat/heidi-m5-t006.

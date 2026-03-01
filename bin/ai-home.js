@@ -1807,7 +1807,28 @@ function resolveCodexAutoExecArgs(rawForwardArgs) {
   if (!planPath && sub !== 'resume') {
     planPath = detectSinglePlanFromPrompt(args);
   }
+  const stripExecSandboxArgs = (arr) => {
+    const src = Array.isArray(arr) ? [...arr] : [];
+    if (String(src[0] || '') !== 'exec') return src;
+    const cleaned = ['exec'];
+    for (let i = 1; i < src.length; i++) {
+      const cur = String(src[i] || '');
+      if (cur === '--sandbox') {
+        if (i + 1 < src.length) i += 1;
+        continue;
+      }
+      if (cur.startsWith('--sandbox=')) continue;
+      cleaned.push(src[i]);
+    }
+    return cleaned;
+  };
+  const ensureWritableExecArgs = (arr) => {
+    const withoutSandbox = stripExecSandboxArgs(arr);
+    if (String(withoutSandbox[0] || '') !== 'exec') return withoutSandbox;
+    return ['exec', '--sandbox', 'danger-full-access', ...withoutSandbox.slice(1)];
+  };
   if (sub !== 'resume') {
+    args = ensureWritableExecArgs(args);
     // Task-key should have higher priority than plan-level auto-resume.
     // This prevents multiple workers touching the same plan file from being
     // collapsed into a single shared session.
@@ -1815,11 +1836,7 @@ function resolveCodexAutoExecArgs(rawForwardArgs) {
       const bound = getTaskSession(taskKey);
       if (bound && bound.sessionId) {
         const execPrompt = args.slice(1);
-        const resumePrompt = execPrompt.filter((x) => {
-          const v = String(x || '');
-          return v !== '--sandbox' && !v.startsWith('--sandbox=')
-            && v !== 'read-only' && v !== 'workspace-write' && v !== 'danger-full-access';
-        });
+        const resumePrompt = stripExecSandboxArgs(['exec', ...execPrompt]).slice(1);
         return {
           args: ['exec', '--sandbox', 'danger-full-access', 'resume', bound.sessionId, ...resumePrompt],
           taskKey,
@@ -1835,11 +1852,7 @@ function resolveCodexAutoExecArgs(rawForwardArgs) {
       const planBound = getPlanSession(planPath);
       if (planBound && planBound.sessionId) {
         const execPrompt = args.slice(1);
-        const resumePrompt = execPrompt.filter((x) => {
-          const v = String(x || '');
-          return v !== '--sandbox' && !v.startsWith('--sandbox=')
-            && v !== 'read-only' && v !== 'workspace-write' && v !== 'danger-full-access';
-        });
+        const resumePrompt = stripExecSandboxArgs(['exec', ...execPrompt]).slice(1);
         return {
           args: ['exec', '--sandbox', 'danger-full-access', 'resume', planBound.sessionId, ...resumePrompt],
           taskKey,
