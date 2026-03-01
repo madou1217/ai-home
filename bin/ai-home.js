@@ -19,6 +19,7 @@ const { runProxyCommand } = require('../lib/proxy/command-handler');
 const { syncCodexAccountsToProxy } = require('../lib/proxy/sync');
 const { startLocalProxyServer: startLocalProxyServerModule } = require('../lib/proxy/server');
 const { runProxyEntry } = require('../lib/proxy/entry');
+const { resolveCommandPath: resolveCommandPathPortable } = require('../lib/runtime/command-path');
 const { resolveGlobalToolConfigRoot, resolveSessionStoreRoot } = require('../lib/session/global-source');
 const { runDoctorChecks } = require('../lib/doctor/checks');
 const { createAuditLogger } = require('../lib/audit/logger');
@@ -465,12 +466,7 @@ function refreshGeminiUsageSnapshot(cliName, id) {
   const sandboxDir = getProfileDir(cliName, id);
   if (!fs.existsSync(sandboxDir)) return null;
 
-  let geminiBin = '';
-  try {
-    geminiBin = execSync('which gemini', { encoding: 'utf8' }).trim();
-  } catch (e) {
-    return null;
-  }
+  const geminiBin = resolveCommandPath('gemini');
   if (!geminiBin) return null;
 
   const probeScript = `
@@ -630,12 +626,7 @@ function refreshCodexUsageSnapshotFromAppServer(cliName, id) {
   const sandboxDir = getProfileDir(cliName, id);
   if (!fs.existsSync(sandboxDir)) return null;
 
-  let codexBin = '';
-  try {
-    codexBin = execSync('which codex', { encoding: 'utf8' }).trim();
-  } catch (e) {
-    return null;
-  }
+  const codexBin = resolveCommandPath('codex');
   if (!codexBin) return null;
 
   const probeScript = `
@@ -2056,11 +2047,7 @@ function showHelp() {
 }
 
 function resolveCommandPath(cmdName) {
-  try {
-    return execSync(`which ${cmdName}`, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-  } catch (e) {
-    return '';
-  }
+  return resolveCommandPathPortable(cmdName);
 }
 
 function readDefaultAccountId(cliName) {
@@ -2441,7 +2428,7 @@ let currentPtyProcess = null;
 let currentCliName = null;
 let currentId = null;
 
-function spawnPty(cliName, id, forwardArgs, isLogin) {
+function spawnPty(cliBin, cliName, id, forwardArgs, isLogin) {
   currentCliName = cliName;
   currentId = id;
   const envOverrides = getSandboxEnv(cliName, id);
@@ -2451,7 +2438,7 @@ function spawnPty(cliName, id, forwardArgs, isLogin) {
     argsToRun = applyCodexDefaultArgs(argsToRun);
   }
   
-  return pty.spawn(cliName, argsToRun, {
+  return pty.spawn(cliBin, argsToRun, {
     name: 'xterm-color',
     cols: process.stdout.columns || 80,
     rows: process.stdout.rows || 24,
@@ -2491,9 +2478,8 @@ function applyCodexDefaultArgs(args) {
 }
 
 function runCliPty(cliName, initialId, forwardArgs, isLogin = false, runtimeOptions = {}) {
-  try {
-    execSync(`which ${cliName}`, { stdio: 'ignore' });
-  } catch (e) {
+  let cliBin = resolveCommandPath(cliName);
+  if (!cliBin) {
     console.log(`\x1b[33m[aih] Native CLI '${cliName}' not found.\x1b[0m`);
     const ans = askYesNo(`Do you want to automatically install it via npm?`);
     if (ans) {
@@ -2501,6 +2487,11 @@ function runCliPty(cliName, initialId, forwardArgs, isLogin = false, runtimeOpti
       console.log(`\n\x1b[36m[aih]\x1b[0m Installing \x1b[33m${pkg}\x1b[0m...`);
       execSync(`npm install -g ${pkg}`, { stdio: 'inherit' });
       console.log(`\x1b[32m[aih] Successfully installed ${cliName}!\x1b[0m\n`);
+      cliBin = resolveCommandPath(cliName);
+      if (!cliBin) {
+        console.error(`\x1b[31m[aih] '${cliName}' is still not found in PATH after installation.\x1b[0m`);
+        process.exit(1);
+      }
     } else {
       process.exit(1);
     }
@@ -2518,7 +2509,7 @@ function runCliPty(cliName, initialId, forwardArgs, isLogin = false, runtimeOpti
     console.log(`\x1b[36m[aih]\x1b[0m Session links ready (${cliName}): migrated ${initialSessionSync.migrated}, linked ${initialSessionSync.linked}.`);
   }
 
-  let ptyProc = spawnPty(cliName, activeId, forwardArgs, isLogin);
+  let ptyProc = spawnPty(cliBin, cliName, activeId, forwardArgs, isLogin);
 
   let waveFrames = ['.', '..', '...', ' ..', '  .', '   '];
   let waveIdx = 0;
@@ -2624,7 +2615,7 @@ function runCliPty(cliName, initialId, forwardArgs, isLogin = false, runtimeOpti
         proc.kill();
         setTimeout(() => {
           isSwapping = false;
-          ptyProc = spawnPty(cliName, activeId, [], true);
+          ptyProc = spawnPty(cliBin, cliName, activeId, [], true);
           attachOnData(ptyProc);
         }, 1500);
       }
@@ -2724,8 +2715,9 @@ function runCodexAutoReviewFlow(accountId, leaseToken, forwardArgs) {
   }
 
   const env = getSandboxEnv('codex', accountId);
+  const codexBin = resolveCommandPath('codex') || 'codex';
   console.log(`\x1b[36m[aih review]\x1b[0m Running codex review on account ${accountId}...`);
-  const review = spawnSync('codex', parsed.codexReviewArgs, {
+  const review = spawnSync(codexBin, parsed.codexReviewArgs, {
     cwd: process.cwd(),
     env,
     stdio: 'inherit'
@@ -2755,10 +2747,20 @@ function runCodexAutoReviewFlow(accountId, leaseToken, forwardArgs) {
   if (parsed.admin) mergeArgs.push('--admin');
   if (parsed.repo) mergeArgs.push('--repo', parsed.repo);
 
+  const ghEnv = { ...process.env };
+  // Ensure gh reads the real host login/keyring context rather than sandbox HOME.
+  if (HOST_HOME_DIR) {
+    ghEnv.HOME = HOST_HOME_DIR;
+    if (!ghEnv.GH_CONFIG_DIR) {
+      const ghConfigDir = path.join(HOST_HOME_DIR, '.config', 'gh');
+      if (fs.existsSync(ghConfigDir)) ghEnv.GH_CONFIG_DIR = ghConfigDir;
+    }
+  }
+
   console.log(`\x1b[36m[aih review]\x1b[0m Review passed. Merging PR ${parsed.prRef} via gh...`);
   const merge = spawnSync('gh', mergeArgs, {
     cwd: process.cwd(),
-    env: process.env,
+    env: ghEnv,
     stdio: 'inherit'
   });
   releaseAutoAccount('codex', accountId, leaseToken);
@@ -4167,8 +4169,23 @@ if (idOrAction === 'auto') {
     forwardArgs = resolved.args;
     taskKey = resolved.taskKey;
     planPath = resolved.planPath;
-    const isExec = String(forwardArgs[0] || '') === 'exec';
-    const isResume = String(forwardArgs[1] || '') === 'resume';
+    const normalizedForwardArgs = (() => {
+      const src = Array.isArray(forwardArgs) ? [...forwardArgs] : [];
+      if (String(src[0] || '') !== 'exec') return src;
+      const cleaned = ['exec'];
+      for (let i = 1; i < src.length; i++) {
+        const cur = String(src[i] || '');
+        if (cur === '--sandbox') {
+          if (i + 1 < src.length) i += 1;
+          continue;
+        }
+        if (cur.startsWith('--sandbox=')) continue;
+        cleaned.push(src[i]);
+      }
+      return cleaned;
+    })();
+    const isExec = String(normalizedForwardArgs[0] || '') === 'exec';
+    const isResume = String(normalizedForwardArgs[1] || '') === 'resume';
     if (isExec && !isResume && taskKey && planPath) {
       const claim = claimPlanTask(planPath, taskKey, 'aih-auto');
       if (!claim.ok) {
