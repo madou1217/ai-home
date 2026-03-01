@@ -1467,6 +1467,47 @@ function parseCodexExecTaskKey(forwardArgs) {
   return { taskKey, args: next };
 }
 
+function normalizeCodexExecResumePromptArgs(args) {
+  const arr = Array.isArray(args) ? [...args] : [];
+  if (arr.length === 0) return arr;
+  if (String(arr[0] || '') !== 'exec' || String(arr[1] || '') !== 'resume') return arr;
+  const out = arr.slice(0, 3);
+  const tail = arr.slice(3);
+  if (tail.length >= 3 && String(tail[0]) === '--' && String(tail[1]) === '--prompt') {
+    out.push(String(tail[2] || ''));
+    if (tail.length > 3) out.push(...tail.slice(3));
+    return out;
+  }
+  if (tail.length >= 2 && String(tail[0]) === '--prompt') {
+    out.push(String(tail[1] || ''));
+    if (tail.length > 2) out.push(...tail.slice(2));
+    return out;
+  }
+  return arr;
+}
+
+function showCodexTaskSessions(taskKey = '') {
+  const all = readTaskSessionRegistry();
+  const key = sanitizeTaskKey(taskKey);
+  const entries = Object.entries(all || {})
+    .filter(([k, v]) => !!v && typeof v === 'object' && !!v.sessionId)
+    .filter(([k]) => !key || k === key)
+    .sort((a, b) => String(a[0]).localeCompare(String(b[0])));
+  if (entries.length === 0) {
+    console.log('\x1b[90m[aih]\x1b[0m No task-session mapping found.');
+    return;
+  }
+  console.log('\n\x1b[36m[aih]\x1b[0m Codex task-session mappings');
+  entries.forEach(([k, v]) => {
+    console.log(`  - task_key: \x1b[36m${k}\x1b[0m`);
+    console.log(`    session_id: ${v.sessionId}`);
+    if (v.accountId) console.log(`    account_id: ${v.accountId}`);
+    if (v.cwd) console.log(`    cwd: ${v.cwd}`);
+    if (v.updatedAt) console.log(`    updated_at: ${v.updatedAt}`);
+  });
+  console.log('');
+}
+
 // Check if an account is configured and try to extract account info
 function checkStatus(cliName, profileDir) {
   let configured = false;
@@ -1564,6 +1605,7 @@ function showHelp() {
   aih <cli>                 \x1b[90mRun a tool with the default account (ID: 1)\x1b[0m
   aih <cli> auto            \x1b[90mRun the next non-exhausted account automatically\x1b[0m
   aih codex auto exec --task-key <key> "<prompt>" \x1b[90mTask-bound exec with deterministic resume\x1b[0m
+  aih codex task-sessions [task-key] \x1b[90mShow task-key -> session_id mappings\x1b[0m
   aih <cli> usage <id>      \x1b[90mShow trusted usage-remaining snapshot (OAuth only)\x1b[0m
   aih <cli> usages          \x1b[90mShow trusted usage-remaining snapshots for all OAuth accounts\x1b[0m
   aih codex import-output [dir] [--parallel N] [--limit N] [--dry-run]\x1b[90mBulk import codex refresh tokens from output files\x1b[0m
@@ -1749,6 +1791,7 @@ function showCliUsage(cliName) {
   aih ${cliName} login           \x1b[90mAlias of add\x1b[0m
   aih ${cliName} auto            \x1b[90mAuto-select next non-exhausted account\x1b[0m
   ${cliName === 'codex' ? `aih codex auto exec --task-key <key> "<prompt>"  \x1b[90mTask-bound exec; rerun resumes bound session\x1b[0m` : ''}
+  ${cliName === 'codex' ? `aih codex task-sessions [task-key]  \x1b[90mShow task-key -> session_id mappings\x1b[0m` : ''}
   aih ${cliName} usage <id>      \x1b[90mShow trusted usage-remaining snapshot (OAuth)\x1b[0m
   aih ${cliName} usages          \x1b[90mShow trusted usage snapshots for all OAuth accounts\x1b[0m
   ${cliName === 'codex' ? 'aih codex import-output [dir] [--parallel N] [--limit N] [--dry-run]  \x1b[90mBulk import codex refresh tokens\x1b[0m' : ''}
@@ -3395,7 +3438,8 @@ const UNLOCK_ACTIONS = new Set(['unlock', '--unlock', 'unexhaust', 'unban', 'rel
 const USAGE_ACTIONS = new Set(['usage', '--usage', 'stats']);
 const USAGES_ACTIONS = new Set(['usages', 'usage-all', 'all-usage', 'all-usages']);
 const IMPORT_OUTPUT_ACTIONS = new Set(['import-output', 'import_output', 'bulk-import', 'bulk_import']);
-const KNOWN_ACTIONS = new Set(['ls', 'set-default', 'add', 'login', 'auth', 'auto', ...UNLOCK_ACTIONS, ...USAGE_ACTIONS, ...USAGES_ACTIONS, ...IMPORT_OUTPUT_ACTIONS]);
+const TASK_SESSION_ACTIONS = new Set(['task-sessions', 'task_sessions', 'session-map', 'session_map']);
+const KNOWN_ACTIONS = new Set(['ls', 'set-default', 'add', 'login', 'auth', 'auto', ...TASK_SESSION_ACTIONS, ...UNLOCK_ACTIONS, ...USAGE_ACTIONS, ...USAGES_ACTIONS, ...IMPORT_OUTPUT_ACTIONS]);
 
 if (idOrAction === 'help') {
   showCliUsage(cliName);
@@ -3508,6 +3552,15 @@ if (idOrAction && IMPORT_OUTPUT_ACTIONS.has(idOrAction)) {
   return;
 }
 
+if (idOrAction && TASK_SESSION_ACTIONS.has(idOrAction)) {
+  if (cliName !== 'codex') {
+    console.error(`\x1b[31m[aih] ${idOrAction} is currently supported only for codex.\x1b[0m`);
+    process.exit(1);
+  }
+  showCodexTaskSessions(args[2] || '');
+  process.exit(0);
+}
+
 if (idOrAction === 'set-default') {
   const targetId = args[2];
   if (!targetId || !/^\d+$/.test(targetId)) {
@@ -3607,12 +3660,33 @@ if (idOrAction === 'auto') {
     const parsedTask = parseCodexExecTaskKey(forwardArgs);
     forwardArgs = parsedTask.args;
     taskKey = parsedTask.taskKey;
-    if (taskKey && String(forwardArgs[0] || '') === 'exec' && String(forwardArgs[1] || '') !== 'resume') {
-      const bound = getTaskSession(taskKey);
-      if (bound && bound.sessionId) {
-        const execPrompt = forwardArgs.slice(1);
-        forwardArgs = ['exec', 'resume', bound.sessionId, ...execPrompt];
-        console.log(`\x1b[36m[aih auto]\x1b[0m Resuming task-key '${taskKey}' with session ${bound.sessionId}`);
+    if (String(forwardArgs[0] || '') === 'exec') {
+      if (String(forwardArgs[1] || '') === 'resume') {
+        const explicitSessionId = String(forwardArgs[2] || '').trim();
+        if (!explicitSessionId || explicitSessionId === '--') {
+          if (!taskKey) {
+            console.error(`\x1b[31m[aih]\x1b[0m exec resume requires explicit session_id or --task-key <key>.`);
+            console.error(`\x1b[90mExample:\x1b[0m aih codex auto exec resume --task-key erin-m4 "你写到哪里了"`);
+            process.exit(1);
+          }
+          const bound = getTaskSession(taskKey);
+          if (!bound || !bound.sessionId) {
+            console.error(`\x1b[31m[aih]\x1b[0m No session binding found for task-key '${taskKey}'.`);
+            console.error(`\x1b[90mHint:\x1b[0m run first: aih codex auto exec --task-key ${taskKey} \"<prompt>\"`);
+            process.exit(1);
+          }
+          const resumeTail = forwardArgs.slice(2);
+          forwardArgs = normalizeCodexExecResumePromptArgs(['exec', 'resume', bound.sessionId, ...resumeTail]);
+          console.log(`\x1b[36m[aih auto]\x1b[0m Resuming task-key '${taskKey}' with session ${bound.sessionId}`);
+        }
+        forwardArgs = normalizeCodexExecResumePromptArgs(forwardArgs);
+      } else if (taskKey) {
+        const bound = getTaskSession(taskKey);
+        if (bound && bound.sessionId) {
+          const execPrompt = forwardArgs.slice(1);
+          forwardArgs = ['exec', 'resume', bound.sessionId, ...execPrompt];
+          console.log(`\x1b[36m[aih auto]\x1b[0m Resuming task-key '${taskKey}' with session ${bound.sessionId}`);
+        }
       }
     }
   }
