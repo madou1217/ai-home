@@ -10,71 +10,13 @@ const pty = require('node-pty');
 const { execSync, spawnSync, spawn } = require('child_process');
 const http = require('http');
 const {
-  FALLBACK_MODELS,
-  initModelRegistry,
-  addModelToRegistry,
-  getRegistryModelList,
-  buildOpenAIModelsList
-} = require('../lib/proxy/models');
-const { renderProxyStatusPage } = require('../lib/proxy/status-page');
-const {
-  buildPromptFromChatRequest,
-  buildPromptFromResponsesRequest,
-  runCodexLocalCompletion,
-  runGeminiLocalCompletion,
-  initProxyMetrics,
-  pushMetricError,
-  isRetriableLocalError,
-  createProviderExecutor
-} = require('../lib/proxy/local');
-const {
   parseProxySyncArgs,
   parseProxyServeArgs,
   parseProxyEnvArgs
 } = require('../lib/proxy/args');
 const { createProxyDaemonController } = require('../lib/proxy/daemon');
 const { runProxyCommand } = require('../lib/proxy/command-handler');
-const {
-  parseAuthorizationBearer,
-  readRequestBody,
-  writeJson,
-  withTimeout,
-  fetchWithTimeout,
-  fetchModelsForAccount,
-  buildChatCompletionPayload,
-  writeSseChatCompletion
-} = require('../lib/proxy/http-utils');
-const {
-  loadProxyRuntimeAccounts
-} = require('../lib/proxy/accounts');
-const {
-  resolveRequestProvider,
-  chooseProxyAccount,
-  markProxyAccountSuccess,
-  markProxyAccountFailure
-} = require('../lib/proxy/router');
 const { syncCodexAccountsToProxy } = require('../lib/proxy/sync');
-const {
-  buildManagementStatusPayload,
-  buildManagementMetricsPayload,
-  buildManagementAccountsPayload,
-  applyReloadState
-} = require('../lib/proxy/management');
-const { buildManagementModelsResponse } = require('../lib/proxy/model-endpoints');
-const {
-  handleLocalChatCompletions,
-  handleLocalResponses
-} = require('../lib/proxy/local-endpoints');
-const {
-  handleUpstreamModels,
-  handleUpstreamPassthrough
-} = require('../lib/proxy/upstream-endpoints');
-const { handleManagementRequest } = require('../lib/proxy/management-router');
-const { handleV1Request } = require('../lib/proxy/v1-router');
-const {
-  createProxyServerState,
-  printProxyServeStartup
-} = require('../lib/proxy/server-runtime');
 const { startLocalProxyServer: startLocalProxyServerModule } = require('../lib/proxy/server');
 
 // Configurations
@@ -1595,49 +1537,10 @@ async function startLocalProxyServer(options) {
     fs,
     processObj: process,
     logFile: AIH_PROXY_LOG_FILE,
-    createProxyServerState,
-    loadProxyRuntimeAccounts,
-    initProxyMetrics,
-    createProviderExecutor,
-    initModelRegistry,
     getToolAccountIds,
     getToolConfigDir,
     getProfileDir,
-    checkStatus,
-    parseAuthorizationBearer,
-    writeJson,
-    renderProxyStatusPage,
-    buildManagementStatusPayload,
-    buildManagementMetricsPayload,
-    buildManagementModelsResponse,
-    buildManagementAccountsPayload,
-    applyReloadState,
-    fetchModelsForAccount,
-    getRegistryModelList,
-    handleManagementRequest,
-    handleV1Request,
-    buildOpenAIModelsList,
-    resolveRequestProvider,
-    buildPromptFromChatRequest,
-    buildPromptFromResponsesRequest,
-    chooseProxyAccount,
-    runGeminiLocalCompletion,
-    runCodexLocalCompletion,
-    addModelToRegistry,
-    writeSseChatCompletion,
-    buildChatCompletionPayload,
-    markProxyAccountSuccess,
-    markProxyAccountFailure,
-    isRetriableLocalError,
-    pushMetricError,
-    handleLocalChatCompletions,
-    handleLocalResponses,
-    handleUpstreamModels,
-    handleUpstreamPassthrough,
-    FALLBACK_MODELS,
-    fetchWithTimeout,
-    readRequestBody,
-    printProxyServeStartup
+    checkStatus
   });
 }
 
