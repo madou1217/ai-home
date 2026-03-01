@@ -3,7 +3,7 @@
 - plan_id: roadmap-m8-hyper-scale-012-2026-03-02
 - coordinator: ai-coordinator
 - created_at: 2026-03-02T00:11:45+08:00
-- updated_at: 2026-03-02T00:15:48+08:00
+- updated_at: 2026-03-02T00:17:53+08:00
 - status: active
 
 ## Global Rules
@@ -16,9 +16,9 @@
 - target_parallel: 50
 
 ## Checklist
-- [ ] T001 Hyper-scale task 0551
-- [ ] T002 Hyper-scale task 0552
-- [ ] T003 Hyper-scale task 0553
+- [x] T001 Hyper-scale task 0551
+- [x] T002 Hyper-scale task 0552
+- [x] T003 Hyper-scale task 0553
 - [ ] T004 Hyper-scale task 0554
 - [ ] T005 Hyper-scale task 0555
 - [ ] T006 Hyper-scale task 0556
@@ -74,15 +74,15 @@ Keep this checklist synced with `status`:
 - id: T001
   title: Hyper-scale task 0551
   scope: Deliver scoped output for scaleout task 0551
-  status: blocked
+  status: done
   owner: codex
   claimed_at: 2026-03-01T16:15:38Z
-  done_at:
+  done_at: 2026-03-01T16:16:59Z
   priority: P1
   depends_on: []
   branch: feat/codex-m8-t001
-  pr_or_commit:
-  blocker: worker_offline_no_recoverable_session
+  pr_or_commit: local:docs/scaleout_tasks/batch-012/task-0551.md
+  blocker:
   deliverable: Complete task 0551 deliverable
   acceptance:
   - output is complete and reviewable
@@ -93,14 +93,14 @@ Keep this checklist synced with `status`:
 - id: T002
   title: Hyper-scale task 0552
   scope: Deliver scoped output for scaleout task 0552
-  status: todo
-  owner: unassigned
-  claimed_at:
-  done_at:
+  status: done
+  owner: codex
+  claimed_at: 2026-03-01T16:16:28Z
+  done_at: 2026-03-01T16:16:52Z
   priority: P1
   depends_on: []
-  branch:
-  pr_or_commit:
+  branch: feat/codex-m8-t002
+  pr_or_commit: local-uncommitted
   blocker:
   deliverable: Complete task 0552 deliverable
   acceptance:
@@ -112,14 +112,14 @@ Keep this checklist synced with `status`:
 - id: T003
   title: Hyper-scale task 0553
   scope: Deliver scoped output for scaleout task 0553
-  status: todo
-  owner: unassigned
-  claimed_at:
-  done_at:
+  status: done
+  owner: codex
+  claimed_at: 2026-03-02T00:17:08+08:00
+  done_at: 2026-03-02T00:17:53+08:00
   priority: P1
   depends_on: []
-  branch:
-  pr_or_commit:
+  branch: feat/codex-m8-t003
+  pr_or_commit: local-uncommitted
   blocker:
   deliverable: Complete task 0553 deliverable
   acceptance:
@@ -1025,3 +1025,12 @@ Keep this checklist synced with `status`:
 - 2026-03-02T00:11:45+08:00 [ai-coordinator] Plan created for 50-way hyper-scale parallel execution.
 
 - 2026-03-02T00:15:48+08:00 [ai-watchdog] Marked T001 blocked: worker offline and no recoverable session.
+- 2026-03-01T16:16:28Z [codex] Claimed T002; set status=doing owner=codex branch=feat/codex-m8-t002.
+
+- 2026-03-02T00:16:48+08:00 [ai-watchdog] Marked T002 blocked: worker offline and no recoverable session.
+- 2026-03-01T16:17:30Z [codex] Resumed interrupted worker for T002 in original session; verified deliverable, set status=done, and synced done_at/pr_or_commit/checklist.
+- 2026-03-02T00:17:08+08:00 [codex] Claimed T003 and set status to doing.
+
+- 2026-03-02T00:17:18+08:00 [ai-watchdog] Marked T003 blocked: worker offline and no recoverable session.
+- 2026-03-02T00:17:53+08:00 [codex] Resumed interrupted worker for T003 in original session; verified deliverable, set status=done, and synced done_at/pr_or_commit/checklist.
+- 2026-03-01T16:16:59Z [codex] Resumed interrupted worker and closed T001 as done using existing scoped deliverable docs/scaleout_tasks/batch-012/task-0551.md; synced checklist and writeback fields.
