@@ -63,16 +63,17 @@ export class PushNotifications {
   }
 
   private taskPayload(task: TaskSnapshot, event: 'completion' | 'failure' | 'quota'): Record<string, unknown> {
+    const destination = this.buildTaskDestination(task);
     return {
       event,
       taskId: task.taskId,
       sessionId: task.sessionId,
       status: task.status,
-      destination: this.buildTaskDestination(task),
+      destination,
       action: {
         type: 'navigate',
         label: 'View task',
-        destination: this.buildTaskDestination(task)
+        destination
       }
     };
   }
@@ -111,7 +112,17 @@ export class PushNotifications {
     await this.send(
       'Task started',
       `Task ${task.taskId} is now ${task.status}.`,
-      { taskId: task.taskId, status: task.status }
+      {
+        event: 'started',
+        taskId: task.taskId,
+        status: task.status,
+        destination: this.buildTaskDestination(task),
+        action: {
+          type: 'navigate',
+          label: 'View task',
+          destination: this.buildTaskDestination(task)
+        }
+      }
     );
   }
 
@@ -125,7 +136,18 @@ export class PushNotifications {
     await this.send(
       'Task update',
       `Task ${task.taskId} is ${task.status}${progressText}.`,
-      { taskId: task.taskId, status: task.status, progress: task.progress }
+      {
+        event: 'update',
+        taskId: task.taskId,
+        status: task.status,
+        progress: task.progress,
+        destination: this.buildTaskDestination(task),
+        action: {
+          type: 'navigate',
+          label: 'View task',
+          destination: this.buildTaskDestination(task)
+        }
+      }
     );
   }
 
