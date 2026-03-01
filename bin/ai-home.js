@@ -44,6 +44,17 @@ const {
   buildChatCompletionPayload,
   writeSseChatCompletion
 } = require('../lib/proxy/http-utils');
+const {
+  loadCodexProxyAccounts,
+  loadGeminiProxyAccounts,
+  withRuntimeFields
+} = require('../lib/proxy/accounts');
+const {
+  resolveRequestProvider,
+  chooseProxyAccount,
+  markProxyAccountSuccess,
+  markProxyAccountFailure
+} = require('../lib/proxy/router');
 
 // Configurations
 const HOST_HOME_DIR = (() => {
@@ -1590,118 +1601,6 @@ function buildProxyCodexUploadPayload(authJson) {
   };
 }
 
-function decodeJwtPayloadUnsafe(jwt) {
-  const text = String(jwt || '').trim();
-  const parts = text.split('.');
-  if (parts.length < 2) return null;
-  try {
-    return JSON.parse(Buffer.from(parts[1], 'base64').toString('utf8'));
-  } catch (e) {
-    return null;
-  }
-}
-
-function loadCodexProxyAccounts() {
-  const ids = getToolAccountIds('codex');
-  const out = [];
-  ids.forEach((id) => {
-    const authPath = path.join(getToolConfigDir('codex', id), 'auth.json');
-    const authJson = parseJsonFileSafe(authPath);
-    const payload = buildProxyCodexUploadPayload(authJson);
-    if (!payload) return;
-    const jwtPayload = decodeJwtPayloadUnsafe(payload.tokens.id_token);
-    const email = jwtPayload && typeof jwtPayload.email === 'string' ? jwtPayload.email : '';
-    out.push({
-      id: String(id),
-      email,
-      accountId: String(payload.tokens.account_id || ''),
-      accessToken: String(payload.tokens.access_token || ''),
-      refreshToken: String(payload.tokens.refresh_token || ''),
-      lastRefresh: String(payload.last_refresh || ''),
-      cooldownUntil: 0
-    });
-  });
-  return out;
-}
-
-function loadGeminiProxyAccounts() {
-  const ids = getToolAccountIds('gemini');
-  const out = [];
-  ids.forEach((id) => {
-    const pDir = getProfileDir('gemini', id);
-    const { configured, accountName } = checkStatus('gemini', pDir);
-    if (!configured) return;
-    out.push({
-      id: String(id),
-      email: accountName && accountName !== 'Unknown' ? accountName : '',
-      accountId: String(id),
-      provider: 'gemini',
-      cooldownUntil: 0,
-      consecutiveFailures: 0,
-      successCount: 0,
-      failCount: 0,
-      lastError: ''
-    });
-  });
-  return out;
-}
-
-function chooseProxyAccount(accounts, state, cursorKey = 'cursor') {
-  if (!Array.isArray(accounts) || accounts.length === 0) return null;
-  const now = Date.now();
-  const available = accounts.filter((a) => now >= (a.cooldownUntil || 0));
-  if (available.length === 0) return null;
-  if (state.strategy === 'random') {
-    return available[Math.floor(Math.random() * available.length)];
-  }
-  // round-robin over full list while skipping cooldown/empty token
-  const n = accounts.length;
-  const cursor = Number(state[cursorKey] || 0);
-  for (let i = 0; i < n; i += 1) {
-    const idx = (cursor + i) % n;
-    const item = accounts[idx];
-    if (now < (item.cooldownUntil || 0)) continue;
-    state[cursorKey] = (idx + 1) % n;
-    return item;
-  }
-  return null;
-}
-
-function normalizeModelId(modelRaw) {
-  return String(modelRaw || '').trim().toLowerCase();
-}
-
-function inferProviderFromModel(modelRaw) {
-  const m = normalizeModelId(modelRaw);
-  if (!m) return 'codex';
-  if (m.startsWith('gemini')) return 'gemini';
-  if (m.startsWith('gpt') || m.startsWith('o1') || m.startsWith('o3') || m.startsWith('o4')) return 'codex';
-  return 'codex';
-}
-
-function resolveRequestProvider(options, requestJson) {
-  const requested = normalizeModelId(requestJson && requestJson.model);
-  if (options.provider === 'codex' || options.provider === 'gemini') return options.provider;
-  return inferProviderFromModel(requested);
-}
-
-function markProxyAccountSuccess(account) {
-  if (!account) return;
-  account.consecutiveFailures = 0;
-  account.successCount = Number(account.successCount || 0) + 1;
-  account.lastError = '';
-}
-
-function markProxyAccountFailure(account, reason, cooldownMs, failureThreshold = 2) {
-  if (!account) return;
-  account.failCount = Number(account.failCount || 0) + 1;
-  account.consecutiveFailures = Number(account.consecutiveFailures || 0) + 1;
-  account.lastError = String(reason || '');
-  if (account.consecutiveFailures >= failureThreshold) {
-    account.cooldownUntil = Date.now() + cooldownMs;
-  }
-}
-
 function appendProxyRequestLog(entry) {
   const line = JSON.stringify(entry);
   try {
@@ -1710,8 +1609,8 @@ function appendProxyRequestLog(entry) {
 }
 
 async function startLocalProxyServer(options) {
-  const codexAccounts = loadCodexProxyAccounts().map((a) => ({ ...a, provider: 'codex', consecutiveFailures: 0, successCount: 0, failCount: 0, lastError: '' }));
-  const geminiAccounts = loadGeminiProxyAccounts();
+  const codexAccounts = withRuntimeFields(loadCodexProxyAccounts({ fs, getToolAccountIds, getToolConfigDir }), 'codex');
+  const geminiAccounts = withRuntimeFields(loadGeminiProxyAccounts({ getToolAccountIds, getProfileDir, checkStatus }), 'gemini');
   const state = {
     strategy: options.strategy,
     cursors: { codex: 0, gemini: 0 },
@@ -1900,8 +1799,8 @@ async function startLocalProxyServer(options) {
       }
       if (method === 'POST' && pathname === '/v0/management/reload') {
         state.accounts = {
-          codex: loadCodexProxyAccounts().map((a) => ({ ...a, provider: 'codex', consecutiveFailures: 0, successCount: 0, failCount: 0, lastError: '' })),
-          gemini: loadGeminiProxyAccounts()
+          codex: withRuntimeFields(loadCodexProxyAccounts({ fs, getToolAccountIds, getToolConfigDir }), 'codex'),
+          gemini: withRuntimeFields(loadGeminiProxyAccounts({ getToolAccountIds, getProfileDir, checkStatus }), 'gemini')
         };
         state.cursors = { codex: 0, gemini: 0 };
         state.modelsCache = {
