@@ -1684,19 +1684,9 @@ function resolveCodexAutoExecArgs(rawForwardArgs) {
     planPath = detectSinglePlanFromPrompt(args);
   }
   if (sub !== 'resume') {
-    if (planPath) {
-      const planBound = getPlanSession(planPath);
-      if (planBound && planBound.sessionId) {
-        const execPrompt = args.slice(1);
-        return {
-          args: ['exec', 'resume', planBound.sessionId, ...execPrompt],
-          taskKey,
-          planPath,
-          error: '',
-          note: `Resuming plan '${path.basename(planPath)}' with session ${planBound.sessionId}`
-        };
-      }
-    }
+    // Task-key should have higher priority than plan-level auto-resume.
+    // This prevents multiple workers touching the same plan file from being
+    // collapsed into a single shared session.
     if (taskKey) {
       const bound = getTaskSession(taskKey);
       if (bound && bound.sessionId) {
@@ -1707,6 +1697,21 @@ function resolveCodexAutoExecArgs(rawForwardArgs) {
           planPath,
           error: '',
           note: `Resuming task-key '${taskKey}' with session ${bound.sessionId}`
+        };
+      }
+      return { args, taskKey, planPath, error: '' };
+    }
+
+    if (planPath) {
+      const planBound = getPlanSession(planPath);
+      if (planBound && planBound.sessionId) {
+        const execPrompt = args.slice(1);
+        return {
+          args: ['exec', 'resume', planBound.sessionId, ...execPrompt],
+          taskKey,
+          planPath,
+          error: '',
+          note: `Resuming plan '${path.basename(planPath)}' with session ${planBound.sessionId}`
         };
       }
     }
@@ -1736,13 +1741,13 @@ function resolveCodexAutoExecArgs(rawForwardArgs) {
   }
 
   let resolvedSessionId = explicitSessionId;
-  if (!resolvedSessionId && planPath) {
-    const planBound = getPlanSession(planPath);
-    if (planBound && planBound.sessionId) resolvedSessionId = planBound.sessionId;
-  }
   if (!resolvedSessionId && taskKey) {
     const bound = getTaskSession(taskKey);
     if (bound && bound.sessionId) resolvedSessionId = bound.sessionId;
+  }
+  if (!resolvedSessionId && planPath) {
+    const planBound = getPlanSession(planPath);
+    if (planBound && planBound.sessionId) resolvedSessionId = planBound.sessionId;
   }
   if (!resolvedSessionId) {
     const latest = getLatestSessionForCwd(process.cwd());

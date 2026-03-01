@@ -11,6 +11,17 @@ const sessionRegistryPath = path.join(os.homedir(), '.ai_home', 'codex_task_sess
 
 function readPlanFiles() {
   if (!fs.existsSync(plansDir)) return [];
+
+  const activeDir = path.join(plansDir, 'active');
+  if (fs.existsSync(activeDir)) {
+    const active = fs.readdirSync(activeDir)
+      .filter((name) => name.endsWith('.plan.md') && name !== '_template.plan.md')
+      .map((name) => path.join(activeDir, name))
+      .sort();
+    if (active.length > 0) return active;
+  }
+
+  // Backward compatibility: legacy flat structure under plans/*.plan.md
   return fs.readdirSync(plansDir)
     .filter((name) => name.endsWith('.plan.md') && name !== '_template.plan.md')
     .map((name) => path.join(plansDir, name))
@@ -104,7 +115,7 @@ function readPlanSessionMap() {
 
 const planFiles = readPlanFiles();
 if (planFiles.length === 0) {
-  console.log('[board] no plan files found under plans/*.plan.md');
+  console.log('[board] no plan files found under plans/active/*.plan.md or plans/*.plan.md');
   process.exit(0);
 }
 
