@@ -86,6 +86,24 @@ function askYesNo(query, defaultYes = true) {
   return ans === 'y' || ans === 'yes';
 }
 
+function ensurePlanWatchdogDaemon() {
+  if (String(process.env.AIH_DISABLE_PLAN_WATCHDOG || '').trim() === '1') return;
+  if (String(process.env.AIH_WATCHDOG_CHILD || '').trim() === '1') return;
+  const watchdogScript = path.resolve(__dirname, '..', 'scripts', 'plan-watchdog.js');
+  if (!fs.existsSync(watchdogScript)) return;
+  try {
+    spawnSync(process.execPath, [watchdogScript, '--repair', '--once'], {
+      cwd: path.resolve(__dirname, '..'),
+      stdio: 'ignore',
+      timeout: 3000,
+      env: {
+        ...process.env,
+        AIH_WATCHDOG_CHILD: '1'
+      }
+    });
+  } catch (e) {}
+}
+
 function stripAnsi(string) {
   return string.replace(/[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g, '');
 }
@@ -2788,6 +2806,10 @@ function createAccount(cliName, id, skipMigration = false) {
 
 const args = process.argv.slice(2);
 const cmd = args[0];
+
+if (cmd === 'codex') {
+  ensurePlanWatchdogDaemon();
+}
 
 if (!cmd || cmd === 'help' || cmd === '--help' || cmd === '-h') {
   showHelp();

@@ -189,7 +189,10 @@ function relaunchBySession(sessionId, prompt) {
       cwd: rootDir,
       detached: true,
       stdio: 'ignore',
-      env: process.env
+      env: {
+        ...process.env,
+        AIH_WATCHDOG_CHILD: '1'
+      }
     });
     child.unref();
     return true;
