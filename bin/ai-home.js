@@ -69,6 +69,7 @@ const {
   handleUpstreamModels,
   handleUpstreamPassthrough
 } = require('../lib/proxy/upstream-endpoints');
+const { handleManagementRequest } = require('../lib/proxy/management-router');
 
 // Configurations
 const HOST_HOME_DIR = (() => {
@@ -1628,51 +1629,35 @@ async function startLocalProxyServer(options) {
       return writeJson(res, 200, { ok: true, service: 'aih-proxy' });
     }
 
-    if (pathname.startsWith('/v0/management')) {
-      if (requiredManagementKey) {
-        const incoming = parseAuthorizationBearer(req.headers.authorization);
-        if (incoming !== requiredManagementKey) {
-          return writeJson(res, 401, { ok: false, error: 'unauthorized_management' });
-        }
+    const handledManagement = await handleManagementRequest({
+      method,
+      pathname,
+      url,
+      req,
+      res,
+      options,
+      state,
+      requiredManagementKey,
+      deps: {
+        parseAuthorizationBearer,
+        writeJson,
+        renderProxyStatusPage,
+        buildManagementStatusPayload,
+        buildManagementMetricsPayload,
+        buildManagementModelsResponse,
+        buildManagementAccountsPayload,
+        loadProxyRuntimeAccounts,
+        applyReloadState,
+        fetchModelsForAccount,
+        getRegistryModelList,
+        fs,
+        getToolAccountIds,
+        getToolConfigDir,
+        getProfileDir,
+        checkStatus
       }
-      if (method === 'GET' && pathname === '/v0/management/ui') {
-        const html = renderProxyStatusPage();
-        res.statusCode = 200;
-        res.setHeader('content-type', 'text/html; charset=utf-8');
-        res.end(html);
-        return;
-      }
-      if (method === 'GET' && pathname === '/v0/management/status') {
-        return writeJson(res, 200, buildManagementStatusPayload(state, options));
-      }
-      if (method === 'GET' && pathname === '/v0/management/metrics') {
-        return writeJson(res, 200, buildManagementMetricsPayload(state));
-      }
-      if (method === 'GET' && pathname === '/v0/management/models') {
-        const out = await buildManagementModelsResponse({
-          options,
-          state,
-          url,
-          fetchModelsForAccount,
-          getRegistryModelList
-        });
-        return writeJson(res, out.status, out.payload);
-      }
-      if (method === 'GET' && pathname === '/v0/management/accounts') {
-        return writeJson(res, 200, buildManagementAccountsPayload(state));
-      }
-      if (method === 'POST' && pathname === '/v0/management/reload') {
-        const runtimeAccounts = loadProxyRuntimeAccounts({ fs, getToolAccountIds, getToolConfigDir, getProfileDir, checkStatus });
-        applyReloadState(state, runtimeAccounts);
-        const total = state.accounts.codex.length + state.accounts.gemini.length;
-        return writeJson(res, 200, { ok: true, reloaded: total, providers: { codex: state.accounts.codex.length, gemini: state.accounts.gemini.length } });
-      }
-      if (method === 'POST' && pathname === '/v0/management/cooldown/clear') {
-        [...(state.accounts.codex || []), ...(state.accounts.gemini || [])].forEach((a) => { a.cooldownUntil = 0; a.consecutiveFailures = 0; });
-        return writeJson(res, 200, { ok: true });
-      }
-      return writeJson(res, 404, { ok: false, error: 'management_not_found' });
-    }
+    });
+    if (handledManagement) return;
 
     if (!pathname.startsWith('/v1/')) {
       return writeJson(res, 404, { ok: false, error: 'not_found' });
