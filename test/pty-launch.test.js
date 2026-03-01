@@ -16,17 +16,18 @@ test('buildPtyLaunch wraps .cmd with cmd.exe on windows', () => {
   );
   assert.equal(launch.command, 'cmd.exe');
   assert.equal(launch.args[0], '/d');
-  assert.equal(launch.args[1], '/s');
-  assert.equal(launch.args[2], '/c');
-  assert.match(launch.args[3], /"codex"/);
-  assert.match(launch.args[3], /--sandbox/);
+  assert.equal(launch.args[1], '/c');
+  assert.equal(launch.args[2], 'C:\\Users\\me\\AppData\\Roaming\\npm\\codex.cmd');
+  assert.equal(launch.args[3], '--sandbox');
+  assert.equal(launch.args[4], 'danger-full-access');
 });
 
 test('buildPtyLaunch wraps extensionless command with cmd.exe on windows', () => {
   const launch = buildPtyLaunch('codex', ['login'], { platform: 'win32' });
   assert.equal(launch.command, 'cmd.exe');
-  assert.deepEqual(launch.args.slice(0, 3), ['/d', '/s', '/c']);
-  assert.equal(launch.args[3], '"codex" "login"');
+  assert.deepEqual(launch.args.slice(0, 2), ['/d', '/c']);
+  assert.equal(launch.args[2], 'codex');
+  assert.equal(launch.args[3], 'login');
 });
 
 test('buildPtyLaunch keeps native exe direct on windows', () => {
@@ -46,5 +47,5 @@ test('buildPtyLaunch can keep cmd shim path when commandName is not provided', (
     { platform: 'win32' }
   );
   assert.equal(launch.command, 'cmd.exe');
-  assert.match(launch.args[3], /codex\.cmd/);
+  assert.equal(launch.args[2], 'C:\\Users\\me\\AppData\\Roaming\\npm\\codex.cmd');
 });
