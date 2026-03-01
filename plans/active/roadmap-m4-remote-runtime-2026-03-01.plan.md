@@ -3,7 +3,7 @@
 - plan_id: roadmap-m4-remote-runtime-2026-03-01
 - coordinator: ai-coordinator
 - created_at: 2026-03-01T21:34:22+08:00
-- updated_at: 2026-03-01T22:42:37+08:00
+- updated_at: 2026-03-01T22:52:05+08:00
 - status: active
 
 ## Global Rules
@@ -18,7 +18,7 @@
 - [x] T002 Remote transport contract
 - [x] T003 Remote connector auth/reconnect
 - [x] T004 Remote workspace runner
-- [ ] T005 Remote project session bridge
+- [x] T005 Remote project session bridge
 - [x] T006 Remote patch return channel
 - [x] T007 Runtime isolation templates
 - [x] T008 Runtime environment manager
@@ -107,14 +107,14 @@ Keep this checklist synced with `status`:
 - id: T005
   title: Remote project session bridge
   scope: Bridge local CLI task/session operations to remote workspace runner control
-  status: doing
+  status: done
   owner: grace
   claimed_at: 2026-03-01T22:16:27+08:00
-  done_at:
+  done_at: 2026-03-01T22:52:05+08:00
   priority: P0
   depends_on: [T003, T004]
   branch: feat/grace-m4-t005
-  pr_or_commit:
+  pr_or_commit: 4e511fa
   blocker:
   deliverable: Project session bridge for remote CLI development loop
   acceptance:
@@ -250,3 +250,4 @@ Keep this checklist synced with `status`:
 
 - 2026-03-01T22:42:37+08:00 [ai-watchdog] Relaunched T005 (m4-t005-grace) via resume session 019ca9c4-2d98-7950-9a54-08ea14cd1b3c.
 - 2026-03-01T22:42:37+08:00 [ai-watchdog] Relaunched T009 (m4-t009-carol) via resume session 019ca9c4-58ae-71b0-aeea-2ec6c7c0c0d2.
+- 2026-03-01T22:52:05+08:00 [grace] Completed T005 implementation in scoped file; set status=done with pr_or_commit=4e511fa.
