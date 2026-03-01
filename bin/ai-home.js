@@ -9,6 +9,14 @@ const readline = require('readline-sync');
 const pty = require('node-pty');
 const { execSync, spawnSync, spawn } = require('child_process');
 const http = require('http');
+const {
+  FALLBACK_MODELS,
+  initModelRegistry,
+  addModelToRegistry,
+  getRegistryModelList,
+  buildOpenAIModelsList
+} = require('../lib/proxy/models');
+const { renderProxyStatusPage } = require('../lib/proxy/status-page');
 
 // Configurations
 const HOST_HOME_DIR = (() => {
@@ -2138,26 +2146,6 @@ async function fetchModelsForAccount(options, account, timeoutMs = 8000) {
     .filter(Boolean);
 }
 
-function buildOpenAIModelsList(models) {
-  const now = Math.floor(Date.now() / 1000);
-  const safe = Array.isArray(models) ? models : [];
-  return {
-    object: 'list',
-    data: safe.map((id) => ({
-      id,
-      object: 'model',
-      created: now,
-      owned_by: 'aih-proxy'
-    }))
-  };
-}
-
-const FALLBACK_MODELS = [
-  'gpt-4o-mini',
-  'gpt-4.1-mini',
-  'gpt-4.1'
-];
-
 function extractTextFromContent(content) {
   if (typeof content === 'string') return content;
   if (Array.isArray(content)) {
@@ -2408,38 +2396,6 @@ function createProviderExecutor(name, maxConcurrency, queueLimit) {
   return { schedule, snapshot };
 }
 
-function initModelRegistry() {
-  return {
-    updatedAt: Date.now(),
-    providers: {
-      codex: new Set(['gpt-4o-mini', 'gpt-4.1-mini', 'gpt-4.1']),
-      gemini: new Set(['gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.0-flash'])
-    }
-  };
-}
-
-function addModelToRegistry(registry, provider, model) {
-  if (!registry || !registry.providers) return;
-  if (!provider || !registry.providers[provider]) return;
-  const m = normalizeModelId(model);
-  if (!m) return;
-  registry.providers[provider].add(m);
-  registry.updatedAt = Date.now();
-}
-
-function getRegistryModelList(registry, providerMode = 'auto') {
-  if (!registry || !registry.providers) return FALLBACK_MODELS.slice();
-  const out = new Set();
-  if (providerMode === 'codex' || providerMode === 'auto') {
-    registry.providers.codex.forEach((m) => out.add(m));
-  }
-  if (providerMode === 'gemini' || providerMode === 'auto') {
-    registry.providers.gemini.forEach((m) => out.add(m));
-  }
-  if (out.size === 0) return FALLBACK_MODELS.slice();
-  return Array.from(out).sort();
-}
-
 function buildChatCompletionPayload(model, text) {
   return {
     id: `chatcmpl-${Date.now()}`,
@@ -2499,62 +2455,6 @@ function writeSseChatCompletion(res, model, text) {
   });
   res.write('data: [DONE]\n\n');
   res.end();
-}
-
-function renderProxyStatusPage() {
-  return `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>AIH Proxy Status</title>
-  <style>
-    body { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background:#0f172a; color:#e2e8f0; margin:0; padding:16px; }
-    .grid { display:grid; grid-template-columns: repeat(auto-fit,minmax(320px,1fr)); gap:12px; }
-    .card { background:#111827; border:1px solid #334155; border-radius:10px; padding:12px; }
-    h1,h2 { margin:0 0 10px 0; }
-    h1 { font-size:18px; }
-    h2 { font-size:14px; color:#93c5fd; }
-    pre { white-space:pre-wrap; word-break:break-word; font-size:12px; }
-    .muted { color:#94a3b8; }
-  </style>
-</head>
-<body>
-  <h1>AIH Proxy Live Status</h1>
-  <p class="muted">Auto refresh every 2s</p>
-  <div class="grid">
-    <div class="card"><h2>/status</h2><pre id="status">loading...</pre></div>
-    <div class="card"><h2>/metrics</h2><pre id="metrics">loading...</pre></div>
-    <div class="card"><h2>/accounts (first 20)</h2><pre id="accounts">loading...</pre></div>
-    <div class="card"><h2>/models</h2><pre id="models">loading...</pre></div>
-  </div>
-  <script>
-    async function loadJson(path) {
-      const r = await fetch(path);
-      return await r.json();
-    }
-    async function tick() {
-      try {
-        const [status, metrics, accounts, models] = await Promise.all([
-          loadJson('/v0/management/status'),
-          loadJson('/v0/management/metrics'),
-          loadJson('/v0/management/accounts'),
-          loadJson('/v0/management/models')
-        ]);
-        document.getElementById('status').textContent = JSON.stringify(status, null, 2);
-        document.getElementById('metrics').textContent = JSON.stringify(metrics, null, 2);
-        const slimAccounts = { ...accounts, accounts: (accounts.accounts || []).slice(0, 20) };
-        document.getElementById('accounts').textContent = JSON.stringify(slimAccounts, null, 2);
-        document.getElementById('models').textContent = JSON.stringify(models, null, 2);
-      } catch (e) {
-        document.getElementById('status').textContent = String(e);
-      }
-    }
-    tick();
-    setInterval(tick, 2000);
-  </script>
-</body>
-</html>`;
 }
 
 async function startLocalProxyServer(options) {
