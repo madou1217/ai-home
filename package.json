@@ -11,6 +11,7 @@
     "plan:guard": "node scripts/plan-commit-guard.js",
     "plan:watchdog": "node scripts/plan-watchdog.js",
     "plan:hook:install": "node scripts/install-plan-hook.js",
+    "pr:batch": "bash scripts/ops/pr-batch.sh",
     "postinstall": "node scripts/postinstall.js"
   },
   "keywords": [],
