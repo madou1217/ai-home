@@ -32,6 +32,8 @@ const {
   parseProxyServeArgs,
   parseProxyEnvArgs
 } = require('../lib/proxy/args');
+const { createProxyDaemonController } = require('../lib/proxy/daemon');
+const { runProxyCommand } = require('../lib/proxy/command-handler');
 
 // Configurations
 const HOST_HOME_DIR = (() => {
@@ -62,6 +64,17 @@ function ensureDir(dir) {
 }
 
 ensureDir(PROFILES_DIR);
+const proxyDaemon = createProxyDaemonController({
+  ensureDir,
+  parseProxyServeArgs,
+  aiHomeDir: AI_HOME_DIR,
+  pidFile: AIH_PROXY_PID_FILE,
+  logFile: AIH_PROXY_LOG_FILE,
+  launchdLabel: AIH_PROXY_LAUNCHD_LABEL,
+  launchdPlist: AIH_PROXY_LAUNCHD_PLIST,
+  entryScriptPath: __filename,
+  nodeExecPath: process.execPath
+});
 
 function getProfileDir(cliName, id) {
   return path.join(PROFILES_DIR, cliName, String(id));
@@ -1546,172 +1559,6 @@ function normalizeManagementBase(url) {
   const base = String(url || '').trim();
   if (!base) throw new Error('Empty management URL');
   return base.replace(/\/+$/, '');
-}
-
-function readProxyPid() {
-  if (!fs.existsSync(AIH_PROXY_PID_FILE)) return 0;
-  try {
-    const val = String(fs.readFileSync(AIH_PROXY_PID_FILE, 'utf8')).trim();
-    return /^\d+$/.test(val) ? Number(val) : 0;
-  } catch (e) {
-    return 0;
-  }
-}
-
-function isProcessAlive(pid) {
-  if (!Number.isFinite(pid) || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (e) {
-    return false;
-  }
-}
-
-function waitForProxyReady(port, timeoutMs = 5000) {
-  const deadline = Date.now() + timeoutMs;
-  return new Promise((resolve) => {
-    const tick = async () => {
-      if (Date.now() > deadline) {
-        resolve(false);
-        return;
-      }
-      try {
-        const res = await fetch(`http://127.0.0.1:${port}/healthz`);
-        if (res.ok) {
-          resolve(true);
-          return;
-        }
-      } catch (e) {}
-      setTimeout(tick, 150);
-    };
-    tick();
-  });
-}
-
-async function startProxyDaemon(rawServeArgs) {
-  ensureDir(AI_HOME_DIR);
-  const parsed = parseProxyServeArgs(rawServeArgs || []);
-  const existingPid = readProxyPid();
-  if (isProcessAlive(existingPid)) {
-    return { alreadyRunning: true, pid: existingPid };
-  }
-
-  const outFd = fs.openSync(AIH_PROXY_LOG_FILE, 'a');
-  const child = spawn(process.execPath, [__filename, 'proxy', 'serve', ...(rawServeArgs || [])], {
-    detached: true,
-    stdio: ['ignore', outFd, outFd],
-    env: process.env
-  });
-  child.unref();
-  fs.writeFileSync(AIH_PROXY_PID_FILE, String(child.pid));
-  const started = await waitForProxyReady(parsed.port, 7000);
-  return { alreadyRunning: false, pid: child.pid, started };
-}
-
-function stopProxyDaemon() {
-  const pid = readProxyPid();
-  if (!pid) return { stopped: false, reason: 'not_running' };
-  if (!isProcessAlive(pid)) {
-    try { fs.unlinkSync(AIH_PROXY_PID_FILE); } catch (e) {}
-    return { stopped: false, reason: 'stale_pid', pid };
-  }
-  try {
-    process.kill(pid, 'SIGTERM');
-  } catch (e) {
-    return { stopped: false, reason: 'kill_failed', pid };
-  }
-  const deadline = Date.now() + 3000;
-  while (Date.now() < deadline) {
-    if (!isProcessAlive(pid)) {
-      try { fs.unlinkSync(AIH_PROXY_PID_FILE); } catch (e) {}
-      return { stopped: true, pid };
-    }
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 80);
-  }
-  try {
-    process.kill(pid, 'SIGKILL');
-  } catch (e) {}
-  try { fs.unlinkSync(AIH_PROXY_PID_FILE); } catch (e) {}
-  return { stopped: true, pid, forced: true };
-}
-
-function getProxyDaemonStatus() {
-  const pid = readProxyPid();
-  const running = isProcessAlive(pid);
-  return {
-    running,
-    pid: running ? pid : 0,
-    pidFile: AIH_PROXY_PID_FILE,
-    logFile: AIH_PROXY_LOG_FILE
-  };
-}
-
-function getProxyAutostartStatus() {
-  if (process.platform !== 'darwin') {
-    return { supported: false, installed: false, loaded: false };
-  }
-  const installed = fs.existsSync(AIH_PROXY_LAUNCHD_PLIST);
-  let loaded = false;
-  try {
-    const out = spawnSync('launchctl', ['list', AIH_PROXY_LAUNCHD_LABEL], { encoding: 'utf8' });
-    loaded = out.status === 0;
-  } catch (e) {
-    loaded = false;
-  }
-  return { supported: true, installed, loaded, plist: AIH_PROXY_LAUNCHD_PLIST, label: AIH_PROXY_LAUNCHD_LABEL };
-}
-
-function installProxyAutostart() {
-  if (process.platform !== 'darwin') {
-    throw new Error('autostart is currently implemented for macOS launchd only');
-  }
-  ensureDir(path.dirname(AIH_PROXY_LAUNCHD_PLIST));
-  const plist = `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-  <dict>
-    <key>Label</key>
-    <string>${AIH_PROXY_LAUNCHD_LABEL}</string>
-    <key>ProgramArguments</key>
-    <array>
-      <string>${process.execPath}</string>
-      <string>${__filename}</string>
-      <string>proxy</string>
-      <string>serve</string>
-    </array>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>KeepAlive</key>
-    <true/>
-    <key>StandardOutPath</key>
-    <string>${AIH_PROXY_LOG_FILE}</string>
-    <key>StandardErrorPath</key>
-    <string>${AIH_PROXY_LOG_FILE}</string>
-    <key>EnvironmentVariables</key>
-    <dict>
-      <key>PATH</key>
-      <string>${process.env.PATH || ''}</string>
-    </dict>
-  </dict>
-</plist>
-`;
-  fs.writeFileSync(AIH_PROXY_LAUNCHD_PLIST, plist);
-  spawnSync('launchctl', ['unload', AIH_PROXY_LAUNCHD_PLIST], { stdio: 'ignore' });
-  const load = spawnSync('launchctl', ['load', AIH_PROXY_LAUNCHD_PLIST], { encoding: 'utf8' });
-  if (load.status !== 0) {
-    throw new Error(String(load.stderr || load.stdout || 'launchctl load failed').trim());
-  }
-}
-
-function uninstallProxyAutostart() {
-  if (process.platform !== 'darwin') {
-    throw new Error('autostart is currently implemented for macOS launchd only');
-  }
-  if (fs.existsSync(AIH_PROXY_LAUNCHD_PLIST)) {
-    spawnSync('launchctl', ['unload', AIH_PROXY_LAUNCHD_PLIST], { stdio: 'ignore' });
-    fs.unlinkSync(AIH_PROXY_LAUNCHD_PLIST);
-  }
 }
 
 function buildProxyCodexUploadPayload(authJson) {
@@ -3873,192 +3720,19 @@ if (cmd === 'import') {
 }
 
 if (cmd === 'proxy') {
-  const action = String(args[1] || '').trim();
-  if (action === 'help' || action === '--help' || action === '-h') {
-    showProxyUsage();
-    process.exit(0);
-  }
-
-  if (action === 'status') {
-    const st = getProxyDaemonStatus();
-    if (st.running) {
-      console.log(`\x1b[36m[aih]\x1b[0m proxy is running (pid=${st.pid})`);
-      console.log('  base_url: http://127.0.0.1:8317/v1');
-      console.log('  api_key: dummy');
-      console.log(`  pid_file: ${st.pidFile}`);
-      console.log(`  log_file: ${st.logFile}`);
-    } else {
-      console.log('\x1b[90m[aih]\x1b[0m proxy is not running');
-    }
-    const auto = getProxyAutostartStatus();
-    if (auto.supported) {
-      console.log(`  autostart: installed=${auto.installed} loaded=${auto.loaded}`);
-    } else {
-      console.log('  autostart: unsupported_on_this_platform');
-    }
-    process.exit(0);
-  }
-
-  if (action === 'autostart') {
-    const sub = String(args[2] || 'status').trim().toLowerCase();
-    try {
-      if (sub === 'install') {
-        installProxyAutostart();
-        console.log(`\x1b[32m[aih]\x1b[0m proxy autostart installed`);
-        process.exit(0);
-      }
-      if (sub === 'uninstall' || sub === 'remove') {
-        uninstallProxyAutostart();
-        console.log(`\x1b[32m[aih]\x1b[0m proxy autostart removed`);
-        process.exit(0);
-      }
-      const st = getProxyAutostartStatus();
-      if (!st.supported) {
-        console.log('\x1b[90m[aih]\x1b[0m autostart is unsupported on this platform');
-        process.exit(0);
-      }
-      console.log(`\x1b[36m[aih]\x1b[0m proxy autostart status`);
-      console.log(`  installed: ${st.installed}`);
-      console.log(`  loaded: ${st.loaded}`);
-      console.log(`  plist: ${st.plist}`);
-      process.exit(0);
-    } catch (e) {
-      console.error(`\x1b[31m[aih] proxy autostart failed: ${e.message}\x1b[0m`);
-      process.exit(1);
-    }
-  }
-
-  if (action === 'stop') {
-    const res = stopProxyDaemon();
-    if (res.stopped) {
-      console.log(`\x1b[32m[aih]\x1b[0m proxy stopped (pid=${res.pid})${res.forced ? ' [forced]' : ''}`);
-      process.exit(0);
-    }
-    console.log(`\x1b[90m[aih]\x1b[0m proxy stop skipped (${res.reason || 'not_running'})`);
-    process.exit(0);
-  }
-
-  if (action === 'start' || !action || action.startsWith('-')) {
-    (async () => {
-      try {
-        const serveArgs = action === 'start' ? args.slice(2) : args.slice(1);
-        const result = await startProxyDaemon(serveArgs);
-        if (result.alreadyRunning) {
-          console.log(`\x1b[90m[aih]\x1b[0m proxy already running (pid=${result.pid})`);
-        } else if (result.started) {
-          console.log(`\x1b[32m[aih]\x1b[0m proxy started in background (pid=${result.pid})`);
-        } else {
-          console.log(`\x1b[33m[aih]\x1b[0m proxy process created (pid=${result.pid}), but health check timed out`);
-        }
-        console.log('  base_url: http://127.0.0.1:8317/v1');
-        console.log('  api_key: dummy');
-        process.exit(0);
-      } catch (e) {
-        console.error(`\x1b[31m[aih] proxy start failed: ${e.message}\x1b[0m`);
-        process.exit(1);
-      }
-    })();
-    return;
-  }
-
-  if (action === 'restart') {
-    const stopped = stopProxyDaemon();
-    if (stopped.stopped) {
-      console.log(`\x1b[90m[aih]\x1b[0m proxy stopped for restart (pid=${stopped.pid})`);
-    }
-    (async () => {
-      try {
-        const result = await startProxyDaemon(args.slice(2));
-        if (result.alreadyRunning) {
-          console.log(`\x1b[90m[aih]\x1b[0m proxy already running (pid=${result.pid})`);
-        } else if (result.started) {
-          console.log(`\x1b[32m[aih]\x1b[0m proxy restarted in background (pid=${result.pid})`);
-        } else {
-          console.log(`\x1b[33m[aih]\x1b[0m proxy process created (pid=${result.pid}), but health check timed out`);
-        }
-        console.log('  base_url: http://127.0.0.1:8317/v1');
-        console.log('  api_key: dummy');
-        process.exit(0);
-      } catch (e) {
-        console.error(`\x1b[31m[aih] proxy restart failed: ${e.message}\x1b[0m`);
-        process.exit(1);
-      }
-    })();
-    return;
-  }
-
-  if (action === 'env') {
-    let envOpts;
-    try {
-      envOpts = parseProxyEnvArgs(args.slice(2));
-    } catch (e) {
-      console.error(`\x1b[31m[aih] ${e.message}\x1b[0m`);
-      console.log('\x1b[90mUsage:\x1b[0m aih proxy env [--base-url <url>] [--api-key <key>]');
-      process.exit(1);
-    }
-    console.log(`export OPENAI_BASE_URL="${envOpts.baseUrl}"`);
-    console.log(`export OPENAI_API_KEY="${envOpts.apiKey}"`);
-    process.exit(0);
-  }
-
-  if (action === 'serve') {
-    let serveOpts;
-    try {
-      const serveArgs = (action === 'serve') ? args.slice(2) : args.slice(1);
-      serveOpts = parseProxyServeArgs(serveArgs);
-    } catch (e) {
-      console.error(`\x1b[31m[aih] ${e.message}\x1b[0m`);
-      console.log('\x1b[90mUsage:\x1b[0m aih proxy [--port <n>]  (or: aih proxy serve [options])');
-      process.exit(1);
-    }
-    (async () => {
-      try {
-        await startLocalProxyServer(serveOpts);
-      } catch (e) {
-        console.error(`\x1b[31m[aih] proxy serve failed: ${e.message}\x1b[0m`);
-        process.exit(1);
-      }
-    })();
-    return;
-  }
-
-  if (action === 'sync-codex' || action === 'sync_codex') {
-    let syncOpts;
-    try {
-      syncOpts = parseProxySyncArgs(args.slice(2));
-    } catch (e) {
-      console.error(`\x1b[31m[aih] ${e.message}\x1b[0m`);
-      console.log('\x1b[90mUsage:\x1b[0m aih proxy sync-codex [--management-url <url>] [--key <management-key>] [--parallel <1-32>] [--limit <n>] [--dry-run]');
-      process.exit(1);
-    }
-    (async () => {
-      try {
-        const result = await syncCodexAccountsToProxy(syncOpts);
-        const modeLabel = result.dryRun ? 'dry-run' : 'write';
-        console.log(`\x1b[36m[aih]\x1b[0m proxy sync-codex done (${modeLabel})`);
-        console.log(`  management: ${result.managementUrl}`);
-        console.log(`  scanned: ${result.scanned}`);
-        console.log(`  eligible: ${result.eligible}`);
-        console.log(`  uploaded: ${result.uploaded}`);
-        console.log(`  invalid: ${result.skippedInvalid}`);
-        if (!result.dryRun) {
-          console.log(`  failed: ${result.failed}`);
-          if (result.firstError) {
-            console.log(`  first_error: ${result.firstError}`);
-          }
-        }
-        process.exit(result.failed > 0 ? 1 : 0);
-      } catch (e) {
-        console.error(`\x1b[31m[aih] proxy sync-codex failed: ${e.message}\x1b[0m`);
-        process.exit(1);
-      }
-    })();
-    return;
-  }
-
-  console.error(`\x1b[31m[aih] Unknown proxy action '${action}'.\x1b[0m`);
-  showProxyUsage();
-  process.exit(1);
+  (async () => {
+    const code = await runProxyCommand(args, {
+      showProxyUsage,
+      proxyDaemon,
+      parseProxySyncArgs,
+      parseProxyServeArgs,
+      parseProxyEnvArgs,
+      startLocalProxyServer,
+      syncCodexAccountsToProxy
+    });
+    if (typeof code === 'number') process.exit(code);
+  })();
+  return;
 }
 
 const cliName = cmd;
