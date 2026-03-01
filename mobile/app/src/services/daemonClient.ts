@@ -277,7 +277,11 @@ export function createDaemonClient(options: CreateDaemonClientOptions): DaemonCl
   const baseUrl = normalizeBaseUrl(options.baseUrl);
 
   if (!baseUrl) {
-    throw new Error('daemon_client_missing_base_url');
+    throw createDaemonClientError({
+      code: 'daemon_validation_error',
+      message: 'daemon_client_missing_base_url',
+      retryable: false
+    });
   }
 
   async function getAuthHeader(): Promise<Record<string, string>> {
