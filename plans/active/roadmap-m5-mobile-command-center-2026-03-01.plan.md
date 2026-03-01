@@ -3,7 +3,7 @@
 - plan_id: roadmap-m5-mobile-command-center-2026-03-01
 - coordinator: ai-coordinator
 - created_at: 2026-03-01T21:34:22+08:00
-- updated_at: 2026-03-01T22:18:55+08:00
+- updated_at: 2026-03-01T22:37:29+08:00
 - status: active
 
 ## Global Rules
@@ -20,8 +20,8 @@
 - [x] T004 Mobile reconnect manager
 - [x] T005 Mobile push notification bridge
 - [ ] T006 Mobile quick actions panel
-- [ ] T007 Mobile status priority card
-- [ ] T008 Mobile collapsible log panel
+- [x] T007 Mobile status priority card
+- [x] T008 Mobile collapsible log panel
 
 Keep this checklist synced with `status`:
 - `status: done` => `[x]`
@@ -144,14 +144,14 @@ Keep this checklist synced with `status`:
 - id: T007
   title: Mobile status priority card
   scope: Build compact component to surface critical state before secondary details
-  status: doing
+  status: done
   owner: dave
   claimed_at: 2026-03-01T22:16:53+08:00
-  done_at:
+  done_at: 2026-03-01T22:37:29+08:00
   priority: P1
   depends_on: [T001]
   branch: feat/dave-m5-t007
-  pr_or_commit:
+  pr_or_commit: a2876f7
   blocker:
   deliverable: Status-first card component for mobile command center hierarchy
   acceptance:
@@ -163,14 +163,14 @@ Keep this checklist synced with `status`:
 - id: T008
   title: Mobile collapsible log panel
   scope: Build foldable log panel to keep signal-first UI while preserving diagnostics access
-  status: doing
+  status: done
   owner: erin
   claimed_at: 2026-03-01T22:16:53+08:00
-  done_at:
+  done_at: 2026-03-01T22:38:23+08:00
   priority: P1
   depends_on: [T002]
   branch: feat/erin-m5-t008
-  pr_or_commit:
+  pr_or_commit: d1252a2
   blocker:
   deliverable: Collapsible log component that preserves mobile readability
   acceptance:
@@ -218,3 +218,6 @@ Keep this checklist synced with `status`:
 - 2026-03-01T22:18:55+08:00 [aih-auto] Claimed T008 (m5-t008-erin) owner=erin branch=feat/erin-m5-t008.
 
 - 2026-03-01T22:18:55+08:00 [aih-auto] Claimed T006 (m5-t006-heidi) owner=heidi branch=feat/heidi-m5-t006.
+- 2026-03-01T22:38:23+08:00 [erin] Completed T008; added collapsible log panel with default-collapsed summary and expandable timestamp/level/message scan view. pr_or_commit=d1252a2.
+
+- 2026-03-01T22:37:29+08:00 [dave] Completed T007; set status=done, checklist checked, done_at/pr_or_commit updated (a2876f7).
