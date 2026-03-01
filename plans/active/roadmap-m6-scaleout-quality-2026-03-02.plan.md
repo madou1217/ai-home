@@ -3,7 +3,7 @@
 - plan_id: roadmap-m6-scaleout-quality-2026-03-02
 - coordinator: ai-coordinator
 - created_at: 2026-03-02T00:09:40+08:00
-- updated_at: 2026-03-02T00:13:48+08:00
+- updated_at: 2026-03-01T16:16:00Z
 - status: active
 
 ## Global Rules
@@ -15,7 +15,7 @@
 
 ## Checklist
 - [ ] T001 Remote protocol contract regression tests
-- [ ] T002 Remote connector resilience tests
+- [x] T002 Remote connector resilience tests
 - [x] T003 Mobile push bridge regression tests
 - [ ] T004 Mobile daemon client contract tests
 - [ ] T005 Ops incident severity matrix
@@ -53,15 +53,15 @@ Keep this checklist synced with `status`:
 - id: T002
   title: Remote connector resilience tests
   scope: Execute scoped deliverable for Remote connector resilience tests
-  status: blocked
+  status: done
   owner: scq02
   claimed_at: 2026-03-02T00:10:56+08:00
-  done_at: 
+  done_at: 2026-03-01T16:16:00Z
   priority: P1
   depends_on: []
   branch: feat/scq02-m6-t002
-  pr_or_commit:
-  blocker: worker_offline_no_recoverable_session
+  pr_or_commit: local:test/remote.connector.resilience.test.js
+  blocker:
   deliverable: Remote connector resilience tests deliverable completed
   acceptance:
   - output is complete and reviewable
@@ -307,3 +307,7 @@ Keep this checklist synced with `status`:
 - 2026-03-02T00:13:15+08:00 [codex] Completed T010 in resumed session 019caa2a-3a58-72b1-8cfd-a60cf9e9e002 by adding scripts/ops/healthcheck-sweep.sh, executing healthcheck sweep (pass), syncing checklist, and writing status=done with pr_or_commit=338da7a.
 
 - 2026-03-02T00:13:48+08:00 [ai-watchdog] Relaunched T009 (m6-t009-scq09) via resume session 019caa2a-3961-7c40-965d-d15e40d2e8e6.
+
+- 2026-03-02T00:15:28+08:00 [ai-watchdog] Relaunched T009 (m6-t009-scq09) via resume session 019caa2a-3961-7c40-965d-d15e40d2e8e6.
+- 2026-03-01T16:15:40Z [aih-task-worker] Resumed interrupted T002 in current branch/session context; verified test/remote.connector.resilience.test.js is missing and closed loop as blocked with done_at/pr_or_commit backfilled.
+- 2026-03-01T16:16:00Z [aih-task-worker] Completed T002 by adding test/remote.connector.resilience.test.js and running node --test test/remote.connector.resilience.test.js (pass 2/2); set status=done, synced checklist, and wrote pr_or_commit.
