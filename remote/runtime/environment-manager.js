@@ -11,6 +11,7 @@ const BINDING_STATE_IDLE = 'idle';
 const BINDING_STATE_BINDING = 'binding';
 const BINDING_STATE_REBINDING = 'rebinding';
 const BINDING_STATE_RESTARTING = 'restarting';
+const BINDING_STATE_RECOVERY = 'recovery';
 const BINDING_STATE_BOUND = 'bound';
 const BINDING_STATE_ERROR = 'error';
 
@@ -142,7 +143,7 @@ function createEnvironmentManager(options = {}, deps = {}) {
 
   function transition(action, request = {}) {
     const targetProfile = normalizeRuntimeProfile(
-      request.runtimeProfile || (action === 'bind' ? defaultProfile : activeProfile)
+      request.runtimeProfile || (action === 'bind' ? defaultProfile : activeProfile || defaultProfile)
     );
 
     if (action === 'bind') {
@@ -151,6 +152,8 @@ function createEnvironmentManager(options = {}, deps = {}) {
       setTransitionState(BINDING_STATE_REBINDING, action, targetProfile);
     } else if (action === 'restart') {
       setTransitionState(BINDING_STATE_RESTARTING, action, targetProfile);
+    } else if (action === 'recover') {
+      setTransitionState(BINDING_STATE_RECOVERY, action, targetProfile);
     } else {
       throw new Error(`unsupported transition action: ${action}`);
     }
@@ -175,15 +178,45 @@ function createEnvironmentManager(options = {}, deps = {}) {
     return transition('restart', request);
   }
 
+  function recover(request = {}) {
+    if (bindingState.status !== BINDING_STATE_ERROR && request.force !== true) {
+      return {
+        profile: activeProfile,
+        runtimeFiles: Array.isArray(bindingState.runtimeFiles) ? [...bindingState.runtimeFiles] : [],
+        runtimeRoot: path.resolve(runtimeRoot || __dirname),
+        state: snapshotState()
+      };
+    }
+    return transition('recover', request);
+  }
+
   function buildExecutionContext(request = {}) {
-    const selectedProfile = request.runtimeProfile || activeProfile || defaultProfile;
-    const artifacts = resolveRuntimeArtifacts(selectedProfile, { runtimeRoot }, deps);
+    const selectedProfile = normalizeRuntimeProfile(request.runtimeProfile || activeProfile || defaultProfile);
+    let context = null;
+
+    if (bindingState.status === BINDING_STATE_ERROR) {
+      context = recover({ runtimeProfile: selectedProfile });
+    } else if (bindingState.status === BINDING_STATE_IDLE) {
+      context = bind({ runtimeProfile: selectedProfile });
+    } else if (selectedProfile !== activeProfile) {
+      context = rebind({ runtimeProfile: selectedProfile });
+    } else {
+      const stable = resolveRuntimeArtifacts(activeProfile, { runtimeRoot }, deps);
+      context = {
+        profile: stable.profile,
+        runtimeFiles: stable.runtimeFiles,
+        runtimeRoot: stable.runtimeRoot,
+        state: snapshotState()
+      };
+    }
 
     const env = {
       ...(request.includeProcessEnv === false ? {} : process.env),
       ...baseEnv,
       ...(request.env || {}),
-      AIH_RUNTIME_PROFILE: artifacts.profile
+      AIH_RUNTIME_PROFILE: context.profile,
+      AIH_RUNTIME_BINDING_SEQUENCE: String(bindingState.sequence),
+      AIH_RUNTIME_BINDING_STATE: bindingState.status
     };
 
     if (request.workspaceDir) {
@@ -191,9 +224,9 @@ function createEnvironmentManager(options = {}, deps = {}) {
     }
 
     return {
-      profile: artifacts.profile,
-      runtimeFiles: artifacts.runtimeFiles,
-      runtimeRoot: artifacts.runtimeRoot,
+      profile: context.profile,
+      runtimeFiles: context.runtimeFiles,
+      runtimeRoot: context.runtimeRoot,
       env,
       state: snapshotState()
     };
@@ -207,6 +240,7 @@ function createEnvironmentManager(options = {}, deps = {}) {
     bind,
     rebind,
     restart,
+    recover,
     buildExecutionContext
   };
 }
@@ -219,6 +253,7 @@ module.exports = {
   BINDING_STATE_BINDING,
   BINDING_STATE_REBINDING,
   BINDING_STATE_RESTARTING,
+  BINDING_STATE_RECOVERY,
   BINDING_STATE_BOUND,
   BINDING_STATE_ERROR,
   normalizeRuntimeProfile,
