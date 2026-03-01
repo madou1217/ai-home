@@ -20,6 +20,7 @@ const { syncCodexAccountsToProxy } = require('../lib/proxy/sync');
 const { startLocalProxyServer: startLocalProxyServerModule } = require('../lib/proxy/server');
 const { runProxyEntry } = require('../lib/proxy/entry');
 const { resolveCommandPath: resolveCommandPathPortable } = require('../lib/runtime/command-path');
+const { buildPtyLaunch } = require('../lib/runtime/pty-launch');
 const { resolveGlobalToolConfigRoot, resolveSessionStoreRoot } = require('../lib/session/global-source');
 const { runDoctorChecks } = require('../lib/doctor/checks');
 const { createAuditLogger } = require('../lib/audit/logger');
@@ -2437,8 +2438,10 @@ function spawnPty(cliBin, cliName, id, forwardArgs, isLogin) {
   if (cliName === 'codex' && !isLogin) {
     argsToRun = applyCodexDefaultArgs(argsToRun);
   }
-  
-  return pty.spawn(cliBin, argsToRun, {
+
+  const launch = buildPtyLaunch(cliBin, argsToRun);
+
+  return pty.spawn(launch.command, launch.args, {
     name: 'xterm-color',
     cols: process.stdout.columns || 80,
     rows: process.stdout.rows || 24,
