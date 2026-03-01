@@ -117,6 +117,7 @@ const LIST_PAGE_SIZE = 10;
 const AUTO_POOL_LEASE_MS_DEFAULT = 20 * 60 * 1000;
 const AUTO_POOL_LOCK_TIMEOUT_MS = 2500;
 const AUTO_POOL_LOCK_RETRY_MS = 40;
+const TASK_SESSION_REGISTRY_FILE = path.join(AI_HOME_DIR, 'codex_task_sessions.json');
 const EXPORT_MAGIC = 'AIH_EXPORT_V2:';
 const EXPORT_VERSION = 2;
 const AGE_SSH_KEY_TYPES = new Set(['ssh-ed25519', 'ssh-rsa']);
@@ -1396,6 +1397,76 @@ function releaseAutoAccount(cliName, id, leaseToken) {
   } catch (e) {}
 }
 
+function sanitizeTaskKey(raw) {
+  const v = String(raw || '').trim();
+  if (!v) return '';
+  return v.replace(/[^a-zA-Z0-9._:-]/g, '_').slice(0, 120);
+}
+
+function readTaskSessionRegistry() {
+  if (!fs.existsSync(TASK_SESSION_REGISTRY_FILE)) return {};
+  try {
+    const parsed = JSON.parse(fs.readFileSync(TASK_SESSION_REGISTRY_FILE, 'utf8'));
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch (e) {
+    return {};
+  }
+}
+
+function writeTaskSessionRegistry(data) {
+  try {
+    ensureDir(path.dirname(TASK_SESSION_REGISTRY_FILE));
+    fs.writeFileSync(TASK_SESSION_REGISTRY_FILE, JSON.stringify(data, null, 2));
+  } catch (e) {}
+}
+
+function getTaskSession(taskKey) {
+  const key = sanitizeTaskKey(taskKey);
+  if (!key) return null;
+  const all = readTaskSessionRegistry();
+  const entry = all[key];
+  if (!entry || typeof entry !== 'object') return null;
+  if (!entry.sessionId) return null;
+  return entry;
+}
+
+function setTaskSession(taskKey, sessionId, metadata = {}) {
+  const key = sanitizeTaskKey(taskKey);
+  if (!key || !sessionId) return;
+  const all = readTaskSessionRegistry();
+  all[key] = {
+    taskKey: key,
+    sessionId: String(sessionId),
+    updatedAt: new Date().toISOString(),
+    ...metadata
+  };
+  writeTaskSessionRegistry(all);
+}
+
+function parseCodexExecTaskKey(forwardArgs) {
+  const arr = Array.isArray(forwardArgs) ? [...forwardArgs] : [];
+  if (arr.length === 0) return { taskKey: '', args: arr };
+  if (String(arr[0]) !== 'exec') return { taskKey: '', args: arr };
+
+  let taskKey = '';
+  const next = [];
+  next.push(arr[0]);
+  for (let i = 1; i < arr.length; i++) {
+    const cur = String(arr[i] || '');
+    if (cur === '--task-key' && i + 1 < arr.length) {
+      taskKey = sanitizeTaskKey(arr[i + 1]);
+      i += 1;
+      continue;
+    }
+    if (cur.startsWith('--task-key=')) {
+      taskKey = sanitizeTaskKey(cur.slice('--task-key='.length));
+      continue;
+    }
+    next.push(arr[i]);
+  }
+  return { taskKey, args: next };
+}
+
 // Check if an account is configured and try to extract account info
 function checkStatus(cliName, profileDir) {
   let configured = false;
@@ -1489,10 +1560,10 @@ function showHelp() {
   aih ls --help             \x1b[90mShow list mode help (paging behavior)\x1b[0m
   aih <cli> ls              \x1b[90mList accounts for a specific tool\x1b[0m
   aih <cli> ls --help       \x1b[90mShow list mode help for this tool\x1b[0m
-  aih doctor                \x1b[90mRun link/permission/config diagnostics\x1b[0m
   aih <cli> add [or login]  \x1b[90mCreate a new account and run the login flow\x1b[0m
   aih <cli>                 \x1b[90mRun a tool with the default account (ID: 1)\x1b[0m
   aih <cli> auto            \x1b[90mRun the next non-exhausted account automatically\x1b[0m
+  aih codex auto exec --task-key <key> "<prompt>" \x1b[90mTask-bound exec with deterministic resume\x1b[0m
   aih <cli> usage <id>      \x1b[90mShow trusted usage-remaining snapshot (OAuth only)\x1b[0m
   aih <cli> usages          \x1b[90mShow trusted usage-remaining snapshots for all OAuth accounts\x1b[0m
   aih codex import-output [dir] [--parallel N] [--limit N] [--dry-run]\x1b[90mBulk import codex refresh tokens from output files\x1b[0m
@@ -1677,6 +1748,7 @@ function showCliUsage(cliName) {
   aih ${cliName} add             \x1b[90mCreate a new account and login\x1b[0m
   aih ${cliName} login           \x1b[90mAlias of add\x1b[0m
   aih ${cliName} auto            \x1b[90mAuto-select next non-exhausted account\x1b[0m
+  ${cliName === 'codex' ? `aih codex auto exec --task-key <key> "<prompt>"  \x1b[90mTask-bound exec; rerun resumes bound session\x1b[0m` : ''}
   aih ${cliName} usage <id>      \x1b[90mShow trusted usage-remaining snapshot (OAuth)\x1b[0m
   aih ${cliName} usages          \x1b[90mShow trusted usage snapshots for all OAuth accounts\x1b[0m
   ${cliName === 'codex' ? 'aih codex import-output [dir] [--parallel N] [--limit N] [--dry-run]  \x1b[90mBulk import codex refresh tokens\x1b[0m' : ''}
@@ -2002,9 +2074,11 @@ function runCliPty(cliName, initialId, forwardArgs, isLogin = false, runtimeOpti
   }
 
   const autoRotateOnLimit = !!runtimeOptions.autoRotateOnLimit;
+  const taskKey = sanitizeTaskKey(runtimeOptions.taskKey || '');
   let activeId = String(initialId);
   let activeLeaseToken = String(runtimeOptions.leaseToken || '');
   let limitTriggered = false;
+  let lastCapturedSessionId = '';
 
   console.log(`\n\x1b[36m[aih]\x1b[0m 🚀 Running \x1b[33m${cliName}\x1b[0m (Account ID: \x1b[32m${activeId}\x1b[0m) via PTY Sandbox`);
   const initialSessionSync = ensureSessionStoreLinks(cliName, activeId);
@@ -2076,6 +2150,18 @@ function runCliPty(cliName, initialId, forwardArgs, isLogin = false, runtimeOpti
       if (outputBuffer.length > 1000) outputBuffer = outputBuffer.slice(-1000);
 
       const lowerOut = outputBuffer.toLowerCase();
+      const sidMatch = cleanData.match(/session id:\s*([0-9a-f-]{36})/i);
+      if (!lastCapturedSessionId && sidMatch && sidMatch[1]) {
+        lastCapturedSessionId = sidMatch[1];
+        if (cliName === 'codex' && taskKey) {
+          setTaskSession(taskKey, lastCapturedSessionId, {
+            cli: cliName,
+            accountId: String(activeId),
+            cwd: process.cwd()
+          });
+          process.stdout.write(`\r\n\x1b[90m[aih]\x1b[0m Bound task-key '${taskKey}' -> session ${lastCapturedSessionId}\r\n`);
+        }
+      }
       
       // Detect network failure during Auth (like Gemini socket disconnect)
       if (isLogin && (lowerOut.includes('failed to login') || lowerOut.includes('socket disconnected') || lowerOut.includes('connection error'))) {
@@ -3516,9 +3602,24 @@ if (idOrAction === 'auto') {
   console.log(`\x1b[36m[aih auto]\x1b[0m Auto-selected Account ID: \x1b[32m${nextId}\x1b[0m`);
   
   forwardArgs = args.slice(2);
+  let taskKey = '';
+  if (cliName === 'codex') {
+    const parsedTask = parseCodexExecTaskKey(forwardArgs);
+    forwardArgs = parsedTask.args;
+    taskKey = parsedTask.taskKey;
+    if (taskKey && String(forwardArgs[0] || '') === 'exec' && String(forwardArgs[1] || '') !== 'resume') {
+      const bound = getTaskSession(taskKey);
+      if (bound && bound.sessionId) {
+        const execPrompt = forwardArgs.slice(1);
+        forwardArgs = ['exec', 'resume', bound.sessionId, ...execPrompt];
+        console.log(`\x1b[36m[aih auto]\x1b[0m Resuming task-key '${taskKey}' with session ${bound.sessionId}`);
+      }
+    }
+  }
   runCliPty(cliName, nextId, forwardArgs, false, {
     autoRotateOnLimit: true,
-    leaseToken: allocation.leaseToken
+    leaseToken: allocation.leaseToken,
+    taskKey
   });
   return;
 }
