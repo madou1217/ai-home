@@ -11,6 +11,7 @@ option go_package = "github.com/aih/remote/control/v1;controlv1";
 // 2) Add new fields with new numbers; keep existing semantics unchanged.
 // 3) If a field is removed, reserve its number/name before release.
 // 4) New RPCs are additive and must not change existing request/response wire shape.
+// 5) Time values use unix milliseconds unless a field comment states otherwise.
 service ControlPlane {
   rpc Hello(HelloRequest) returns (HelloResponse);
   rpc Authenticate(AuthenticateRequest) returns (AuthenticateResponse);
