@@ -1276,6 +1276,7 @@ function withAutoPoolLock(cliName, fn) {
   const { lockPath, toolDir } = getAutoPoolPaths(cliName);
   if (!fs.existsSync(toolDir)) return fn();
   const deadline = Date.now() + AUTO_POOL_LOCK_TIMEOUT_MS;
+  const staleMs = AUTO_POOL_LOCK_TIMEOUT_MS * 2;
   while (Date.now() < deadline) {
     try {
       fs.mkdirSync(lockPath);
@@ -1285,6 +1286,15 @@ function withAutoPoolLock(cliName, fn) {
         try { fs.rmdirSync(lockPath); } catch (e) {}
       }
     } catch (e) {
+      if (e && e.code === 'EEXIST') {
+        try {
+          const st = fs.statSync(lockPath);
+          if (Date.now() - st.mtimeMs > staleMs) {
+            fs.rmSync(lockPath, { recursive: true, force: true });
+            continue;
+          }
+        } catch (ignoreErr) {}
+      }
       sleepMs(AUTO_POOL_LOCK_RETRY_MS);
     }
   }
@@ -2174,7 +2184,7 @@ function listProfiles(filterCliName = null) {
     console.log(`\x1b[33m▶ ${tool}\x1b[0m`);
     const toolDir = path.join(PROFILES_DIR, tool);
     const ids = fs.readdirSync(toolDir)
-                  .filter(f => f !== '.aih_default' && fs.statSync(path.join(toolDir, f)).isDirectory())
+                  .filter(f => /^\d+$/.test(f) && fs.statSync(path.join(toolDir, f)).isDirectory())
                   .sort((a, b) => parseInt(a) - parseInt(b));
     
     if (ids.length === 0) {
