@@ -118,6 +118,7 @@ const AUTO_POOL_LEASE_MS_DEFAULT = 20 * 60 * 1000;
 const AUTO_POOL_LOCK_TIMEOUT_MS = 2500;
 const AUTO_POOL_LOCK_RETRY_MS = 40;
 const TASK_SESSION_REGISTRY_FILE = path.join(AI_HOME_DIR, 'codex_task_sessions.json');
+const DEFAULT_RESUME_PROMPT = '继续上一次任务，先汇报当前进度，再继续执行。';
 const EXPORT_MAGIC = 'AIH_EXPORT_V2:';
 const EXPORT_VERSION = 2;
 const AGE_SSH_KEY_TYPES = new Set(['ssh-ed25519', 'ssh-rsa']);
@@ -1403,20 +1404,41 @@ function sanitizeTaskKey(raw) {
   return v.replace(/[^a-zA-Z0-9._:-]/g, '_').slice(0, 120);
 }
 
+function looksLikeSessionId(v) {
+  return /^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(String(v || '').trim());
+}
+
 function readTaskSessionRegistry() {
-  if (!fs.existsSync(TASK_SESSION_REGISTRY_FILE)) return {};
+  const empty = { tasks: {}, sessions: [] };
+  if (!fs.existsSync(TASK_SESSION_REGISTRY_FILE)) return empty;
   try {
     const parsed = JSON.parse(fs.readFileSync(TASK_SESSION_REGISTRY_FILE, 'utf8'));
-    return parsed && typeof parsed === 'object' ? parsed : {};
+    if (!parsed || typeof parsed !== 'object') return empty;
+    if (parsed.tasks || parsed.sessions) {
+      return {
+        tasks: parsed.tasks && typeof parsed.tasks === 'object' ? parsed.tasks : {},
+        sessions: Array.isArray(parsed.sessions) ? parsed.sessions : []
+      };
+    }
+    // Backward compatibility: legacy map { taskKey: { sessionId... } }
+    const tasks = {};
+    Object.entries(parsed).forEach(([k, v]) => {
+      if (!v || typeof v !== 'object' || !v.sessionId) return;
+      tasks[sanitizeTaskKey(k)] = v;
+    });
+    return { tasks, sessions: [] };
   } catch (e) {
-    return {};
+    return empty;
   }
 }
 
 function writeTaskSessionRegistry(data) {
   try {
     ensureDir(path.dirname(TASK_SESSION_REGISTRY_FILE));
-    fs.writeFileSync(TASK_SESSION_REGISTRY_FILE, JSON.stringify(data, null, 2));
+    fs.writeFileSync(TASK_SESSION_REGISTRY_FILE, JSON.stringify({
+      tasks: data.tasks || {},
+      sessions: Array.isArray(data.sessions) ? data.sessions : []
+    }, null, 2));
   } catch (e) {}
 }
 
@@ -1424,7 +1446,7 @@ function getTaskSession(taskKey) {
   const key = sanitizeTaskKey(taskKey);
   if (!key) return null;
   const all = readTaskSessionRegistry();
-  const entry = all[key];
+  const entry = all.tasks[key];
   if (!entry || typeof entry !== 'object') return null;
   if (!entry.sessionId) return null;
   return entry;
@@ -1434,13 +1456,38 @@ function setTaskSession(taskKey, sessionId, metadata = {}) {
   const key = sanitizeTaskKey(taskKey);
   if (!key || !sessionId) return;
   const all = readTaskSessionRegistry();
-  all[key] = {
+  all.tasks[key] = {
     taskKey: key,
     sessionId: String(sessionId),
     updatedAt: new Date().toISOString(),
     ...metadata
   };
   writeTaskSessionRegistry(all);
+}
+
+function appendRecentSession(sessionId, metadata = {}) {
+  if (!looksLikeSessionId(sessionId)) return;
+  const all = readTaskSessionRegistry();
+  const nowIso = new Date().toISOString();
+  const sid = String(sessionId);
+  const next = (all.sessions || []).filter((x) => x && x.sessionId && x.sessionId !== sid);
+  next.unshift({
+    sessionId: sid,
+    updatedAt: nowIso,
+    ...metadata
+  });
+  all.sessions = next.slice(0, 200);
+  writeTaskSessionRegistry(all);
+}
+
+function getLatestSessionForCwd(cwd = process.cwd()) {
+  const all = readTaskSessionRegistry();
+  const list = Array.isArray(all.sessions) ? all.sessions : [];
+  const target = String(cwd || '');
+  const firstMatch = list.find((x) => x && x.sessionId && String(x.cwd || '') === target);
+  if (firstMatch && firstMatch.sessionId) return firstMatch;
+  const any = list.find((x) => x && x.sessionId);
+  return any || null;
 }
 
 function parseCodexExecTaskKey(forwardArgs) {
@@ -1467,45 +1514,100 @@ function parseCodexExecTaskKey(forwardArgs) {
   return { taskKey, args: next };
 }
 
-function normalizeCodexExecResumePromptArgs(args) {
-  const arr = Array.isArray(args) ? [...args] : [];
-  if (arr.length === 0) return arr;
-  if (String(arr[0] || '') !== 'exec' || String(arr[1] || '') !== 'resume') return arr;
-  const out = arr.slice(0, 3);
-  const tail = arr.slice(3);
-  if (tail.length >= 3 && String(tail[0]) === '--' && String(tail[1]) === '--prompt') {
-    out.push(String(tail[2] || ''));
-    if (tail.length > 3) out.push(...tail.slice(3));
-    return out;
-  }
-  if (tail.length >= 2 && String(tail[0]) === '--prompt') {
-    out.push(String(tail[1] || ''));
-    if (tail.length > 2) out.push(...tail.slice(2));
-    return out;
-  }
-  return arr;
-}
-
-function showCodexTaskSessions(taskKey = '') {
+function showCodexSessions(limit = 20) {
   const all = readTaskSessionRegistry();
-  const key = sanitizeTaskKey(taskKey);
-  const entries = Object.entries(all || {})
-    .filter(([k, v]) => !!v && typeof v === 'object' && !!v.sessionId)
-    .filter(([k]) => !key || k === key)
-    .sort((a, b) => String(a[0]).localeCompare(String(b[0])));
-  if (entries.length === 0) {
-    console.log('\x1b[90m[aih]\x1b[0m No task-session mapping found.');
+  const list = Array.isArray(all.sessions) ? all.sessions : [];
+  if (list.length === 0) {
+    console.log('\x1b[90m[aih]\x1b[0m No recorded codex sessions.');
     return;
   }
-  console.log('\n\x1b[36m[aih]\x1b[0m Codex task-session mappings');
-  entries.forEach(([k, v]) => {
-    console.log(`  - task_key: \x1b[36m${k}\x1b[0m`);
-    console.log(`    session_id: ${v.sessionId}`);
+  console.log('\n\x1b[36m[aih]\x1b[0m Recent codex sessions');
+  list.slice(0, Math.max(1, Number(limit) || 20)).forEach((v, idx) => {
+    console.log(`  - #${idx + 1} session_id: \x1b[36m${v.sessionId}\x1b[0m`);
     if (v.accountId) console.log(`    account_id: ${v.accountId}`);
     if (v.cwd) console.log(`    cwd: ${v.cwd}`);
+    if (v.taskKey) console.log(`    task_key: ${v.taskKey}`);
     if (v.updatedAt) console.log(`    updated_at: ${v.updatedAt}`);
   });
   console.log('');
+}
+
+function resolveCodexAutoExecArgs(rawForwardArgs) {
+  const parsedTask = parseCodexExecTaskKey(rawForwardArgs);
+  let args = parsedTask.args;
+  const taskKey = parsedTask.taskKey;
+  if (String(args[0] || '') !== 'exec') {
+    return { args, taskKey, error: '' };
+  }
+
+  const sub = String(args[1] || '');
+  if (sub !== 'resume') {
+    if (taskKey) {
+      const bound = getTaskSession(taskKey);
+      if (bound && bound.sessionId) {
+        const execPrompt = args.slice(1);
+        return {
+          args: ['exec', 'resume', bound.sessionId, ...execPrompt],
+          taskKey,
+          error: '',
+          note: `Resuming task-key '${taskKey}' with session ${bound.sessionId}`
+        };
+      }
+    }
+    return { args, taskKey, error: '' };
+  }
+
+  const tokens = args.slice(2);
+  let explicitSessionId = '';
+  let prompt = '';
+  const rest = [];
+
+  for (let i = 0; i < tokens.length; i++) {
+    const cur = String(tokens[i] || '');
+    if (!explicitSessionId && looksLikeSessionId(cur)) {
+      explicitSessionId = cur;
+      continue;
+    }
+    if (cur === '--' && i + 2 < tokens.length && String(tokens[i + 1]) === '--prompt') {
+      prompt = String(tokens[i + 2] || '');
+      i += 2;
+      continue;
+    }
+    if (cur === '--prompt' && i + 1 < tokens.length) {
+      prompt = String(tokens[i + 1] || '');
+      i += 1;
+      continue;
+    }
+    rest.push(cur);
+  }
+
+  if (!prompt) {
+    const positionalPrompt = rest.find((x) => x && !x.startsWith('-'));
+    if (positionalPrompt) prompt = positionalPrompt;
+  }
+
+  let resolvedSessionId = explicitSessionId;
+  if (!resolvedSessionId && taskKey) {
+    const bound = getTaskSession(taskKey);
+    if (bound && bound.sessionId) resolvedSessionId = bound.sessionId;
+  }
+  if (!resolvedSessionId) {
+    const latest = getLatestSessionForCwd(process.cwd());
+    if (latest && latest.sessionId) resolvedSessionId = latest.sessionId;
+  }
+  if (!resolvedSessionId) {
+    return { args, taskKey, error: 'No session_id found. Use `aih codex sessions` first, then run: aih codex auto exec resume <session_id> [prompt]' };
+  }
+  if (!prompt) prompt = DEFAULT_RESUME_PROMPT;
+
+  return {
+    args: ['exec', 'resume', resolvedSessionId, prompt],
+    taskKey,
+    error: '',
+    note: explicitSessionId
+      ? `Resuming explicit session ${resolvedSessionId}`
+      : `Resuming session ${resolvedSessionId}`
+  };
 }
 
 // Check if an account is configured and try to extract account info
@@ -1604,8 +1706,8 @@ function showHelp() {
   aih <cli> add [or login]  \x1b[90mCreate a new account and run the login flow\x1b[0m
   aih <cli>                 \x1b[90mRun a tool with the default account (ID: 1)\x1b[0m
   aih <cli> auto            \x1b[90mRun the next non-exhausted account automatically\x1b[0m
-  aih codex auto exec --task-key <key> "<prompt>" \x1b[90mTask-bound exec with deterministic resume\x1b[0m
-  aih codex task-sessions [task-key] \x1b[90mShow task-key -> session_id mappings\x1b[0m
+  aih codex auto exec resume <session_id> [prompt] \x1b[90mResume a specific exec session precisely\x1b[0m
+  aih codex sessions [--limit N] \x1b[90mShow recent codex session_id list\x1b[0m
   aih <cli> usage <id>      \x1b[90mShow trusted usage-remaining snapshot (OAuth only)\x1b[0m
   aih <cli> usages          \x1b[90mShow trusted usage-remaining snapshots for all OAuth accounts\x1b[0m
   aih codex import-output [dir] [--parallel N] [--limit N] [--dry-run]\x1b[90mBulk import codex refresh tokens from output files\x1b[0m
@@ -1790,8 +1892,8 @@ function showCliUsage(cliName) {
   aih ${cliName} add             \x1b[90mCreate a new account and login\x1b[0m
   aih ${cliName} login           \x1b[90mAlias of add\x1b[0m
   aih ${cliName} auto            \x1b[90mAuto-select next non-exhausted account\x1b[0m
-  ${cliName === 'codex' ? `aih codex auto exec --task-key <key> "<prompt>"  \x1b[90mTask-bound exec; rerun resumes bound session\x1b[0m` : ''}
-  ${cliName === 'codex' ? `aih codex task-sessions [task-key]  \x1b[90mShow task-key -> session_id mappings\x1b[0m` : ''}
+  ${cliName === 'codex' ? `aih codex auto exec resume <session_id> [prompt]  \x1b[90mResume specific exec session\x1b[0m` : ''}
+  ${cliName === 'codex' ? `aih codex sessions [--limit N]  \x1b[90mShow recent codex session_id list\x1b[0m` : ''}
   aih ${cliName} usage <id>      \x1b[90mShow trusted usage-remaining snapshot (OAuth)\x1b[0m
   aih ${cliName} usages          \x1b[90mShow trusted usage snapshots for all OAuth accounts\x1b[0m
   ${cliName === 'codex' ? 'aih codex import-output [dir] [--parallel N] [--limit N] [--dry-run]  \x1b[90mBulk import codex refresh tokens\x1b[0m' : ''}
@@ -2196,6 +2298,12 @@ function runCliPty(cliName, initialId, forwardArgs, isLogin = false, runtimeOpti
       const sidMatch = cleanData.match(/session id:\s*([0-9a-f-]{36})/i);
       if (!lastCapturedSessionId && sidMatch && sidMatch[1]) {
         lastCapturedSessionId = sidMatch[1];
+        appendRecentSession(lastCapturedSessionId, {
+          cli: cliName,
+          accountId: String(activeId),
+          cwd: process.cwd(),
+          taskKey: taskKey || ''
+        });
         if (cliName === 'codex' && taskKey) {
           setTaskSession(taskKey, lastCapturedSessionId, {
             cli: cliName,
@@ -3438,8 +3546,8 @@ const UNLOCK_ACTIONS = new Set(['unlock', '--unlock', 'unexhaust', 'unban', 'rel
 const USAGE_ACTIONS = new Set(['usage', '--usage', 'stats']);
 const USAGES_ACTIONS = new Set(['usages', 'usage-all', 'all-usage', 'all-usages']);
 const IMPORT_OUTPUT_ACTIONS = new Set(['import-output', 'import_output', 'bulk-import', 'bulk_import']);
-const TASK_SESSION_ACTIONS = new Set(['task-sessions', 'task_sessions', 'session-map', 'session_map']);
-const KNOWN_ACTIONS = new Set(['ls', 'set-default', 'add', 'login', 'auth', 'auto', ...TASK_SESSION_ACTIONS, ...UNLOCK_ACTIONS, ...USAGE_ACTIONS, ...USAGES_ACTIONS, ...IMPORT_OUTPUT_ACTIONS]);
+const SESSION_ACTIONS = new Set(['sessions', 'session', 'task-sessions', 'task_sessions', 'session-map', 'session_map']);
+const KNOWN_ACTIONS = new Set(['ls', 'set-default', 'add', 'login', 'auth', 'auto', ...SESSION_ACTIONS, ...UNLOCK_ACTIONS, ...USAGE_ACTIONS, ...USAGES_ACTIONS, ...IMPORT_OUTPUT_ACTIONS]);
 
 if (idOrAction === 'help') {
   showCliUsage(cliName);
@@ -3552,12 +3660,17 @@ if (idOrAction && IMPORT_OUTPUT_ACTIONS.has(idOrAction)) {
   return;
 }
 
-if (idOrAction && TASK_SESSION_ACTIONS.has(idOrAction)) {
+if (idOrAction && SESSION_ACTIONS.has(idOrAction)) {
   if (cliName !== 'codex') {
     console.error(`\x1b[31m[aih] ${idOrAction} is currently supported only for codex.\x1b[0m`);
     process.exit(1);
   }
-  showCodexTaskSessions(args[2] || '');
+  let limit = 20;
+  const a2 = String(args[2] || '').trim();
+  const a3 = String(args[3] || '').trim();
+  if ((a2 === '--limit' || a2 === '-n') && /^\d+$/.test(a3)) limit = Number(a3);
+  if (a2.startsWith('--limit=') && /^\d+$/.test(a2.slice('--limit='.length))) limit = Number(a2.slice('--limit='.length));
+  showCodexSessions(limit);
   process.exit(0);
 }
 
@@ -3657,37 +3770,15 @@ if (idOrAction === 'auto') {
   forwardArgs = args.slice(2);
   let taskKey = '';
   if (cliName === 'codex') {
-    const parsedTask = parseCodexExecTaskKey(forwardArgs);
-    forwardArgs = parsedTask.args;
-    taskKey = parsedTask.taskKey;
-    if (String(forwardArgs[0] || '') === 'exec') {
-      if (String(forwardArgs[1] || '') === 'resume') {
-        const explicitSessionId = String(forwardArgs[2] || '').trim();
-        if (!explicitSessionId || explicitSessionId === '--') {
-          if (!taskKey) {
-            console.error(`\x1b[31m[aih]\x1b[0m exec resume requires explicit session_id or --task-key <key>.`);
-            console.error(`\x1b[90mExample:\x1b[0m aih codex auto exec resume --task-key erin-m4 "你写到哪里了"`);
-            process.exit(1);
-          }
-          const bound = getTaskSession(taskKey);
-          if (!bound || !bound.sessionId) {
-            console.error(`\x1b[31m[aih]\x1b[0m No session binding found for task-key '${taskKey}'.`);
-            console.error(`\x1b[90mHint:\x1b[0m run first: aih codex auto exec --task-key ${taskKey} \"<prompt>\"`);
-            process.exit(1);
-          }
-          const resumeTail = forwardArgs.slice(2);
-          forwardArgs = normalizeCodexExecResumePromptArgs(['exec', 'resume', bound.sessionId, ...resumeTail]);
-          console.log(`\x1b[36m[aih auto]\x1b[0m Resuming task-key '${taskKey}' with session ${bound.sessionId}`);
-        }
-        forwardArgs = normalizeCodexExecResumePromptArgs(forwardArgs);
-      } else if (taskKey) {
-        const bound = getTaskSession(taskKey);
-        if (bound && bound.sessionId) {
-          const execPrompt = forwardArgs.slice(1);
-          forwardArgs = ['exec', 'resume', bound.sessionId, ...execPrompt];
-          console.log(`\x1b[36m[aih auto]\x1b[0m Resuming task-key '${taskKey}' with session ${bound.sessionId}`);
-        }
-      }
+    const resolved = resolveCodexAutoExecArgs(forwardArgs);
+    if (resolved.error) {
+      console.error(`\x1b[31m[aih]\x1b[0m ${resolved.error}`);
+      process.exit(1);
+    }
+    forwardArgs = resolved.args;
+    taskKey = resolved.taskKey;
+    if (resolved.note) {
+      console.log(`\x1b[36m[aih auto]\x1b[0m ${resolved.note}`);
     }
   }
   runCliPty(cliName, nextId, forwardArgs, false, {
