@@ -6,10 +6,11 @@ This folder is the single source of truth for parallel task execution.
 - Allow multiple AIs to work in parallel without touching the same task.
 - Keep every task in one `.plan.md` file with claim/owner/status fields.
 - Every task must also appear as Markdown checklist item (`- [ ]` / `- [x]`).
-- Each active plan should bind to one codex session (`plan -> session_id`).
+- Use independent task sessions for parallel workers (`task-key -> session_id`).
 
 ## File Naming
-- Active plan: `plans/<topic>-<yyyy-mm-dd>.plan.md`
+- Active plan: `plans/active/<topic>-<yyyy-mm-dd>.plan.md`
+- Archive plan: `plans/archive/<yyyy-mm>/<topic>-<yyyy-mm-dd>.plan.md`
 - Template: `plans/_template.plan.md`
 
 ## Locking Protocol (Mandatory)
@@ -34,6 +35,13 @@ This folder is the single source of truth for parallel task execution.
 ## Conflict Rule
 - Never work on a task with `status: doing` owned by another AI.
 - Never modify another AI's task fields except by explicit coordinator reassignment.
+- For one `.plan.md` file, each worker must use a unique `--task-key` to avoid session collisions.
+
+## Branch & Review Rule (Mandatory)
+- One task => one branch. Branch naming: `feat/<owner>-<plan>-<task-id>` (or `fix/...`).
+- No direct merge to main from worker branch.
+- Every completed task must go through `review` and PR merge.
+- `pr_or_commit` should prefer PR URL/number; commit hash is fallback only.
 
 ## Required Task Fields
 Each todo item must include:
@@ -56,10 +64,10 @@ Each todo item must include:
 - Only mark `[x]` when task status is `done`.
 
 ## Minimal Workflow (No Long Prompt Required)
-1. Start/continue a plan-bound session:
-- `aih codex auto exec --plan plans/<name>.plan.md "<short instruction>"`
-2. Inspect current bindings and recover session:
+1. Start/continue a task-bound session:
+- `aih codex auto exec --task-key <plan>-<task-id>-<owner> "<short instruction>"`
+2. Inspect current bindings and recover sessions:
 - `aih codex plan-sessions`
 - `aih codex last-session`
 3. Precise resume:
-- `aih codex auto exec resume <session_id> "继续执行"`
+- `aih codex auto exec --task-key <plan>-<task-id>-<owner> resume "继续执行"`

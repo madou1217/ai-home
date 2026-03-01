@@ -2,8 +2,8 @@
 
 - plan_id: roadmap-m5-mobile-command-center-2026-03-01
 - coordinator: ai-coordinator
-- created_at: 2026-03-01T21:18:48+08:00
-- updated_at: 2026-03-01T21:18:48+08:00
+- created_at: 2026-03-01T21:34:22+08:00
+- updated_at: 2026-03-01T21:34:22+08:00
 - status: active
 
 ## Global Rules
@@ -14,17 +14,22 @@
 ## TodoList
 
 ## Checklist
-- [ ] T001 Mobile control workflows
-- [ ] T002 Mobile reconnect and notifications
-- [ ] T003 Mobile information hierarchy and quick actions
+- [ ] T001 Mobile session screen flow
+- [ ] T002 Mobile task screen flow
+- [ ] T003 Mobile daemon client
+- [ ] T004 Mobile reconnect manager
+- [ ] T005 Mobile push notification bridge
+- [ ] T006 Mobile quick actions panel
+- [ ] T007 Mobile status priority card
+- [ ] T008 Mobile collapsible log panel
 
 Keep this checklist synced with `status`:
 - `status: done` => `[x]`
 - others => `[ ]`
 
 - id: T001
-  title: Mobile control workflows
-  scope: Build mobile-first remote control flow for task trigger, state tracking, and result receipt
+  title: Mobile session screen flow
+  scope: Build session-centric mobile control screen for remote node status and entry actions
   status: todo
   owner: unassigned
   claimed_at:
@@ -34,17 +39,16 @@ Keep this checklist synced with `status`:
   branch:
   pr_or_commit:
   blocker:
-  deliverable: Mobile MVP flow for starting tasks and tracking remote execution status
+  deliverable: Session screen optimized for small-screen control and monitoring
   acceptance:
-  - Mobile can trigger at least one full remote task lifecycle
-  - Result receipt is visible and actionable from session/task screens
+  - session screen displays key remote state and entry actions
+  - critical actions are reachable within 1-2 taps
   files:
   - mobile/app/src/screens/SessionScreen.tsx
-  - mobile/app/src/screens/TaskScreen.tsx
 
 - id: T002
-  title: Mobile reconnect and notifications
-  scope: Implement resilient connection/retry model and push notifications for key remote events
+  title: Mobile task screen flow
+  scope: Build task-centric mobile screen for start/track/result interactions
   status: todo
   owner: unassigned
   claimed_at:
@@ -54,18 +58,73 @@ Keep this checklist synced with `status`:
   branch:
   pr_or_commit:
   blocker:
-  deliverable: Reliable reconnect and event notification layer for mobile command center
+  deliverable: Task screen supporting full task trigger-to-result path
   acceptance:
-  - Disconnect/timeout/auth failures provide explicit recovery guidance
-  - Push notifications cover completion/failure/quota alerts
+  - users can trigger task and track lifecycle status transitions
+  - result summary and error guidance are visible in the task flow
   files:
-  - mobile/app/src/services/daemonClient.ts
-  - mobile/app/src/services/reconnectManager.ts
-  - mobile/app/src/services/pushNotifications.ts
+  - mobile/app/src/screens/TaskScreen.tsx
 
 - id: T003
-  title: Mobile information hierarchy and quick actions
-  scope: Optimize small-screen layout, log folding, and one-handed high-frequency operations
+  title: Mobile daemon client
+  scope: Implement mobile-side client API for remote daemon control calls
+  status: todo
+  owner: unassigned
+  claimed_at:
+  done_at:
+  priority: P0
+  depends_on: []
+  branch:
+  pr_or_commit:
+  blocker:
+  deliverable: Mobile daemon client service with stable request contract
+  acceptance:
+  - client supports session/task status and trigger calls
+  - transport errors are normalized into UI-consumable forms
+  files:
+  - mobile/app/src/services/daemonClient.ts
+
+- id: T004
+  title: Mobile reconnect manager
+  scope: Implement reconnect strategy for intermittent network and daemon restarts
+  status: todo
+  owner: unassigned
+  claimed_at:
+  done_at:
+  priority: P0
+  depends_on: [T003]
+  branch:
+  pr_or_commit:
+  blocker:
+  deliverable: Reconnect manager with explicit recoverability state transitions
+  acceptance:
+  - disconnect and timeout scenarios auto-retry with bounded policy
+  - UI receives clear reconnect state updates and next-step hints
+  files:
+  - mobile/app/src/services/reconnectManager.ts
+
+- id: T005
+  title: Mobile push notification bridge
+  scope: Implement notification service for completion/failure/quota alert events
+  status: todo
+  owner: unassigned
+  claimed_at:
+  done_at:
+  priority: P0
+  depends_on: [T003]
+  branch:
+  pr_or_commit:
+  blocker:
+  deliverable: Push notification channel integrated with task lifecycle events
+  acceptance:
+  - completion/failure/quota events generate actionable notifications
+  - notification payload maps users to relevant app destinations
+  files:
+  - mobile/app/src/services/pushNotifications.ts
+
+- id: T006
+  title: Mobile quick actions panel
+  scope: Build one-handed quick action panel for retry/stop/switch-account operations
   status: todo
   owner: unassigned
   claimed_at:
@@ -75,14 +134,50 @@ Keep this checklist synced with `status`:
   branch:
   pr_or_commit:
   blocker:
-  deliverable: Mobile UX tuned for concise status-first operation and rapid task control
+  deliverable: High-frequency quick actions optimized for mobile ergonomics
   acceptance:
-  - Core actions complete in 1-2 steps for common flows
-  - Log/summary views prioritize status and keep details collapsible
+  - retry/stop/switch-account actions are reachable with minimal taps
+  - action results feed back into session/task state immediately
   files:
   - mobile/app/src/screens/OpsQuickActions.tsx
+
+- id: T007
+  title: Mobile status priority card
+  scope: Build compact component to surface critical state before secondary details
+  status: todo
+  owner: unassigned
+  claimed_at:
+  done_at:
+  priority: P1
+  depends_on: [T001]
+  branch:
+  pr_or_commit:
+  blocker:
+  deliverable: Status-first card component for mobile command center hierarchy
+  acceptance:
+  - critical status fields are visible above secondary details
+  - component supports warning/error emphasis states
+  files:
   - mobile/app/src/components/StatusPriorityCard.tsx
+
+- id: T008
+  title: Mobile collapsible log panel
+  scope: Build foldable log panel to keep signal-first UI while preserving diagnostics access
+  status: todo
+  owner: unassigned
+  claimed_at:
+  done_at:
+  priority: P1
+  depends_on: [T002]
+  branch:
+  pr_or_commit:
+  blocker:
+  deliverable: Collapsible log component that preserves mobile readability
+  acceptance:
+  - logs default to collapsed summary with expandable details
+  - expanded view keeps timestamp/level/message scanability
+  files:
   - mobile/app/src/components/LogCollapsePanel.tsx
 
 ## Activity Log
-- 2026-03-01T21:18:48+08:00 [ai-coordinator] Plan created from ROADMAP Milestone 5 (UTC+8).
+- 2026-03-01T21:34:22+08:00 [ai-coordinator] Plan expanded for high-parallel execution from ROADMAP Milestone 5 (UTC+8).
