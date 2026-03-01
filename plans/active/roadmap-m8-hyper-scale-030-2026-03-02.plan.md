@@ -3,7 +3,7 @@
 - plan_id: roadmap-m8-hyper-scale-030-2026-03-02
 - coordinator: ai-coordinator
 - created_at: 2026-03-02T00:11:45+08:00
-- updated_at: 2026-03-02T00:16:49+08:00
+- updated_at: 2026-03-01T16:18:22Z
 - status: active
 
 ## Global Rules
@@ -16,8 +16,8 @@
 - target_parallel: 50
 
 ## Checklist
-- [ ] T001 Hyper-scale task 1451
-- [ ] T002 Hyper-scale task 1452
+- [x] T001 Hyper-scale task 1451
+- [x] T002 Hyper-scale task 1452
 - [ ] T003 Hyper-scale task 1453
 - [ ] T004 Hyper-scale task 1454
 - [ ] T005 Hyper-scale task 1455
@@ -74,15 +74,15 @@ Keep this checklist synced with `status`:
 - id: T001
   title: Hyper-scale task 1451
   scope: Deliver scoped output for scaleout task 1451
-  status: blocked
+  status: done
   owner: hs030001
   claimed_at: 2026-03-02T00:16:17+08:00
-  done_at:
+  done_at: 2026-03-02T00:16:58+08:00
   priority: P1
   depends_on: []
   branch: feat/hs030001-m8-t001
-  pr_or_commit:
-  blocker: worker_offline_no_recoverable_session
+  pr_or_commit: local:docs/scaleout_tasks/batch-030/task-1451.md
+  blocker:
   deliverable: Complete task 1451 deliverable
   acceptance:
   - output is complete and reviewable
@@ -93,14 +93,14 @@ Keep this checklist synced with `status`:
 - id: T002
   title: Hyper-scale task 1452
   scope: Deliver scoped output for scaleout task 1452
-  status: doing
+  status: done
   owner: codex
   claimed_at: 2026-03-02T00:16:49+08:00
-  done_at:
+  done_at: 2026-03-01T16:18:22Z
   priority: P1
   depends_on: []
   branch: feature/ai_home
-  pr_or_commit:
+  pr_or_commit: local-uncommitted
   blocker:
   deliverable: Complete task 1452 deliverable
   acceptance:
@@ -1026,4 +1026,8 @@ Keep this checklist synced with `status`:
 - 2026-03-02T00:16:17+08:00 [hs030001] Claimed T001 (m8-t001-hs030001) owner=hs030001 branch=feat/hs030001-m8-t001.
 
 - 2026-03-02T00:16:28+08:00 [ai-watchdog] Marked T001 blocked: worker offline and no recoverable session.
+- 2026-03-02T00:16:58+08:00 [hs030001] Completed T001 deliverable and verification; set status=done, done_at, pr_or_commit, and checklist.
 - 2026-03-02T00:16:49+08:00 [codex] Claimed T002, set status=doing, branch=feature/ai_home.
+
+- 2026-03-02T00:17:08+08:00 [ai-watchdog] Marked T002 blocked: worker offline and no recoverable session.
+- 2026-03-01T16:18:22Z [codex] Resumed original session for T002, verified docs/scaleout_tasks/batch-030/task-1452.md deliverable, and closed task as done with checklist/pr_or_commit writeback.
