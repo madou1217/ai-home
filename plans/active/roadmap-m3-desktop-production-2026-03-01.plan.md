@@ -3,7 +3,7 @@
 - plan_id: roadmap-m3-desktop-production-2026-03-01
 - coordinator: ai-coordinator
 - created_at: 2026-03-01T21:34:22+08:00
-- updated_at: 2026-03-01T22:37:50+08:00
+- updated_at: 2026-03-01T22:38:06+08:00
 - status: active
 
 ## Global Rules
@@ -17,7 +17,7 @@
 - [x] T001 Tauri command registration
 - [x] T002 Desktop accounts command module
 - [x] T003 Desktop migration command module
-- [ ] T004 Desktop audit command module
+- [x] T004 Desktop audit command module
 - [x] T005 Desktop dashboard and launcher UI
 - [ ] T006 Desktop migration and audit UI
 - [x] T007 Desktop packaging config
@@ -87,14 +87,14 @@ Keep this checklist synced with `status`:
 - id: T004
   title: Desktop audit command module
   scope: Implement Rust command module for local audit query and filtering
-  status: doing
+  status: done
   owner: carol
   claimed_at: 2026-03-01T22:16:27+08:00
-  done_at:
+  done_at: 2026-03-01T22:38:06+08:00
   priority: P1
   depends_on: [T001]
   branch: feat/carol-m3-t004
-  pr_or_commit:
+  pr_or_commit: c1c629f
   blocker:
   deliverable: Audit command module for local searchable operation logs
   acceptance:
@@ -234,3 +234,4 @@ Keep this checklist synced with `status`:
 
 - 2026-03-01T22:37:32+08:00 [dave] Completed T005 (m3-t005-dave); set status=done, done_at, synced checklist, and recorded pr_or_commit=4ce70e1.
 - 2026-03-01T22:37:50+08:00 [judy] Completed T008 (m3-t008-judy); set status=done, done_at, synced checklist, and recorded pr_or_commit=60915f1.
+- 2026-03-01T22:38:06+08:00 [carol] Completed T004 (m3-t004-carol); set status=done, done_at, synced checklist, and recorded pr_or_commit=c1c629f.
