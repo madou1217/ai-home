@@ -3,7 +3,7 @@
 - plan_id: roadmap-m8-hyper-scale-011-2026-03-02
 - coordinator: ai-coordinator
 - created_at: 2026-03-02T00:11:45+08:00
-- updated_at: 2026-03-01T16:18:05Z
+- updated_at: 2026-03-01T16:19:24Z
 - status: active
 
 ## Global Rules
@@ -81,7 +81,7 @@ Keep this checklist synced with `status`:
   priority: P1
   depends_on: []
   branch: feat/codex-m8-011-t001
-  pr_or_commit: local-commit-pending
+  pr_or_commit: local-uncommitted
   blocker:
   deliverable: Complete task 0501 deliverable
   acceptance:
@@ -1027,3 +1027,4 @@ Keep this checklist synced with `status`:
 
 - 2026-03-02T00:17:18+08:00 [ai-watchdog] Marked T001 blocked: worker offline and no recoverable session.
 - 2026-03-01T16:18:05Z [codex] Completed T001 by creating docs/scaleout_tasks/batch-011/task-0501.md; set status=done and synced checklist after watchdog block.
+- 2026-03-01T16:19:24Z [codex] Non-plan commit blocked by plan-guard due active doing tasks in other plans; retained T001 pr_or_commit=local-uncommitted.
