@@ -29,6 +29,16 @@ pub fn map_command_error(namespace: &'static str, code: &'static str, message: i
   }
 }
 
+const CORE_NS: &str = "core";
+
+#[derive(Serialize)]
+struct CoreNamespaceInfo {
+  namespace: &'static str,
+  version: &'static str,
+  commands: Vec<&'static str>,
+  error_codes: Vec<&'static str>,
+}
+
 #[derive(Serialize)]
 struct CommandResult {
   code: i32,
@@ -47,12 +57,44 @@ fn has_aih_entry(root: &Path) -> bool {
   root.join("bin").join("ai-home.js").exists()
 }
 
+fn io_error_message(prefix: &'static str, err: &std::io::Error) -> String {
+  format!("{prefix}; io_kind={:?}", err.kind())
+}
+
+#[tauri::command]
+fn core_namespace_info() -> CoreNamespaceInfo {
+  CoreNamespaceInfo {
+    namespace: CORE_NS,
+    version: "2026-03-01",
+    commands: vec![
+      "core_namespace_info",
+      "run_aih",
+      "launch_aih_session",
+      "read_audit_log",
+      "accounts_namespace_info",
+      "migration_namespace_info",
+      "migration_export_trigger",
+      "migration_import_trigger",
+      "audit_namespace_info",
+      "audit_query",
+    ],
+    error_codes: vec![
+      "CORE_CWD_READ_FAILED",
+      "CORE_REPO_ROOT_NOT_FOUND",
+      "CORE_AIH_EXEC_FAILED",
+      "CORE_SESSION_LAUNCH_FAILED",
+      "AUDIT_HOME_NOT_SET",
+      "AUDIT_LOG_OPEN_FAILED",
+    ],
+  }
+}
+
 fn resolve_repo_root() -> FrontendResult<PathBuf> {
   let cwd = env::current_dir().map_err(|e| {
     map_command_error(
-      "core",
+      CORE_NS,
       "CORE_CWD_READ_FAILED",
-      format!("failed to read cwd: {e}"),
+      io_error_message("failed to read cwd", &e),
     )
   })?;
 
@@ -71,7 +113,7 @@ fn resolve_repo_root() -> FrontendResult<PathBuf> {
   }
 
   Err(map_command_error(
-    "core",
+    CORE_NS,
     "CORE_REPO_ROOT_NOT_FOUND",
     "failed to locate repository root (bin/ai-home.js missing)",
   ))
@@ -90,9 +132,9 @@ fn prepare_aih_command(args: &[String]) -> FrontendResult<Command> {
 fn run_aih(args: Vec<String>) -> FrontendResult<CommandResult> {
   let output = prepare_aih_command(&args)?.output().map_err(|e| {
     map_command_error(
-      "core",
+      CORE_NS,
       "CORE_AIH_EXEC_FAILED",
-      format!("failed to execute aih command: {e}"),
+      io_error_message("failed to execute aih command", &e),
     )
   })?;
 
@@ -120,9 +162,9 @@ fn launch_aih_session(cli: String, account_id: String, prompt: Option<String>) -
     .spawn()
     .map_err(|e| {
       map_command_error(
-        "core",
+        CORE_NS,
         "CORE_SESSION_LAUNCH_FAILED",
-        format!("failed to launch session: {e}"),
+        io_error_message("failed to launch session", &e),
       )
     })?;
 
@@ -183,6 +225,7 @@ fn read_audit_log(limit: Option<usize>) -> FrontendResult<Vec<AuditEntry>> {
 fn main() {
   tauri::Builder::default()
     .invoke_handler(tauri::generate_handler![
+      core_namespace_info,
       run_aih,
       launch_aih_session,
       read_audit_log,
