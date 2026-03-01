@@ -3,7 +3,7 @@
 - plan_id: proxy-parallel-2026-03-01
 - coordinator: ai-coordinator
 - created_at: 2026-03-01T00:00:00Z
-- updated_at: 2026-03-01T00:00:00Z
+- updated_at: 2026-03-01T09:53:07Z
 - status: active
 
 ## Global Rules
@@ -35,13 +35,13 @@
 - id: T002
   title: Add integration tests for v1 router paths
   scope: Cover `/v1/models`, `/v1/chat/completions`, `/v1/responses`
-  status: todo
-  owner: unassigned
-  claimed_at:
+  status: doing
+  owner: codex-executor
+  claimed_at: 2026-03-01T09:53:07Z
   done_at:
   priority: P0
   depends_on: []
-  branch:
+  branch: main
   pr_or_commit:
   blocker:
   deliverable: New integration tests and CI-stable assertions
@@ -112,4 +112,4 @@
 
 ## Activity Log
 - 2026-03-01T00:00:00Z [ai-coordinator] Initial parallel plan created.
-
+- 2026-03-01T09:53:07Z [codex-executor] Claimed T002; set to doing on branch main.
