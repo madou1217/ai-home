@@ -1531,19 +1531,6 @@ function listProfiles(filterCliName = null) {
   });
 }
 
-async function startLocalProxyServer(options) {
-  return startLocalProxyServerModule(options, {
-    http,
-    fs,
-    processObj: process,
-    logFile: AIH_PROXY_LOG_FILE,
-    getToolAccountIds,
-    getToolConfigDir,
-    getProfileDir,
-    checkStatus
-  });
-}
-
 function getNextId(cliName) {
   const toolDir = path.join(PROFILES_DIR, cliName);
   if (!fs.existsSync(toolDir)) return "1";
@@ -2790,6 +2777,16 @@ if (cmd === 'proxy') {
       getToolAccountIds,
       getToolConfigDir,
       fetchImpl: fetch
+    });
+    const startLocalProxyServer = (opts) => startLocalProxyServerModule(opts, {
+      http,
+      fs,
+      processObj: process,
+      logFile: AIH_PROXY_LOG_FILE,
+      getToolAccountIds,
+      getToolConfigDir,
+      getProfileDir,
+      checkStatus
     });
     const code = await runProxyCommand(args, {
       showProxyUsage,
