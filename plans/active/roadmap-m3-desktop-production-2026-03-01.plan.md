@@ -3,7 +3,7 @@
 - plan_id: roadmap-m3-desktop-production-2026-03-01
 - coordinator: ai-coordinator
 - created_at: 2026-03-01T21:34:22+08:00
-- updated_at: 2026-03-01T22:38:06+08:00
+- updated_at: 2026-03-01T22:38:31+08:00
 - status: active
 
 ## Global Rules
@@ -19,7 +19,7 @@
 - [x] T003 Desktop migration command module
 - [x] T004 Desktop audit command module
 - [x] T005 Desktop dashboard and launcher UI
-- [ ] T006 Desktop migration and audit UI
+- [x] T006 Desktop migration and audit UI
 - [x] T007 Desktop packaging config
 - [x] T008 Desktop release workflow and checklist
 
@@ -127,14 +127,14 @@ Keep this checklist synced with `status`:
 - id: T006
   title: Desktop migration and audit UI
   scope: Build visual export/import workflow and local audit browsing UI
-  status: doing
+  status: done
   owner: ivan
   claimed_at: 2026-03-01T22:16:53+08:00
-  done_at:
+  done_at: 2026-03-01T22:38:31+08:00
   priority: P1
   depends_on: [T003, T004]
   branch: feat/ivan-m3-t006
-  pr_or_commit:
+  pr_or_commit: c1d43a7
   blocker:
   deliverable: GUI flows for migration and audit visibility
   acceptance:
@@ -235,3 +235,4 @@ Keep this checklist synced with `status`:
 - 2026-03-01T22:37:32+08:00 [dave] Completed T005 (m3-t005-dave); set status=done, done_at, synced checklist, and recorded pr_or_commit=4ce70e1.
 - 2026-03-01T22:37:50+08:00 [judy] Completed T008 (m3-t008-judy); set status=done, done_at, synced checklist, and recorded pr_or_commit=60915f1.
 - 2026-03-01T22:38:06+08:00 [carol] Completed T004 (m3-t004-carol); set status=done, done_at, synced checklist, and recorded pr_or_commit=c1c629f.
+- 2026-03-01T22:38:31+08:00 [ivan] Completed T006 (m3-t006-ivan); set status=done, done_at, synced checklist, and recorded pr_or_commit=c1d43a7.
