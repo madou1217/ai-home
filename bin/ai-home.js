@@ -18,6 +18,7 @@ const { createProxyDaemonController } = require('../lib/proxy/daemon');
 const { runProxyCommand } = require('../lib/proxy/command-handler');
 const { syncCodexAccountsToProxy } = require('../lib/proxy/sync');
 const { startLocalProxyServer: startLocalProxyServerModule } = require('../lib/proxy/server');
+const { runProxyEntry } = require('../lib/proxy/entry');
 
 // Configurations
 const HOST_HOME_DIR = (() => {
@@ -2772,30 +2773,24 @@ if (cmd === 'import') {
 
 if (cmd === 'proxy') {
   (async () => {
-    const syncCodex = (opts) => syncCodexAccountsToProxy(opts, {
+    const code = await runProxyEntry(args, {
       fs,
-      getToolAccountIds,
-      getToolConfigDir,
-      fetchImpl: fetch
-    });
-    const startLocalProxyServer = (opts) => startLocalProxyServerModule(opts, {
+      fetchImpl: fetch,
       http,
-      fs,
       processObj: process,
       logFile: AIH_PROXY_LOG_FILE,
       getToolAccountIds,
       getToolConfigDir,
       getProfileDir,
-      checkStatus
-    });
-    const code = await runProxyCommand(args, {
+      checkStatus,
+      syncCodexAccountsToProxy,
+      startLocalProxyServerModule,
+      runProxyCommand,
       showProxyUsage,
       proxyDaemon,
       parseProxySyncArgs,
       parseProxyServeArgs,
-      parseProxyEnvArgs,
-      startLocalProxyServer,
-      syncCodexAccountsToProxy: syncCodex
+      parseProxyEnvArgs
     });
     if (typeof code === 'number') process.exit(code);
   })();
