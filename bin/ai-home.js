@@ -1414,6 +1414,130 @@ function sanitizeTaskKey(raw) {
   return v.replace(/[^a-zA-Z0-9._:-]/g, '_').slice(0, 120);
 }
 
+function nowIsoUtcPlus8() {
+  const d = new Date(Date.now() + (8 * 60 * 60 * 1000));
+  const yyyy = d.getUTCFullYear();
+  const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(d.getUTCDate()).padStart(2, '0');
+  const hh = String(d.getUTCHours()).padStart(2, '0');
+  const mi = String(d.getUTCMinutes()).padStart(2, '0');
+  const ss = String(d.getUTCSeconds()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}T${hh}:${mi}:${ss}+08:00`;
+}
+
+function parseTaskKeyParts(taskKeyRaw) {
+  const key = sanitizeTaskKey(taskKeyRaw).toLowerCase();
+  const m = key.match(/^m(\d+)-t(\d+)-([a-z0-9._-]+)$/);
+  if (!m) return null;
+  const milestoneNum = String(Number(m[1]));
+  const taskNum = String(Number(m[2]));
+  if (!milestoneNum || !taskNum) return null;
+  const taskId = `T${taskNum.padStart(3, '0')}`;
+  const owner = String(m[3] || '').trim();
+  if (!owner) return null;
+  return {
+    milestone: `m${milestoneNum}`,
+    taskNum,
+    taskId,
+    owner,
+    branch: `feat/${owner}-m${milestoneNum}-t${taskNum.padStart(3, '0')}`
+  };
+}
+
+function replaceLineValueInRange(lines, start, end, field, nextValue) {
+  const re = new RegExp(`^\\s{2}${field}:\\s*(.*)$`);
+  for (let i = start + 1; i < end; i++) {
+    if (re.test(lines[i])) {
+      const oldVal = String(lines[i].match(re)[1] || '').trim();
+      lines[i] = `  ${field}: ${nextValue}`;
+      return oldVal;
+    }
+  }
+  lines.splice(end, 0, `  ${field}: ${nextValue}`);
+  return '';
+}
+
+function getLineValueInRange(lines, start, end, field) {
+  const re = new RegExp(`^\\s{2}${field}:\\s*(.*)$`);
+  for (let i = start + 1; i < end; i++) {
+    const m = lines[i].match(re);
+    if (m) return String(m[1] || '').trim();
+  }
+  return '';
+}
+
+function claimPlanTask(planPath, taskKeyRaw, actor = 'aih-auto') {
+  const planPathAbs = normalizePlanPath(planPath);
+  if (!planPathAbs || !fs.existsSync(planPathAbs)) {
+    return { ok: false, error: `Plan file not found: ${planPath || ''}` };
+  }
+  const parts = parseTaskKeyParts(taskKeyRaw);
+  if (!parts) {
+    return { ok: false, error: `Invalid --task-key format. Expected mN-tNNN-owner, got: ${taskKeyRaw || ''}` };
+  }
+
+  const raw = fs.readFileSync(planPathAbs, 'utf8');
+  const lines = raw.split(/\r?\n/);
+  const taskStart = lines.findIndex((line) => line.trim() === `- id: ${parts.taskId}`);
+  if (taskStart < 0) {
+    return { ok: false, error: `Task ${parts.taskId} not found in ${path.basename(planPathAbs)}` };
+  }
+  let taskEnd = lines.length;
+  for (let i = taskStart + 1; i < lines.length; i++) {
+    if (/^- id:\s+\S+/.test(lines[i].trim())) {
+      taskEnd = i;
+      break;
+    }
+  }
+
+  const existingOwner = getLineValueInRange(lines, taskStart, taskEnd, 'owner');
+  if (existingOwner && existingOwner !== 'unassigned' && existingOwner !== parts.owner) {
+    return {
+      ok: false,
+      error: `Task ${parts.taskId} already owned by ${existingOwner}; refusing to override with ${parts.owner}`
+    };
+  }
+
+  const existingStatus = getLineValueInRange(lines, taskStart, taskEnd, 'status');
+  if (existingStatus === 'done') {
+    return { ok: false, error: `Task ${parts.taskId} is already done; refusing to claim.` };
+  }
+
+  const existingBranch = getLineValueInRange(lines, taskStart, taskEnd, 'branch');
+  const existingClaimedAt = getLineValueInRange(lines, taskStart, taskEnd, 'claimed_at');
+  const claimAt = existingClaimedAt || nowIsoUtcPlus8();
+  const branch = existingBranch || parts.branch;
+
+  replaceLineValueInRange(lines, taskStart, taskEnd, 'status', 'doing');
+  replaceLineValueInRange(lines, taskStart, taskEnd, 'owner', parts.owner);
+  replaceLineValueInRange(lines, taskStart, taskEnd, 'claimed_at', claimAt);
+  replaceLineValueInRange(lines, taskStart, taskEnd, 'done_at', '');
+  replaceLineValueInRange(lines, taskStart, taskEnd, 'branch', branch);
+
+  const now = nowIsoUtcPlus8();
+  const updatedIdx = lines.findIndex((line) => /^- updated_at:\s*/.test(line));
+  if (updatedIdx >= 0) {
+    lines[updatedIdx] = `- updated_at: ${now}`;
+  }
+
+  const activityIdx = lines.findIndex((line) => line.trim() === '## Activity Log');
+  if (activityIdx >= 0) {
+    const msg = `- ${now} [${actor}] Claimed ${parts.taskId} (${sanitizeTaskKey(taskKeyRaw)}) owner=${parts.owner} branch=${branch}.`;
+    lines.splice(lines.length, 0, msg);
+  }
+
+  fs.writeFileSync(planPathAbs, `${lines.join('\n')}\n`);
+  return {
+    ok: true,
+    taskId: parts.taskId,
+    owner: parts.owner,
+    branch,
+    claimedAt: claimAt,
+    updatedAt: now,
+    planPath: planPathAbs
+  };
+}
+
 function looksLikeSessionId(v) {
   return /^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(String(v || '').trim());
 }
@@ -1691,8 +1815,13 @@ function resolveCodexAutoExecArgs(rawForwardArgs) {
       const bound = getTaskSession(taskKey);
       if (bound && bound.sessionId) {
         const execPrompt = args.slice(1);
+        const resumePrompt = execPrompt.filter((x) => {
+          const v = String(x || '');
+          return v !== '--sandbox' && !v.startsWith('--sandbox=')
+            && v !== 'read-only' && v !== 'workspace-write' && v !== 'danger-full-access';
+        });
         return {
-          args: ['exec', 'resume', bound.sessionId, ...execPrompt],
+          args: ['exec', '--sandbox', 'danger-full-access', 'resume', bound.sessionId, ...resumePrompt],
           taskKey,
           planPath,
           error: '',
@@ -1706,8 +1835,13 @@ function resolveCodexAutoExecArgs(rawForwardArgs) {
       const planBound = getPlanSession(planPath);
       if (planBound && planBound.sessionId) {
         const execPrompt = args.slice(1);
+        const resumePrompt = execPrompt.filter((x) => {
+          const v = String(x || '');
+          return v !== '--sandbox' && !v.startsWith('--sandbox=')
+            && v !== 'read-only' && v !== 'workspace-write' && v !== 'danger-full-access';
+        });
         return {
-          args: ['exec', 'resume', planBound.sessionId, ...execPrompt],
+          args: ['exec', '--sandbox', 'danger-full-access', 'resume', planBound.sessionId, ...resumePrompt],
           taskKey,
           planPath,
           error: '',
@@ -3996,6 +4130,17 @@ if (idOrAction === 'auto') {
     forwardArgs = resolved.args;
     taskKey = resolved.taskKey;
     planPath = resolved.planPath;
+    const isExec = String(forwardArgs[0] || '') === 'exec';
+    const isResume = String(forwardArgs[1] || '') === 'resume';
+    if (isExec && !isResume && taskKey && planPath) {
+      const claim = claimPlanTask(planPath, taskKey, 'aih-auto');
+      if (!claim.ok) {
+        console.error(`\x1b[31m[aih auto]\x1b[0m ${claim.error}`);
+        releaseAutoAccount(cliName, nextId, allocation.leaseToken);
+        process.exit(1);
+      }
+      console.log(`\x1b[36m[aih auto]\x1b[0m Claimed ${claim.taskId} -> ${claim.owner} (${claim.branch})`);
+    }
     if (resolved.note) {
       console.log(`\x1b[36m[aih auto]\x1b[0m ${resolved.note}`);
     }

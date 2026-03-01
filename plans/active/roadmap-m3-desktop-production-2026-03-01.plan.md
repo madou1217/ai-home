@@ -3,7 +3,7 @@
 - plan_id: roadmap-m3-desktop-production-2026-03-01
 - coordinator: ai-coordinator
 - created_at: 2026-03-01T21:34:22+08:00
-- updated_at: 2026-03-01T21:34:22+08:00
+- updated_at: 2026-03-01T21:57:34+08:00
 - status: active
 
 ## Global Rules
@@ -30,13 +30,13 @@ Keep this checklist synced with `status`:
 - id: T001
   title: Tauri command registration
   scope: Wire Rust command endpoints and unified error mapping entrypoint
-  status: todo
-  owner: unassigned
-  claimed_at:
+  status: doing
+  owner: alice
+  claimed_at: 2026-03-01T21:38:58+08:00
   done_at:
   priority: P0
   depends_on: []
-  branch:
+  branch: feat/alice-m3-t001
   pr_or_commit:
   blocker:
   deliverable: Main Tauri entry exposes stable command registration for GUI calls
@@ -147,13 +147,13 @@ Keep this checklist synced with `status`:
 - id: T007
   title: Desktop packaging config
   scope: Harden Tauri packaging config for Win/Linux/macOS release artifacts
-  status: todo
-  owner: unassigned
-  claimed_at:
+  status: doing
+  owner: bob
+  claimed_at: 2026-03-01T21:38:58+08:00
   done_at:
   priority: P1
   depends_on: []
-  branch:
+  branch: feat/bob-m3-t007
   pr_or_commit:
   blocker:
   deliverable: Cross-platform packaging configuration tuned for production deliverables
@@ -185,3 +185,9 @@ Keep this checklist synced with `status`:
 
 ## Activity Log
 - 2026-03-01T21:34:22+08:00 [ai-coordinator] Plan expanded for high-parallel execution from ROADMAP Milestone 3 (UTC+8).
+- 2026-03-01T21:38:06+08:00 [bob] Claimed T007; set status to doing, owner to bob, and branch to feat/bob-m3-t007.
+
+- 2026-03-01T21:38:21+08:00 [alice] Claimed T001; set status to doing, owner to alice, and branch to feat/alice-m3-t001.
+- 2026-03-01T21:38:58+08:00 [ai-coordinator] Force-claimed T001 for alice (feat/alice-m3-t001) to enable conflict-free parallel coding.
+- 2026-03-01T21:38:58+08:00 [ai-coordinator] Force-claimed T007 for bob (feat/bob-m3-t007) to enable conflict-free parallel coding.
+- 2026-03-01T21:57:34+08:00 [ai-coordinator] Normalized in-flight task metadata for stable board rendering (claimed_at/branch cleanup).
