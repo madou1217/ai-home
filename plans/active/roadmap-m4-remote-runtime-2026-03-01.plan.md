@@ -3,7 +3,7 @@
 - plan_id: roadmap-m4-remote-runtime-2026-03-01
 - coordinator: ai-coordinator
 - created_at: 2026-03-01T21:34:22+08:00
-- updated_at: 2026-03-01T22:39:38+08:00
+- updated_at: 2026-03-01T22:42:37+08:00
 - status: active
 
 ## Global Rules
@@ -247,3 +247,6 @@ Keep this checklist synced with `status`:
 - 2026-03-01T22:38:42+08:00 [alice] Completed T006 implementation in scoped file; set status=done with pr_or_commit=ccaebd3.
 - 2026-03-01T22:38:12+08:00 [bob] Completed T008 implementation in scoped file; set status=done with pr_or_commit=687cf2d.
 - 2026-03-01T22:39:38+08:00 [erin] Completed T003 implementation in scoped file; set status=done with pr_or_commit=008e8d0.
+
+- 2026-03-01T22:42:37+08:00 [ai-watchdog] Relaunched T005 (m4-t005-grace) via resume session 019ca9c4-2d98-7950-9a54-08ea14cd1b3c.
+- 2026-03-01T22:42:37+08:00 [ai-watchdog] Relaunched T009 (m4-t009-carol) via resume session 019ca9c4-58ae-71b0-aeea-2ec6c7c0c0d2.
