@@ -3,7 +3,7 @@
 - plan_id: roadmap-m6-go-live-ops-2026-03-01
 - coordinator: ai-coordinator
 - created_at: 2026-03-01T23:21:19+08:00
-- updated_at: 2026-03-01T23:28:59+08:00
+- updated_at: 2026-03-02T00:15:35+08:00
 - status: active
 
 ## Global Rules
@@ -15,7 +15,7 @@
 
 ## Checklist
 - [ ] T001 CLI go-live command hardening
-- [ ] T002 Board reliability and data integrity checks
+- [x] T002 Board reliability and data integrity checks
 - [ ] T003 Task dispatcher parallel execution wrapper
 - [x] T004 Orchestrator execution guardrails
 - [ ] T005 Watchdog recovery policy hardening
@@ -51,15 +51,15 @@ Keep this checklist synced with `status`:
 - id: T002
   title: Board reliability and data integrity checks
   scope: Improve task board rendering robustness and integrity visibility for go-live operations
-  status: blocked
+  status: done
   owner: bob
   claimed_at: 2026-03-01T23:25:31+08:00
-  done_at: 2026-03-01T23:28:59+08:00
+  done_at: 2026-03-02T00:15:35+08:00
   priority: P0
   depends_on: []
   branch: feat/bob-m6-t002
-  pr_or_commit: blocked:plan-guard-active-doing-tasks
-  blocker: commit_guard_active_doing_tasks_prevented_code_commit
+  pr_or_commit: 3fa86cd
+  blocker:
   deliverable: Board output clearly signals invalid/stale task state and source fields
   acceptance:
   - board validates malformed task session bindings without crashing
@@ -240,3 +240,4 @@ Keep this checklist synced with `status`:
 - 2026-03-01T23:28:08+08:00 [ai-watchdog] Relaunched T002 (m6-t002-bob) via resume session 019caa01-50d1-7911-89c0-792cf4b8e894.
 - 2026-03-01T23:28:08+08:00 [ai-watchdog] Relaunched T003 (m6-t003-carol) via resume session 019caa01-50e2-7bf0-a4f9-94da67a5caf6.
 - 2026-03-01T23:28:59+08:00 [bob] Resumed T002 in session 019caa01-50d1-7911-89c0-792cf4b8e894, completed scoped implementation in scripts/plan-board.js, and closed as blocked because plan commit guard disallowed non-plan commit while active doing tasks remain.
+- 2026-03-02T00:15:35+08:00 [bob] Continued T002 in original session, re-verified scripts/plan-board.js behavior and test pass, then closed as done with implementation commit 3fa86cd.
