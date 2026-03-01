@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::VecDeque;
 use std::env;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -36,38 +37,105 @@ pub struct AuditQueryResponse {
   pub total: usize,
 }
 
+#[derive(Clone, Copy)]
+enum CursorMode {
+  StableLineIndex(usize),
+  LegacyOffset(usize),
+}
+
+#[derive(Deserialize)]
+struct AuditLine {
+  ts: String,
+  action: String,
+  #[serde(default)]
+  context: Value,
+}
+
+#[derive(Clone)]
+struct IndexedAuditRecord {
+  line_index: usize,
+  record: AuditRecord,
+}
+
+struct AuditFilters {
+  action: Option<String>,
+  keyword: Option<String>,
+  from_ts: Option<String>,
+  to_ts: Option<String>,
+}
+
 fn read_audit_path() -> crate::FrontendResult<PathBuf> {
   let home = env::var("HOME")
     .map_err(|_| crate::map_command_error("audit", "AUDIT_HOME_NOT_SET", "HOME is not set"))?;
   Ok(PathBuf::from(home).join(".ai_home").join("audit").join("cli-actions.jsonl"))
 }
 
-fn parse_cursor(raw: Option<String>) -> crate::FrontendResult<usize> {
+fn parse_cursor(raw: Option<String>) -> crate::FrontendResult<CursorMode> {
   let Some(value) = raw else {
-    return Ok(0);
+    return Ok(CursorMode::StableLineIndex(usize::MAX));
   };
   let trimmed = value.trim();
   if trimmed.is_empty() {
-    return Ok(0);
+    return Ok(CursorMode::StableLineIndex(usize::MAX));
   }
-  trimmed.parse::<usize>().map_err(|_| {
+  if let Some(raw_index) = trimmed.strip_prefix("idx:") {
+    let index = raw_index.parse::<usize>().map_err(|_| {
+      crate::map_command_error(
+        "audit",
+        "AUDIT_INVALID_CURSOR",
+        format!("invalid cursor: {trimmed}"),
+      )
+    })?;
+    return Ok(CursorMode::StableLineIndex(index));
+  }
+  let start = trimmed.parse::<usize>().map_err(|_| {
     crate::map_command_error(
       "audit",
       "AUDIT_INVALID_CURSOR",
       format!("invalid cursor: {trimmed}"),
     )
-  })
+  })?;
+  Ok(CursorMode::LegacyOffset(start))
 }
 
-fn parse_entry(value: Value) -> Option<AuditRecord> {
-  let ts = value.get("ts")?.as_str()?.to_string();
-  let action = value.get("action")?.as_str()?.to_string();
-  let context = value.get("context").cloned().unwrap_or(Value::Null);
-  Some(AuditRecord { ts, action, context })
+fn parse_entry(line: &str) -> Option<AuditRecord> {
+  let parsed = serde_json::from_str::<AuditLine>(line).ok()?;
+  Some(AuditRecord {
+    ts: parsed.ts,
+    action: parsed.action,
+    context: parsed.context,
+  })
 }
 
 fn normalized(text: &str) -> String {
   text.trim().to_ascii_lowercase()
+}
+
+fn matches_filters(record: &AuditRecord, filters: &AuditFilters) -> bool {
+  if let Some(action) = &filters.action {
+    if record.action != *action {
+      return false;
+    }
+  }
+  if let Some(from) = &filters.from_ts {
+    if record.ts < *from {
+      return false;
+    }
+  }
+  if let Some(to) = &filters.to_ts {
+    if record.ts > *to {
+      return false;
+    }
+  }
+  if let Some(keyword) = &filters.keyword {
+    let action = record.action.to_ascii_lowercase();
+    let ts = record.ts.to_ascii_lowercase();
+    let context = record.context.to_string().to_ascii_lowercase();
+    if !action.contains(keyword) && !ts.contains(keyword) && !context.contains(keyword) {
+      return false;
+    }
+  }
+  true
 }
 
 #[tauri::command]
@@ -81,7 +149,7 @@ pub fn audit_query(request: Option<AuditQueryRequest>) -> crate::FrontendResult<
     to_ts: None,
   });
   let limit = req.limit.unwrap_or(100).clamp(1, 500);
-  let start = parse_cursor(req.cursor)?;
+  let cursor_mode = parse_cursor(req.cursor)?;
   let action_filter = req
     .action
     .as_deref()
@@ -106,6 +174,12 @@ pub fn audit_query(request: Option<AuditQueryRequest>) -> crate::FrontendResult<
     .map(str::trim)
     .filter(|v| !v.is_empty())
     .map(normalized);
+  let filters = AuditFilters {
+    action: action_filter,
+    keyword: keyword_filter,
+    from_ts,
+    to_ts,
+  };
 
   let audit_path = read_audit_path()?;
   if !audit_path.exists() {
@@ -126,43 +200,66 @@ pub fn audit_query(request: Option<AuditQueryRequest>) -> crate::FrontendResult<
   })?;
   let reader = BufReader::new(file);
 
-  let mut rows: Vec<AuditRecord> = reader
-    .lines()
-    .map_while(Result::ok)
-    .filter_map(|line| {
-      let trimmed = line.trim().to_string();
-      if trimmed.is_empty() {
-        return None;
-      }
-      serde_json::from_str::<Value>(&trimmed).ok().and_then(parse_entry)
-    })
-    .filter(|row| match &action_filter {
-      Some(action) => &row.action == action,
-      None => true,
-    })
-    .filter(|row| match &from_ts {
-      Some(from) => row.ts >= *from,
-      None => true,
-    })
-    .filter(|row| match &to_ts {
-      Some(to) => row.ts <= *to,
-      None => true,
-    })
-    .filter(|row| match &keyword_filter {
-      Some(keyword) => {
-        let action = row.action.to_ascii_lowercase();
-        let ts = row.ts.to_ascii_lowercase();
-        let context = row.context.to_string().to_ascii_lowercase();
-        action.contains(keyword) || ts.contains(keyword) || context.contains(keyword)
-      }
-      None => true,
-    })
-    .collect();
+  let mut total = 0usize;
+  let mut stable_window: VecDeque<IndexedAuditRecord> = VecDeque::new();
+  let mut legacy_rows: Vec<AuditRecord> = vec![];
 
-  rows.sort_by(|a, b| b.ts.cmp(&a.ts));
-  let total = rows.len();
+  for (line_index, line_res) in reader.lines().enumerate() {
+    let Ok(line) = line_res else {
+      continue;
+    };
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+      continue;
+    }
+    let Some(record) = parse_entry(trimmed) else {
+      continue;
+    };
+    if !matches_filters(&record, &filters) {
+      continue;
+    }
+    total += 1;
+    match cursor_mode {
+      CursorMode::LegacyOffset(_) => legacy_rows.push(record),
+      CursorMode::StableLineIndex(max_index) => {
+        if line_index <= max_index {
+          stable_window.push_back(IndexedAuditRecord { line_index, record });
+          if stable_window.len() > limit + 1 {
+            let _ = stable_window.pop_front();
+          }
+        }
+      }
+    }
+  }
 
-  if start >= total {
+  match cursor_mode {
+    CursorMode::LegacyOffset(start) => {
+      legacy_rows.sort_by(|a, b| b.ts.cmp(&a.ts));
+      if start >= total {
+        return Ok(AuditQueryResponse {
+          items: vec![],
+          next_cursor: None,
+          has_more: false,
+          total,
+        });
+      }
+
+      let end = (start + limit).min(total);
+      let items = legacy_rows[start..end].to_vec();
+      let has_more = end < total;
+      let next_cursor = if has_more { Some(end.to_string()) } else { None };
+
+      return Ok(AuditQueryResponse {
+        items,
+        next_cursor,
+        has_more,
+        total,
+      });
+    }
+    CursorMode::StableLineIndex(_) => {}
+  }
+
+  if stable_window.is_empty() {
     return Ok(AuditQueryResponse {
       items: vec![],
       next_cursor: None,
@@ -171,14 +268,25 @@ pub fn audit_query(request: Option<AuditQueryRequest>) -> crate::FrontendResult<
     });
   }
 
-  let end = (start + limit).min(total);
-  let items = rows[start..end].to_vec();
-  let has_more = end < total;
+  let has_more = stable_window.len() > limit;
+  if has_more {
+    let _ = stable_window.pop_front();
+  }
+
   let next_cursor = if has_more {
-    Some(end.to_string())
+    stable_window
+      .front()
+      .and_then(|oldest| oldest.line_index.checked_sub(1))
+      .map(|next_index| format!("idx:{next_index}"))
   } else {
     None
   };
+
+  let items = stable_window
+    .iter()
+    .rev()
+    .map(|row| row.record.clone())
+    .collect::<Vec<AuditRecord>>();
 
   Ok(AuditQueryResponse {
     items,
