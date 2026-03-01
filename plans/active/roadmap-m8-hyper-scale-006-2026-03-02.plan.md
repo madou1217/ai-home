@@ -3,7 +3,7 @@
 - plan_id: roadmap-m8-hyper-scale-006-2026-03-02
 - coordinator: ai-coordinator
 - created_at: 2026-03-02T00:11:45+08:00
-- updated_at: 2026-03-01T16:17:08Z
+- updated_at: 2026-03-01T16:18:22Z
 - status: active
 
 ## Global Rules
@@ -81,7 +81,7 @@ Keep this checklist synced with `status`:
   priority: P1
   depends_on: []
   branch: feat/codex-m8-t001
-  pr_or_commit: local-uncommitted
+  pr_or_commit: b972108
   blocker:
   deliverable: Complete task 0251 deliverable
   acceptance:
@@ -1022,6 +1022,7 @@ Keep this checklist synced with `status`:
   - docs/scaleout_tasks/batch-006/task-0300.md
 
 ## Activity Log
+- 2026-03-01T16:20:14Z [codex] Updated T006 pr_or_commit to b972108 after scoped implementation commit.
 - 2026-03-01T16:17:08Z [codex] Resumed interrupted T006 in current session, delivered docs/scaleout_tasks/batch-006/task-0256.md, and set task to done.
 - 2026-03-01T16:16:55Z [codex] Claimed T006 with owner=codex branch=feat/codex-m8-t006.
 - 2026-03-01T16:15:46Z [codex] Claimed T001 with owner=codex branch=feat/codex-m8-t001.
@@ -1031,3 +1032,4 @@ Keep this checklist synced with `status`:
 - 2026-03-02T00:16:30+08:00 [codex] Resumed interrupted T001 in current session, delivered scoped file, and set task to done.
 
 - 2026-03-02T00:17:18+08:00 [ai-watchdog] Marked T006 blocked: worker offline and no recoverable session.
+- 2026-03-01T16:18:22Z [codex] Finalized T006 closure in current session with status=done, done_at and pr_or_commit writeback, checklist synced, and scoped artifact retained.
