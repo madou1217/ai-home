@@ -3,7 +3,7 @@
 - plan_id: roadmap-m4-remote-ga-2026-03-01
 - coordinator: ai-coordinator
 - created_at: 2026-03-01T23:48:40+08:00
-- updated_at: 2026-03-01T23:52:04+08:00
+- updated_at: 2026-03-01T23:57:01+08:00
 - status: active
 
 ## Global Rules
@@ -21,8 +21,8 @@
 - [x] T005 Remote patch return channel reliability
 - [x] T006 Runtime environment manager hardening
 - [x] T007 Runtime container template baseline
-- [ ] T008 Runtime nsjail sandbox profile baseline
-- [ ] T009 Remote integration test expansion
+- [x] T008 Runtime nsjail sandbox profile baseline
+- [x] T009 Remote integration test expansion
 
 Keep this checklist synced with `status`:
 - `status: done` => `[x]`
@@ -164,15 +164,15 @@ Keep this checklist synced with `status`:
 - id: T008
   title: Runtime nsjail sandbox profile baseline
   scope: Harden nsjail profile for least-privilege execution path
-  status: blocked
+  status: done
   owner: rem08
   claimed_at: 2026-03-01T23:48:56+08:00
-  done_at: 
+  done_at: 2026-03-01T23:56:53+08:00
   priority: P1
   depends_on: [T006]
   branch: feat/rem08-m4-t008
-  pr_or_commit:
-  blocker: worker_offline_no_recoverable_session
+  pr_or_commit: working-tree (no commit requested)
+  blocker:
   deliverable: Safe sandbox profile for lightweight isolation option
   acceptance:
   - profile blocks unsafe syscalls and filesystem escapes
@@ -183,15 +183,15 @@ Keep this checklist synced with `status`:
 - id: T009
   title: Remote integration test expansion
   scope: Expand remote integration tests for daemon connector workspace patch flows
-  status: blocked
+  status: done
   owner: rem09
   claimed_at: 2026-03-01T23:48:57+08:00
-  done_at: 
+  done_at: 2026-03-01T23:57:01+08:00
   priority: P0
   depends_on: [T002, T003, T004, T005, T006]
   branch: feat/rem09-m4-t009
-  pr_or_commit:
-  blocker: plan_guard_blocks_code_commit_until_other_active_doing_tasks_close; resumed_session=019caa16-b2f8-7232-be5a-54a310db670f
+  pr_or_commit: local-uncommitted (test/remote.project-session.test.js; code commit blocked by global plan-guard active-doing gate)
+  blocker:
   deliverable: Integration test suite covering critical remote workflows
   acceptance:
   - tests cover connect execute patch reconnect end-to-end path
@@ -243,3 +243,7 @@ Keep this checklist synced with `status`:
 - 2026-03-01T15:51:41Z [rem01] Completed T001 in remote/daemon/src/main.rs; bound remote sessions to lifecycle generation, invalidated sessions on stop/restart, and added deterministic daemon-stopped reason codes for blocked operations.
 
 - 2026-03-01T23:52:04+08:00 [rem09] Blocked T009 after resume session 019caa16-b2f8-7232-be5a-54a310db670f: expanded test/remote.project-session.test.js and verified pass (6/6), but plan-guard rejected code commit because other plan tasks remained doing at commit time; kept checklist unchecked and left done_at/pr_or_commit empty.
+
+- 2026-03-01T23:56:53+08:00 [rem08] Completed T008 in remote/runtime/sandbox-profile.nsjail.cfg; hardened least-privilege nsjail baseline with loopback isolation, readonly runtime mounts, bounded rlimits, and explicit seccomp deny rules while preserving required workspace/tool execution support.
+
+- 2026-03-01T23:57:01+08:00 [rem09] Completed T009 after resume session 019caa16-b2f8-7232-be5a-54a310db670f; finalized integration coverage in test/remote.project-session.test.js (bind/run/write/read/rebind + deterministic transient retry) and re-verified node --test pass (6/6). Code commit remained blocked by global plan-guard due other active doing tasks, so pr_or_commit recorded as local-uncommitted.
