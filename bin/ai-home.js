@@ -1338,6 +1338,7 @@ function showHelp() {
 \x1b[36mAI Home (aih)\x1b[0m - Multi-account sandbox manager for AI CLIs
 
 \x1b[33mUsage:\x1b[0m
+  aih doctor                \x1b[90mRun quick environment and account health checks\x1b[0m
   aih ls                    \x1b[90mList all tools, accounts, and their status\x1b[0m
   aih ls --help             \x1b[90mShow list mode help (paging behavior)\x1b[0m
   aih <cli> ls              \x1b[90mList accounts for a specific tool\x1b[0m
@@ -1359,6 +1360,164 @@ function showHelp() {
   aih export [file.aes] [selectors...] \x1b[90mSecurely export profiles. Selectors e.g. codex:1,2 gemini\x1b[0m
   aih import [-o] <file.aes>\x1b[90mRestore profiles; default skips same account, -o overwrites\x1b[0m
 `);
+}
+
+function resolveCommandPath(cmdName) {
+  try {
+    return execSync(`which ${cmdName}`, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+  } catch (e) {
+    return '';
+  }
+}
+
+function readDefaultAccountId(cliName) {
+  try {
+    const defPath = path.join(PROFILES_DIR, cliName, '.aih_default');
+    if (!fs.existsSync(defPath)) return '';
+    return String(fs.readFileSync(defPath, 'utf8') || '').trim();
+  } catch (e) {
+    return '';
+  }
+}
+
+function collectToolDoctorStats(cliName) {
+  const ids = getToolAccountIds(cliName);
+  let configured = 0;
+  let pending = 0;
+  let exhausted = 0;
+
+  ids.forEach((id) => {
+    const profileDir = getProfileDir(cliName, id);
+    const state = checkStatus(cliName, profileDir);
+    if (state.configured) configured += 1;
+    else pending += 1;
+    if (isExhausted(cliName, id)) exhausted += 1;
+  });
+
+  const defaultId = readDefaultAccountId(cliName);
+  const defaultExists = defaultId ? ids.includes(defaultId) : false;
+  return {
+    cliName,
+    ids,
+    total: ids.length,
+    configured,
+    pending,
+    exhausted,
+    defaultId: defaultId || '',
+    defaultExists
+  };
+}
+
+async function runDoctor(commandArgs = []) {
+  const asJson = commandArgs.includes('--json');
+  const checks = [];
+
+  checks.push({
+    id: 'node',
+    ok: true,
+    detail: `Node ${process.version}`
+  });
+
+  checks.push({
+    id: 'profiles_dir',
+    ok: fs.existsSync(PROFILES_DIR),
+    detail: fs.existsSync(PROFILES_DIR) ? PROFILES_DIR : `${PROFILES_DIR} (missing)`
+  });
+
+  const toolStats = Object.keys(CLI_CONFIGS).map((name) => {
+    const binPath = resolveCommandPath(name);
+    const stats = collectToolDoctorStats(name);
+    return {
+      tool: name,
+      installed: !!binPath,
+      binaryPath: binPath || '',
+      ...stats
+    };
+  });
+
+  toolStats.forEach((item) => {
+    checks.push({
+      id: `tool_${item.tool}_installed`,
+      ok: item.installed,
+      detail: item.installed ? item.binaryPath : `${item.tool} not found in PATH`
+    });
+    checks.push({
+      id: `tool_${item.tool}_default`,
+      ok: !item.defaultId || item.defaultExists,
+      detail: item.defaultId
+        ? (item.defaultExists ? `default=${item.defaultId}` : `default=${item.defaultId} (missing account dir)`)
+        : 'default not set'
+    });
+  });
+
+  const proxy = proxyDaemon.status();
+  let proxyHealth = 'stopped';
+  if (proxy.running) {
+    const controller = new AbortController();
+    const t = setTimeout(() => controller.abort(), 1200);
+    try {
+      const res = await fetch('http://127.0.0.1:8317/healthz', { signal: controller.signal });
+      proxyHealth = res.ok ? 'ok' : `http_${res.status}`;
+    } catch (e) {
+      proxyHealth = 'unreachable';
+    } finally {
+      clearTimeout(t);
+    }
+  }
+
+  const payload = {
+    ok: checks.every((c) => c.ok),
+    checkedAt: new Date().toISOString(),
+    checks,
+    tools: toolStats.map((item) => ({
+      tool: item.tool,
+      installed: item.installed,
+      binaryPath: item.binaryPath || null,
+      totalAccounts: item.total,
+      configuredAccounts: item.configured,
+      pendingAccounts: item.pending,
+      exhaustedAccounts: item.exhausted,
+      defaultId: item.defaultId || null,
+      defaultExists: item.defaultExists
+    })),
+    proxy: {
+      running: proxy.running,
+      pid: proxy.pid || 0,
+      health: proxyHealth,
+      pidFile: proxy.pidFile,
+      logFile: proxy.logFile
+    }
+  };
+
+  if (asJson) {
+    console.log(JSON.stringify(payload, null, 2));
+    return;
+  }
+
+  const okLabel = payload.ok ? '\x1b[32mOK\x1b[0m' : '\x1b[31mISSUES\x1b[0m';
+  console.log(`\n\x1b[36mAI Home Doctor\x1b[0m  status: ${okLabel}`);
+  console.log(`checked_at: ${payload.checkedAt}`);
+
+  console.log(`\n\x1b[33mChecks\x1b[0m`);
+  checks.forEach((c) => {
+    const mark = c.ok ? '\x1b[32m[OK]\x1b[0m' : '\x1b[31m[FAIL]\x1b[0m';
+    console.log(`  ${mark} ${c.id}: ${c.detail}`);
+  });
+
+  console.log(`\n\x1b[33mAccounts\x1b[0m`);
+  payload.tools.forEach((t) => {
+    const installedMark = t.installed ? '\x1b[32minstalled\x1b[0m' : '\x1b[31mmissing\x1b[0m';
+    const defaultLabel = t.defaultId ? `default=${t.defaultId}${t.defaultExists ? '' : ' (invalid)'}` : 'default=unset';
+    console.log(`  - ${t.tool}: ${installedMark}, total=${t.totalAccounts}, configured=${t.configuredAccounts}, pending=${t.pendingAccounts}, exhausted=${t.exhaustedAccounts}, ${defaultLabel}`);
+  });
+
+  const proxyMark = payload.proxy.running ? '\x1b[32mrunning\x1b[0m' : '\x1b[90mstopped\x1b[0m';
+  console.log(`\n\x1b[33mProxy\x1b[0m`);
+  console.log(`  - daemon: ${proxyMark}${payload.proxy.running ? ` (pid=${payload.proxy.pid})` : ''}`);
+  console.log(`  - health: ${payload.proxy.health}`);
+  console.log(`  - pid_file: ${payload.proxy.pidFile}`);
+  console.log(`  - log_file: ${payload.proxy.logFile}`);
+  console.log('');
 }
 
 function showCliUsage(cliName) {
@@ -1743,6 +1902,17 @@ const cmd = args[0];
 if (!cmd || cmd === 'help' || cmd === '--help' || cmd === '-h') {
   showHelp();
   process.exit(0);
+}
+
+if (cmd === 'doctor') {
+  (async () => {
+    await runDoctor(args.slice(1));
+    process.exit(0);
+  })().catch((e) => {
+    console.error(`\x1b[31m[aih] doctor failed: ${e.message}\x1b[0m`);
+    process.exit(1);
+  });
+  return;
 }
 
 if (cmd === 'ls' || cmd === 'list') {
