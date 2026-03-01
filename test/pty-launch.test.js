@@ -12,13 +12,13 @@ test('buildPtyLaunch wraps .cmd with cmd.exe on windows', () => {
   const launch = buildPtyLaunch(
     'C:\\Users\\me\\AppData\\Roaming\\npm\\codex.cmd',
     ['--sandbox', 'danger-full-access'],
-    { platform: 'win32' }
+    { platform: 'win32', windowsCommandName: 'codex' }
   );
   assert.equal(launch.command, 'cmd.exe');
   assert.equal(launch.args[0], '/d');
   assert.equal(launch.args[1], '/s');
   assert.equal(launch.args[2], '/c');
-  assert.match(launch.args[3], /codex\.cmd/);
+  assert.match(launch.args[3], /"codex"/);
   assert.match(launch.args[3], /--sandbox/);
 });
 
@@ -37,4 +37,14 @@ test('buildPtyLaunch keeps native exe direct on windows', () => {
   );
   assert.equal(launch.command, 'C:\\Program Files\\OpenAI\\codex.exe');
   assert.deepEqual(launch.args, ['--version']);
+});
+
+test('buildPtyLaunch can keep cmd shim path when commandName is not provided', () => {
+  const launch = buildPtyLaunch(
+    'C:\\Users\\me\\AppData\\Roaming\\npm\\codex.cmd',
+    ['--version'],
+    { platform: 'win32' }
+  );
+  assert.equal(launch.command, 'cmd.exe');
+  assert.match(launch.args[3], /codex\.cmd/);
 });

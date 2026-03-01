@@ -2439,7 +2439,7 @@ function spawnPty(cliBin, cliName, id, forwardArgs, isLogin) {
     argsToRun = applyCodexDefaultArgs(argsToRun);
   }
 
-  const launch = buildPtyLaunch(cliBin, argsToRun);
+  const launch = buildPtyLaunch(cliBin, argsToRun, { windowsCommandName: cliName });
 
   return pty.spawn(launch.command, launch.args, {
     name: 'xterm-color',
