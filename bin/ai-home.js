@@ -71,6 +71,10 @@ const {
 } = require('../lib/proxy/upstream-endpoints');
 const { handleManagementRequest } = require('../lib/proxy/management-router');
 const { handleV1Request } = require('../lib/proxy/v1-router');
+const {
+  createProxyServerState,
+  printProxyServeStartup
+} = require('../lib/proxy/server-runtime');
 
 // Configurations
 const HOST_HOME_DIR = (() => {
@@ -1592,30 +1596,17 @@ function appendProxyRequestLog(entry) {
 }
 
 async function startLocalProxyServer(options) {
-  const runtimeAccounts = loadProxyRuntimeAccounts({ fs, getToolAccountIds, getToolConfigDir, getProfileDir, checkStatus });
-  const codexAccounts = runtimeAccounts.codex;
-  const geminiAccounts = runtimeAccounts.gemini;
-  const state = {
-    strategy: options.strategy,
-    cursors: { codex: 0, gemini: 0 },
-    accounts: {
-      codex: codexAccounts,
-      gemini: geminiAccounts
-    },
-    startedAt: Date.now(),
-    metrics: initProxyMetrics(),
-    executors: {
-      codex: createProviderExecutor('codex', options.codexMaxConcurrency, options.queueLimit),
-      gemini: createProviderExecutor('gemini', options.geminiMaxConcurrency, options.queueLimit)
-    },
-    modelRegistry: initModelRegistry(),
-    modelsCache: {
-      updatedAt: 0,
-      ids: [],
-      byAccount: {},
-      sourceCount: 0
-    }
-  };
+  const state = createProxyServerState(options, {
+    loadProxyRuntimeAccounts,
+    initProxyMetrics,
+    createProviderExecutor,
+    initModelRegistry,
+    fs,
+    getToolAccountIds,
+    getToolConfigDir,
+    getProfileDir,
+    checkStatus
+  });
   const requiredClientKey = String(options.clientKey || '').trim();
   const requiredManagementKey = String(options.managementKey || '').trim();
   const cooldownMs = Math.max(1000, Number(options.cooldownMs) || 60000);
@@ -1708,29 +1699,7 @@ async function startLocalProxyServer(options) {
     server.listen(options.port, options.host, resolve);
   });
 
-  console.log(`\x1b[36m[aih]\x1b[0m proxy serve started`);
-  console.log(`  listen: http://${options.host}:${options.port}`);
-  console.log(`  upstream: ${options.upstream}`);
-  console.log(`  backend: ${options.backend}`);
-  console.log(`  provider_mode: ${options.provider}`);
-  console.log(`  strategy: ${options.strategy}`);
-  console.log(`  accounts: codex=${state.accounts.codex.length}, gemini=${state.accounts.gemini.length}`);
-  if (requiredClientKey) {
-    console.log('  client_auth: enabled (Bearer key required)');
-  } else {
-    console.log('  client_auth: disabled');
-  }
-  if (requiredManagementKey) {
-    console.log('  management_auth: enabled (Bearer key required)');
-  } else {
-    console.log('  management_auth: disabled');
-  }
-  console.log('  management: /v0/management/status');
-  console.log('  metrics: /v0/management/metrics');
-  console.log('  gateway: /v1/*');
-  console.log('  openai_base_url: ' + `http://${options.host}:${options.port}/v1`);
-  console.log('  tip: export OPENAI_BASE_URL=' + `"http://${options.host}:${options.port}/v1"`);
-  console.log('  tip: export OPENAI_API_KEY="dummy"');
+  printProxyServeStartup(options, state, requiredClientKey, requiredManagementKey);
 }
 
 function getNextId(cliName) {
