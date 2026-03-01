@@ -3,7 +3,7 @@
 - plan_id: roadmap-m4-remote-runtime-2026-03-01
 - coordinator: ai-coordinator
 - created_at: 2026-03-01T21:34:22+08:00
-- updated_at: 2026-03-01T22:38:42+08:00
+- updated_at: 2026-03-01T22:39:38+08:00
 - status: active
 
 ## Global Rules
@@ -16,7 +16,7 @@
 ## Checklist
 - [x] T001 Remote daemon core lifecycle
 - [x] T002 Remote transport contract
-- [ ] T003 Remote connector auth/reconnect
+- [x] T003 Remote connector auth/reconnect
 - [x] T004 Remote workspace runner
 - [ ] T005 Remote project session bridge
 - [x] T006 Remote patch return channel
@@ -69,14 +69,14 @@ Keep this checklist synced with `status`:
 - id: T003
   title: Remote connector auth/reconnect
   scope: Implement connector-side auth handshake and reconnect/session reattach behavior
-  status: doing
+  status: done
   owner: erin
   claimed_at: 2026-03-01T22:16:27+08:00
-  done_at:
+  done_at: 2026-03-01T22:39:38+08:00
   priority: P0
   depends_on: [T002]
   branch: feat/erin-m4-t003
-  pr_or_commit:
+  pr_or_commit: 008e8d0
   blocker:
   deliverable: Local connector with robust reconnect behavior
   acceptance:
@@ -246,3 +246,4 @@ Keep this checklist synced with `status`:
 - 2026-03-01T22:37:35+08:00 [frank] Completed T004 implementation in scoped file; set status=done with pr_or_commit=c08ef97.
 - 2026-03-01T22:38:42+08:00 [alice] Completed T006 implementation in scoped file; set status=done with pr_or_commit=ccaebd3.
 - 2026-03-01T22:38:12+08:00 [bob] Completed T008 implementation in scoped file; set status=done with pr_or_commit=687cf2d.
+- 2026-03-01T22:39:38+08:00 [erin] Completed T003 implementation in scoped file; set status=done with pr_or_commit=008e8d0.
