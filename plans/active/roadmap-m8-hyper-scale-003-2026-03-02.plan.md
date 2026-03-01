@@ -3,7 +3,7 @@
 - plan_id: roadmap-m8-hyper-scale-003-2026-03-02
 - coordinator: ai-coordinator
 - created_at: 2026-03-02T00:11:45+08:00
-- updated_at: 2026-03-01T16:18:04Z
+- updated_at: 2026-03-02T00:18:08+08:00
 - status: active
 
 ## Global Rules
@@ -19,7 +19,7 @@
 - [x] T001 Hyper-scale task 0101
 - [ ] T002 Hyper-scale task 0102
 - [ ] T003 Hyper-scale task 0103
-- [x] T004 Hyper-scale task 0104
+- [ ] T004 Hyper-scale task 0104
 - [ ] T005 Hyper-scale task 0105
 - [ ] T006 Hyper-scale task 0106
 - [ ] T007 Hyper-scale task 0107
@@ -131,7 +131,7 @@ Keep this checklist synced with `status`:
 - id: T004
   title: Hyper-scale task 0104
   scope: Deliver scoped output for scaleout task 0104
-  status: doing
+  status: blocked
   owner: codex
   claimed_at: 2026-03-01T16:17:29Z
   done_at:
@@ -139,7 +139,7 @@ Keep this checklist synced with `status`:
   depends_on: []
   branch: feat/codex-m8-t004
   pr_or_commit:
-  blocker:
+  blocker: worker_offline_no_recoverable_session
   deliverable: Complete task 0104 deliverable
   acceptance:
   - output is complete and reviewable
@@ -150,7 +150,7 @@ Keep this checklist synced with `status`:
 - id: T005
   title: Hyper-scale task 0105
   scope: Deliver scoped output for scaleout task 0105
-  status: doing
+  status: blocked
   owner: hs003005
   claimed_at: 2026-03-01T16:18:07Z
   done_at:
@@ -158,7 +158,7 @@ Keep this checklist synced with `status`:
   depends_on: []
   branch: feat/hs003005-m8-t005
   pr_or_commit:
-  blocker:
+  blocker: worker_offline_no_recoverable_session
   deliverable: Complete task 0105 deliverable
   acceptance:
   - output is complete and reviewable
@@ -1046,3 +1046,6 @@ Keep this checklist synced with `status`:
 - 2026-03-01T16:18:07Z [hs003005] Claimed T005 owner=hs003005 branch=feat/hs003005-m8-t005.
 
 - 2026-03-01T16:18:04Z [codex] Completed T004 in docs/scaleout_tasks/batch-003/task-0104.md; verified file exists and is non-empty; set status=done, synced checklist, pr_or_commit=local-uncommitted.
+
+- 2026-03-02T00:18:08+08:00 [ai-watchdog] Marked T004 blocked: worker offline and no recoverable session.
+- 2026-03-02T00:18:08+08:00 [ai-watchdog] Marked T005 blocked: worker offline and no recoverable session.
