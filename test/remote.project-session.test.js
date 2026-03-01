@@ -113,3 +113,108 @@ test('project session returns structured failure and supports reconnect-style re
   assert.equal(typeof retry.sessionId, 'string');
   assert.equal(retry.sessionId.length > 0, true);
 });
+
+test('project session supports bind run patch and reconnect via operation router', async () => {
+  const workspaceRoot = await createTempWorkspace();
+  const projectDir = 'proj-e';
+  await fs.mkdir(path.join(workspaceRoot, projectDir), { recursive: true });
+
+  const session = createProjectSession({
+    workspaceRoot,
+    projectDir,
+    controlSessionId: 'ctl-1',
+    remoteSessionId: 'remote-1',
+    connectionId: 'conn-1',
+    projectSessionId: 'proj-session-1'
+  });
+
+  const firstBind = session.bindRemoteSession({
+    controlSessionId: 'ctl-1',
+    remoteSessionId: 'remote-1',
+    connectionId: 'conn-1'
+  });
+  assert.equal(firstBind.kind, 'bind_result');
+  assert.equal(firstBind.context.remoteSessionId, 'remote-1');
+  assert.equal(firstBind.context.connectionId, 'conn-1');
+
+  const runResult = await session.handleOperation({
+    op: 'run_command',
+    command: process.execPath,
+    args: ['-e', "process.stdout.write('connected')"]
+  });
+  assert.equal(runResult.kind, 'command_result');
+  assert.equal(runResult.result.ok, true);
+  assert.equal(runResult.result.stdout, 'connected');
+
+  const writeResult = await session.handleOperation({
+    op: 'write_file',
+    path: 'patches/flow.txt',
+    content: 'patch-applied'
+  });
+  assert.equal(writeResult.kind, 'write_result');
+  assert.equal(writeResult.attempt, 1);
+
+  const readResult = await session.handleOperation({
+    op: 'read_file',
+    path: 'patches/flow.txt'
+  });
+  assert.equal(readResult.kind, 'read_result');
+  assert.equal(readResult.content, 'patch-applied');
+
+  const reconnect = session.bindRemoteSession({
+    remoteSessionId: 'remote-2',
+    connectionId: 'conn-2'
+  });
+  assert.equal(reconnect.kind, 'bind_result');
+  assert.equal(reconnect.context.remoteSessionId, 'remote-2');
+  assert.equal(reconnect.context.connectionId, 'conn-2');
+  assert.equal(reconnect.context.projectSessionId, 'proj-session-1');
+
+  const snapshot = await session.handleOperation({ op: 'snapshot' });
+  assert.equal(snapshot.kind, 'snapshot_result');
+  assert.equal(snapshot.context.remoteSessionId, 'remote-2');
+  assert.equal(snapshot.context.connectionId, 'conn-2');
+  assert.equal(snapshot.context.projectSessionId, 'proj-session-1');
+  assert.equal(snapshot.sequence >= reconnect.sequence, true);
+});
+
+test('project session retries transient patch write failures with deterministic attempt count', async () => {
+  const workspaceRoot = await createTempWorkspace();
+  const projectDir = 'proj-f';
+  await fs.mkdir(path.join(workspaceRoot, projectDir), { recursive: true });
+
+  let writeAttempts = 0;
+  const flakyFs = {
+    ...fs,
+    async writeFile(filePath, content, options) {
+      writeAttempts += 1;
+      if (writeAttempts === 1) {
+        const err = new Error('temporarily unavailable');
+        err.code = 'ETIMEDOUT';
+        throw err;
+      }
+      return fs.writeFile(filePath, content, options);
+    }
+  };
+
+  const session = createProjectSession(
+    {
+      workspaceRoot,
+      projectDir,
+      retry: { maxAttempts: 2, backoffMs: 0 }
+    },
+    { fs: flakyFs }
+  );
+
+  const writeResult = await session.writeProjectFile({
+    path: 'patches/retry.txt',
+    content: 'retry-ok'
+  });
+  assert.equal(writeResult.kind, 'write_result');
+  assert.equal(writeResult.attempt, 2);
+  assert.equal(writeAttempts, 2);
+
+  const readResult = await session.readProjectFile({ path: 'patches/retry.txt' });
+  assert.equal(readResult.kind, 'read_result');
+  assert.equal(readResult.content, 'retry-ok');
+});
