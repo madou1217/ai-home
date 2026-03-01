@@ -70,6 +70,7 @@ const {
   handleUpstreamPassthrough
 } = require('../lib/proxy/upstream-endpoints');
 const { handleManagementRequest } = require('../lib/proxy/management-router');
+const { handleV1Request } = require('../lib/proxy/v1-router');
 
 // Configurations
 const HOST_HOME_DIR = (() => {
@@ -1659,137 +1660,47 @@ async function startLocalProxyServer(options) {
     });
     if (handledManagement) return;
 
-    if (!pathname.startsWith('/v1/')) {
-      return writeJson(res, 404, { ok: false, error: 'not_found' });
-    }
-    if (requiredClientKey) {
-      const incoming = parseAuthorizationBearer(req.headers.authorization);
-      if (incoming !== requiredClientKey) {
-        return writeJson(res, 401, { ok: false, error: 'unauthorized_client' });
-      }
-    }
-
-    const bodyBuffer = await readRequestBody(req).catch(() => null);
-    if (bodyBuffer === null) {
-      return writeJson(res, 400, { ok: false, error: 'invalid_request_body' });
-    }
-    let requestJson = null;
-    try {
-      requestJson = bodyBuffer.length > 0 ? JSON.parse(bodyBuffer.toString('utf8')) : {};
-    } catch (e) {
-      requestJson = {};
-    }
-    const requestStartedAt = Date.now();
-    const routeKey = `${method} ${pathname}`;
-    state.metrics.totalRequests += 1;
-    state.metrics.routeCounts[routeKey] = Number(state.metrics.routeCounts[routeKey] || 0) + 1;
-
-    if (options.backend === 'codex-local') {
-      if (method === 'GET' && pathname === '/v1/models') {
-        const modelList = getRegistryModelList(state.modelRegistry, options.provider);
-        const payload = buildOpenAIModelsList(modelList);
-        res.statusCode = 200;
-        res.setHeader('content-type', 'application/json; charset=utf-8');
-        res.end(JSON.stringify(payload));
-        state.metrics.totalSuccess += 1;
-        return;
-      }
-      if (method === 'POST' && pathname === '/v1/chat/completions') {
-        await handleLocalChatCompletions({
-          options,
-          state,
-          requestJson,
-          routeKey,
-          requestStartedAt,
-          res,
-          cooldownMs,
-          localExecOpts,
-          deps: {
-            resolveRequestProvider,
-            buildPromptFromChatRequest,
-            chooseProxyAccount,
-            runGeminiLocalCompletion,
-            runCodexLocalCompletion,
-            addModelToRegistry,
-            writeSseChatCompletion,
-            buildChatCompletionPayload,
-            markProxyAccountSuccess,
-            markProxyAccountFailure,
-            isRetriableLocalError,
-            pushMetricError,
-            appendProxyRequestLog,
-            writeJson
-          }
-        });
-        return;
-      }
-      if (method === 'POST' && pathname === '/v1/responses') {
-        await handleLocalResponses({
-          options,
-          state,
-          requestJson,
-          routeKey,
-          requestStartedAt,
-          res,
-          cooldownMs,
-          localExecOpts,
-          deps: {
-            resolveRequestProvider,
-            buildPromptFromResponsesRequest,
-            chooseProxyAccount,
-            runGeminiLocalCompletion,
-            runCodexLocalCompletion,
-            addModelToRegistry,
-            markProxyAccountSuccess,
-            markProxyAccountFailure,
-            isRetriableLocalError,
-            pushMetricError,
-            appendProxyRequestLog,
-            writeJson
-          }
-        });
-        return;
-      }
-      state.metrics.totalFailures += 1;
-      pushMetricError(state.metrics, routeKey, 'n/a', 'unsupported_in_codex_local_backend');
-      return writeJson(res, 404, { ok: false, error: 'unsupported_in_codex_local_backend' });
-    }
-
-    if (method === 'GET' && pathname === '/v1/models') {
-      await handleUpstreamModels({
-        options,
-        state,
-        res,
-        deps: {
-          buildOpenAIModelsList,
-          fetchModelsForAccount,
-          FALLBACK_MODELS
-        }
-      });
-      return;
-    }
-
-    await handleUpstreamPassthrough({
-      options,
-      state,
+    const handledV1 = await handleV1Request({
       req,
       res,
       method,
-      bodyBuffer,
-      routeKey,
-      requestStartedAt,
+      pathname,
+      options,
+      state,
+      requiredClientKey,
       cooldownMs,
+      localExecOpts,
       deps: {
-        chooseProxyAccount,
-        pushMetricError,
+        parseAuthorizationBearer,
         writeJson,
-        fetchWithTimeout,
-        markProxyAccountFailure,
+        readRequestBody,
+        getRegistryModelList,
+        buildOpenAIModelsList,
+        resolveRequestProvider,
+        buildPromptFromChatRequest,
+        buildPromptFromResponsesRequest,
+        chooseProxyAccount,
+        runGeminiLocalCompletion,
+        runCodexLocalCompletion,
+        addModelToRegistry,
+        writeSseChatCompletion,
+        buildChatCompletionPayload,
         markProxyAccountSuccess,
-        appendProxyRequestLog
+        markProxyAccountFailure,
+        isRetriableLocalError,
+        pushMetricError,
+        appendProxyRequestLog,
+        handleLocalChatCompletions,
+        handleLocalResponses,
+        handleUpstreamModels,
+        handleUpstreamPassthrough,
+        fetchModelsForAccount,
+        FALLBACK_MODELS,
+        fetchWithTimeout
       }
     });
-    return;
+    if (handledV1) return;
+    return writeJson(res, 404, { ok: false, error: 'not_found' });
   });
 
   await new Promise((resolve, reject) => {
