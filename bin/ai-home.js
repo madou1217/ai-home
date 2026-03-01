@@ -19,9 +19,15 @@ const { runProxyCommand } = require('../lib/proxy/command-handler');
 const { syncCodexAccountsToProxy } = require('../lib/proxy/sync');
 const { startLocalProxyServer: startLocalProxyServerModule } = require('../lib/proxy/server');
 const { runProxyEntry } = require('../lib/proxy/entry');
+const { resolveGlobalToolConfigRoot, resolveSessionStoreRoot } = require('../lib/session/global-source');
+const { runDoctorChecks } = require('../lib/doctor/checks');
+const { createAuditLogger } = require('../lib/audit/logger');
 
 // Configurations
 const HOST_HOME_DIR = (() => {
+  if (process.env.AIH_HOST_HOME && process.env.AIH_HOST_HOME.trim()) {
+    return path.resolve(process.env.AIH_HOST_HOME.trim());
+  }
   try {
     const userInfo = os.userInfo();
     if (userInfo && userInfo.homedir) return userInfo.homedir;
@@ -35,6 +41,7 @@ const AI_HOME_DIR = path.join(HOST_HOME_DIR, '.ai_home');
 const PROFILES_DIR = path.join(AI_HOME_DIR, 'profiles');
 const AIH_PROXY_PID_FILE = path.join(AI_HOME_DIR, 'proxy.pid');
 const AIH_PROXY_LOG_FILE = path.join(AI_HOME_DIR, 'proxy.log');
+const AIH_AUDIT_LOG_FILE = path.join(AI_HOME_DIR, 'audit', 'cli-actions.jsonl');
 const AIH_PROXY_LAUNCHD_LABEL = 'com.aih.proxy';
 const AIH_PROXY_LAUNCHD_PLIST = path.join(HOST_HOME_DIR, 'Library', 'LaunchAgents', `${AIH_PROXY_LAUNCHD_LABEL}.plist`);
 
@@ -48,7 +55,14 @@ function ensureDir(dir) {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 }
 
-ensureDir(PROFILES_DIR);
+const auditLogger = createAuditLogger({
+  logPath: AIH_AUDIT_LOG_FILE
+});
+
+function logAuditEvent(action, context) {
+  auditLogger.log(action, context);
+}
+
 const proxyDaemon = createProxyDaemonController({
   ensureDir,
   parseProxyServeArgs,
@@ -137,14 +151,11 @@ function isSessionMetadataName(cliName, name) {
 }
 
 function getGlobalToolConfigRoot(cliName) {
-  const globalFolder = CLI_CONFIGS[cliName] ? CLI_CONFIGS[cliName].globalDir : `.${cliName}`;
-  return path.join(HOST_HOME_DIR, globalFolder);
+  return resolveGlobalToolConfigRoot(cliName, HOST_HOME_DIR, CLI_CONFIGS);
 }
 
 function getSessionStoreRoot(cliName) {
-  // Keep a single native session source per CLI so direct native runs and
-  // aih sandbox runs always point to the same resume/session store.
-  return getGlobalToolConfigRoot(cliName);
+  return resolveSessionStoreRoot(cliName, HOST_HOME_DIR, CLI_CONFIGS);
 }
 
 function getDirEntriesSafe(dirPath) {
@@ -1240,14 +1251,36 @@ function getNextAvailableId(cliName, currentId) {
     .map((entry) => entry.name)
     .sort((a, b) => parseInt(a, 10) - parseInt(b, 10));
 
+  const candidates = [];
   for (const id of ids) {
-    if (id === currentId) continue;
     if (!checkStatus(cliName, path.join(toolDir, id)).configured) continue;
     if (runDeepUsageCheck && syncExhaustedStateFromUsage(cliName, id) === true) continue;
     if (isExhausted(cliName, id)) continue;
-    return id;
+    candidates.push(id);
   }
-  return null;
+  if (candidates.length === 0) return null;
+
+  const cursorPath = path.join(toolDir, '.aih_auto_cursor');
+  let anchor = '';
+  if (currentId && candidates.includes(String(currentId))) {
+    anchor = String(currentId);
+  } else {
+    try {
+      const raw = fs.existsSync(cursorPath) ? fs.readFileSync(cursorPath, 'utf8').trim() : '';
+      if (raw && candidates.includes(raw)) anchor = raw;
+    } catch (e) {}
+  }
+
+  let startIdx = 0;
+  if (anchor) {
+    const idx = candidates.indexOf(anchor);
+    if (idx >= 0) startIdx = (idx + 1) % candidates.length;
+  }
+  const selected = candidates[startIdx];
+  try {
+    fs.writeFileSync(cursorPath, selected);
+  } catch (e) {}
+  return selected;
 }
 
 // Check if an account is configured and try to extract account info
@@ -1343,6 +1376,7 @@ function showHelp() {
   aih ls --help             \x1b[90mShow list mode help (paging behavior)\x1b[0m
   aih <cli> ls              \x1b[90mList accounts for a specific tool\x1b[0m
   aih <cli> ls --help       \x1b[90mShow list mode help for this tool\x1b[0m
+  aih doctor                \x1b[90mRun link/permission/config diagnostics\x1b[0m
   aih <cli> add [or login]  \x1b[90mCreate a new account and run the login flow\x1b[0m
   aih <cli>                 \x1b[90mRun a tool with the default account (ID: 1)\x1b[0m
   aih <cli> auto            \x1b[90mRun the next non-exhausted account automatically\x1b[0m
@@ -1592,6 +1626,44 @@ function showLsHelp(scope = null) {
 `);
 }
 
+function runDoctorCommand() {
+  const result = runDoctorChecks({
+    hostHomeDir: HOST_HOME_DIR,
+    aiHomeDir: AI_HOME_DIR,
+    profilesDir: PROFILES_DIR,
+    cliConfigs: CLI_CONFIGS
+  });
+
+  const { summary } = result;
+  console.log('\n\x1b[36mAI Home Doctor\x1b[0m\n');
+  console.log(`  - total issues: ${summary.total}`);
+  console.log(`  - errors: ${summary.bySeverity.error}`);
+  console.log(`  - warnings: ${summary.bySeverity.warn}`);
+  console.log(`  - permission anomalies: ${summary.byType.permission}`);
+  console.log(`  - link anomalies: ${summary.byType.link}`);
+  console.log(`  - required config anomalies: ${summary.byType['required-config']}`);
+
+  if (result.issues.length > 0) {
+    console.log('\n\x1b[33mDetected anomalies:\x1b[0m');
+    result.issues.forEach((issue, index) => {
+      const level = issue.severity === 'error' ? '\x1b[31mERROR\x1b[0m' : '\x1b[33mWARN\x1b[0m';
+      const details = issue.details && typeof issue.details === 'object'
+        ? Object.entries(issue.details).map(([k, v]) => `${k}=${v}`).join(', ')
+        : '';
+      console.log(`  ${index + 1}. [${level}] ${issue.type}: ${issue.message}${details ? ` (${details})` : ''}`);
+    });
+  } else {
+    console.log('\n\x1b[32mNo anomalies detected.\x1b[0m');
+  }
+
+  logAuditEvent('doctor.run', {
+    ok: result.ok,
+    summary
+  });
+
+  return result.ok ? 0 : 1;
+}
+
 function listProfiles(filterCliName = null) {
   console.log(`\n\x1b[36m📦 AI Home Accounts Overview\x1b[0m\n`);
   
@@ -1749,7 +1821,58 @@ function applyCodexDefaultArgs(args) {
   return out;
 }
 
-function runCliPty(cliName, initialId, forwardArgs, isLogin = false) {
+function isRateLimitOutput(lowerOut) {
+  if (!lowerOut) return false;
+  const patterns = [
+    'too many requests',
+    'rate limit',
+    'rate_limit',
+    'quota exceeded',
+    'usage limit',
+    "you've hit your usage limit",
+    'you have hit your usage limit',
+    'limit reached',
+    'request limit exceeded',
+    'token limit exceeded'
+  ];
+  return patterns.some((p) => lowerOut.includes(p));
+}
+
+function writeRuntimeExhaustedUsageSnapshot(cliName, id, reason) {
+  const now = Date.now();
+  const textReason = String(reason || 'runtime_rate_limit');
+  if (cliName === 'codex') {
+    writeUsageCache(cliName, id, {
+      schemaVersion: USAGE_SNAPSHOT_SCHEMA_VERSION,
+      kind: 'codex_oauth_status',
+      source: USAGE_SOURCE_CODEX,
+      capturedAt: now,
+      entries: [{ window: `runtime-limit (${textReason})`, remainingPct: 0, resetIn: '' }]
+    });
+    return;
+  }
+  if (cliName === 'claude') {
+    writeUsageCache(cliName, id, {
+      schemaVersion: USAGE_SNAPSHOT_SCHEMA_VERSION,
+      kind: 'claude_oauth_usage',
+      source: USAGE_SOURCE_CLAUDE_AUTH_TOKEN,
+      capturedAt: now,
+      entries: [{ window: `runtime-limit (${textReason})`, remainingPct: 0, resetIn: '' }]
+    });
+    return;
+  }
+  if (cliName === 'gemini') {
+    writeUsageCache(cliName, id, {
+      schemaVersion: USAGE_SNAPSHOT_SCHEMA_VERSION,
+      kind: 'gemini_oauth_stats',
+      source: USAGE_SOURCE_GEMINI,
+      capturedAt: now,
+      models: [{ model: 'runtime-limit', remainingPct: 0, resetIn: '' }]
+    });
+  }
+}
+
+function runCliPty(cliName, initialId, forwardArgs, isLogin = false, runtimeOptions = {}) {
   try {
     execSync(`which ${cliName}`, { stdio: 'ignore' });
   } catch (e) {
@@ -1765,13 +1888,18 @@ function runCliPty(cliName, initialId, forwardArgs, isLogin = false) {
     }
   }
 
-  console.log(`\n\x1b[36m[aih]\x1b[0m 🚀 Running \x1b[33m${cliName}\x1b[0m (Account ID: \x1b[32m${initialId}\x1b[0m) via PTY Sandbox`);
-  const initialSessionSync = ensureSessionStoreLinks(cliName, initialId);
+  const autoRotateOnLimit = !!runtimeOptions.autoRotateOnLimit;
+  let activeId = String(initialId);
+  let limitTriggered = false;
+  let limitReason = '';
+
+  console.log(`\n\x1b[36m[aih]\x1b[0m 🚀 Running \x1b[33m${cliName}\x1b[0m (Account ID: \x1b[32m${activeId}\x1b[0m) via PTY Sandbox`);
+  const initialSessionSync = ensureSessionStoreLinks(cliName, activeId);
   if (initialSessionSync.migrated > 0 || initialSessionSync.linked > 0) {
     console.log(`\x1b[36m[aih]\x1b[0m Session links ready (${cliName}): migrated ${initialSessionSync.migrated}, linked ${initialSessionSync.linked}.`);
   }
 
-  let ptyProc = spawnPty(cliName, initialId, forwardArgs, isLogin);
+  let ptyProc = spawnPty(cliName, activeId, forwardArgs, isLogin);
 
   let waveFrames = ['.', '..', '...', ' ..', '  .', '   '];
   let waveIdx = 0;
@@ -1830,9 +1958,20 @@ function runCliPty(cliName, initialId, forwardArgs, isLogin = false) {
         proc.kill();
         setTimeout(() => {
           isSwapping = false;
-          ptyProc = spawnPty(cliName, initialId, [], true);
+          ptyProc = spawnPty(cliName, activeId, [], true);
           attachOnData(ptyProc);
         }, 1500);
+      }
+
+      if (!isLogin && !limitTriggered && isRateLimitOutput(lowerOut)) {
+        limitTriggered = true;
+        limitReason = 'runtime_rate_limit_detected';
+        markExhaustedFromUsage(cliName, activeId);
+        writeRuntimeExhaustedUsageSnapshot(cliName, activeId, 'rate-limit');
+        process.stdout.write(`\r\n\x1b[33m[aih]\x1b[0m Account ${activeId} marked as exhausted (runtime limit detected).\r\n`);
+        if (autoRotateOnLimit) {
+          try { proc.kill(); } catch (e) {}
+        }
       }
     });
 
@@ -1841,8 +1980,36 @@ function runCliPty(cliName, initialId, forwardArgs, isLogin = false) {
         if (isLogin && exitCode === 0) {
            console.log(`\n\x1b[32m[aih] Auth completed! Booting standard session...\x1b[0m`);
            setTimeout(() => {
-             runCliPty(cliName, initialId, forwardArgs, false);
+             runCliPty(cliName, activeId, forwardArgs, false, runtimeOptions);
            }, 500);
+        } else if (!isLogin && autoRotateOnLimit && limitTriggered) {
+           const nextId = getNextAvailableId(cliName, activeId);
+           if (!nextId) {
+             console.log(`\x1b[31m[aih auto]\x1b[0m No next account available after rate-limit on ${activeId}.`);
+             process.stdout.write('\r\n');
+             process.exit(exitCode || 1);
+             return;
+           }
+           console.log(`\x1b[36m[aih auto]\x1b[0m Switching from exhausted ${activeId} -> ${nextId}`);
+           activeId = String(nextId);
+           limitTriggered = false;
+           limitReason = '';
+           outputBuffer = '';
+           hasReceivedData = false;
+           const sessionSync = ensureSessionStoreLinks(cliName, activeId);
+           if (sessionSync.migrated > 0 || sessionSync.linked > 0) {
+             console.log(`\x1b[36m[aih]\x1b[0m Session links ready (${cliName}): migrated ${sessionSync.migrated}, linked ${sessionSync.linked}.`);
+           }
+           ptyProc = spawnPty(cliName, activeId, forwardArgs, false);
+           attachOnData(ptyProc);
+           waveIdx = 0;
+           clearInterval(waveInterval);
+           waveInterval = setInterval(() => {
+             if (!hasReceivedData) {
+               process.stdout.write(`\r\x1b[36m[aih]\x1b[0m Waiting for ${cliName} to boot${waveFrames[waveIdx++]}\x1b[K`);
+               waveIdx %= waveFrames.length;
+             }
+           }, 200);
         } else {
            process.stdout.write('\r\n');
            process.exit(exitCode || 0);
@@ -1875,6 +2042,11 @@ function createAccount(cliName, id, skipMigration = false) {
   const sessionSync = ensureSessionStoreLinks(cliName, id);
 
   console.log(`\x1b[36m[aih]\x1b[0m Created new sandbox for \x1b[33m${cliName}\x1b[0m (Account ID: \x1b[32m${id}\x1b[0m)`);
+  logAuditEvent('account.create', {
+    cli: cliName,
+    accountId: String(id),
+    sessionSync
+  });
   if (sessionSync.migrated > 0 || sessionSync.linked > 0) {
     console.log(`\x1b[36m[aih]\x1b[0m Session links initialized: migrated ${sessionSync.migrated}, linked ${sessionSync.linked}.`);
   }
@@ -1923,6 +2095,11 @@ if (cmd === 'ls' || cmd === 'list') {
   }
   listProfiles();
   process.exit(0);
+}
+
+if (cmd === 'doctor') {
+  const code = runDoctorCommand();
+  process.exit(code);
 }
 
 function getSshKeys() {
@@ -2939,6 +3116,13 @@ if (cmd === 'import') {
     printRestoreDetails('[Overwritten]', '\x1b[33m', summary.overwrittenAccounts);
     printRestoreDetails('[Skipped]', '\x1b[90m', summary.skippedAccounts);
     console.log(`\x1b[32m[Success] Restore completed!\x1b[0m imported=${summary.imported}, overwritten=${summary.overwritten}, skipped=${summary.skipped}`);
+    logAuditEvent('profiles.import', {
+      overwriteExisting,
+      imported: summary.imported,
+      overwritten: summary.overwritten,
+      skipped: summary.skipped,
+      metadataCopied: summary.metadataCopied
+    });
   } catch (e) {
     console.error(`\n\x1b[31m[Error] Failed to import: ${e.message}\x1b[0m`);
   } finally {
@@ -3027,6 +3211,11 @@ if (idOrAction && UNLOCK_ACTIONS.has(idOrAction)) {
   } else {
     console.log(`\x1b[90m[aih]\x1b[0m ${cliName} Account ID ${targetId} was not marked as exhausted.`);
   }
+  logAuditEvent('account.unlock', {
+    cli: cliName,
+    accountId: targetId,
+    cleared
+  });
   process.exit(0);
 }
 
@@ -3108,10 +3297,10 @@ if (idOrAction === 'set-default') {
   }
   fs.writeFileSync(path.join(toolDir, '.aih_default'), targetId);
   console.log(`\x1b[32m[Success]\x1b[0m Set Account ID ${targetId} as default for ${cliName} in ai-home.`);
-  const sessionSync = ensureSessionStoreLinks(cliName, targetId);
-  if (sessionSync.migrated > 0 || sessionSync.linked > 0) {
-    console.log(`\x1b[36m[aih]\x1b[0m Session links refreshed (${cliName}): migrated ${sessionSync.migrated}, linked ${sessionSync.linked}.`);
-  }
+  logAuditEvent('account.set-default', {
+    cli: cliName,
+    accountId: targetId
+  });
   process.exit(0);
 }
 
@@ -3182,7 +3371,7 @@ if (idOrAction === 'auto') {
   console.log(`\x1b[36m[aih auto]\x1b[0m Auto-selected Account ID: \x1b[32m${nextId}\x1b[0m`);
   
   forwardArgs = args.slice(2);
-  runCliPty(cliName, nextId, forwardArgs);
+  runCliPty(cliName, nextId, forwardArgs, false, { autoRotateOnLimit: true });
   return;
 }
 
@@ -3203,6 +3392,11 @@ if (idOrAction && /^\d+$/.test(idOrAction)) {
     } else {
       console.log(`\x1b[90m[aih]\x1b[0m ${cliName} Account ID ${id} was not marked as exhausted.`);
     }
+    logAuditEvent('account.unlock', {
+      cli: cliName,
+      accountId: id,
+      cleared
+    });
     process.exit(0);
   }
   if (idStyleAction && USAGE_ACTIONS.has(idStyleAction)) {
