@@ -1,0 +1,96 @@
+syntax = "proto3";
+
+package aihome.remote.control.v1;
+
+option java_multiple_files = true;
+option java_package = "com.aihome.remote.control.v1";
+option go_package = "github.com/aih/remote/control/v1;controlv1";
+
+service ControlPlane {
+  rpc Hello(HelloRequest) returns (HelloResponse);
+  rpc Authenticate(AuthenticateRequest) returns (AuthenticateResponse);
+  rpc OpenSession(OpenSessionRequest) returns (OpenSessionResponse);
+  rpc ResumeSession(ResumeSessionRequest) returns (ResumeSessionResponse);
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+  rpc CloseSession(CloseSessionRequest) returns (CloseSessionResponse);
+}
+
+enum ConnectionState {
+  CONNECTION_STATE_UNSPECIFIED = 0;
+  CONNECTION_STATE_READY = 1;
+  CONNECTION_STATE_RECONNECT_WAIT = 2;
+  CONNECTION_STATE_CLOSED = 3;
+}
+
+message HelloRequest {
+  string client_id = 1;
+  string client_version = 2;
+  string protocol_version = 3;
+  map<string, string> metadata = 10;
+}
+
+message HelloResponse {
+  string connection_id = 1;
+  string server_version = 2;
+  string protocol_version = 3;
+  uint64 server_time_unix_ms = 4;
+}
+
+message AuthenticateRequest {
+  string connection_id = 1;
+  string bearer_token = 2;
+  string requested_resume_session_id = 3;
+  string requested_resume_control_session_id = 4;
+}
+
+message AuthenticateResponse {
+  string control_session_id = 1;
+  bool resumed = 2;
+  string resumed_session_id = 3;
+  uint64 expires_at_unix_ms = 4;
+  bool control_session_resumed = 5;
+}
+
+message OpenSessionRequest {
+  string control_session_id = 1;
+  string target = 2;
+  string tty_size = 3;
+}
+
+message OpenSessionResponse {
+  string remote_session_id = 1;
+  string target = 2;
+  uint64 created_at_unix_ms = 3;
+}
+
+message ResumeSessionRequest {
+  string control_session_id = 1;
+  string remote_session_id = 2;
+}
+
+message ResumeSessionResponse {
+  string remote_session_id = 1;
+  bool accepted = 2;
+}
+
+message HeartbeatRequest {
+  string control_session_id = 1;
+  uint64 client_time_unix_ms = 2;
+  uint32 reconnect_attempt = 3;
+}
+
+message HeartbeatResponse {
+  uint64 server_time_unix_ms = 1;
+  ConnectionState connection_state = 2;
+  bool control_session_resumed = 3;
+}
+
+message CloseSessionRequest {
+  string control_session_id = 1;
+  string remote_session_id = 2;
+  string reason = 3;
+}
+
+message CloseSessionResponse {
+  bool accepted = 1;
+}
