@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 export interface OpsQuickActionsProps {
@@ -12,6 +12,7 @@ export interface OpsQuickActionsProps {
 }
 
 type ActionKind = 'retry' | 'stop' | 'switch' | null;
+const ACTION_TIMEOUT_MS = 12000;
 
 function toErrorMessage(error: unknown): string {
   if (!error) return 'Unknown error';
@@ -22,6 +23,24 @@ function toErrorMessage(error: unknown): string {
 function uniqueAccounts(accounts?: string[]): string[] {
   const candidates = (accounts ?? []).map((item) => item.trim()).filter(Boolean);
   return Array.from(new Set(candidates));
+}
+
+async function withTimeout<T>(task: Promise<T>, timeoutMs: number): Promise<T> {
+  let timeoutRef: ReturnType<typeof setTimeout> | undefined;
+
+  const timeoutPromise = new Promise<T>((_, reject) => {
+    timeoutRef = setTimeout(() => {
+      reject(new Error(`Timed out after ${Math.floor(timeoutMs / 1000)}s`));
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([task, timeoutPromise]);
+  } finally {
+    if (timeoutRef) {
+      clearTimeout(timeoutRef);
+    }
+  }
 }
 
 export default function OpsQuickActions(props: OpsQuickActionsProps): JSX.Element {
@@ -39,47 +58,61 @@ export default function OpsQuickActions(props: OpsQuickActionsProps): JSX.Elemen
   const [lastMessage, setLastMessage] = useState<string>('Ready.');
 
   const canStop = Boolean(props.onCancelTask) && !props.cancelDisabled;
+  const canSwitch = Boolean(props.onSwitchAccount) && accountOptions.length > 1;
+
+  useEffect(() => {
+    if (!accountOptions.includes(activeAccount)) {
+      setActiveAccount(accountOptions[0]);
+    }
+  }, [accountOptions, activeAccount]);
+
+  const refreshStatusSafely = async (): Promise<void> => {
+    await withTimeout(Promise.resolve(props.onRefreshStatus()), ACTION_TIMEOUT_MS);
+  };
 
   const runAction = async (
     action: Exclude<ActionKind, null>,
-    execute: () => Promise<void> | void
+    execute: () => Promise<string | void> | string | void
   ): Promise<void> => {
     if (pendingAction) return;
     try {
       setPendingAction(action);
-      await execute();
-      setLastMessage(`${action.toUpperCase()} completed.`);
+      const result = await withTimeout(Promise.resolve(execute()), ACTION_TIMEOUT_MS);
+      if (typeof result === 'string' && result.trim()) {
+        setLastMessage(result);
+      } else {
+        setLastMessage(`${action.toUpperCase()} completed.`);
+      }
     } catch (error) {
       setLastMessage(`${action.toUpperCase()} failed: ${toErrorMessage(error)}`);
+      await refreshStatusSafely().catch(() => {});
     } finally {
       setPendingAction(null);
     }
   };
 
   const retryNow = async (): Promise<void> => {
-    await props.onRetryConnection();
-    await props.onRefreshStatus();
+    await withTimeout(Promise.resolve(props.onRetryConnection()), ACTION_TIMEOUT_MS);
+    await refreshStatusSafely();
   };
 
   const stopNow = async (): Promise<void> => {
     if (!props.onCancelTask || !canStop) return;
-    await props.onCancelTask();
-    await props.onRefreshStatus();
+    await withTimeout(Promise.resolve(props.onCancelTask()), ACTION_TIMEOUT_MS);
+    await refreshStatusSafely();
   };
 
-  const switchAccountNow = async (): Promise<void> => {
-    if (accountOptions.length === 0) return;
+  const switchAccountNow = async (): Promise<string | void> => {
+    if (!props.onSwitchAccount || !canSwitch || accountOptions.length === 0) return;
 
     const currentIndex = accountOptions.findIndex((item) => item === activeAccount);
     const safeIndex = currentIndex >= 0 ? currentIndex : 0;
     const nextAccount = accountOptions[(safeIndex + 1) % accountOptions.length];
 
     setActiveAccount(nextAccount);
-    if (props.onSwitchAccount) {
-      await props.onSwitchAccount(nextAccount);
-    }
-    await props.onRefreshStatus();
-    setLastMessage(`Switched to account: ${nextAccount}`);
+    await withTimeout(Promise.resolve(props.onSwitchAccount(nextAccount)), ACTION_TIMEOUT_MS);
+    await refreshStatusSafely();
+    return `Switched to account: ${nextAccount}`;
   };
 
   const controlsDisabled = pendingAction !== null;
@@ -107,8 +140,8 @@ export default function OpsQuickActions(props: OpsQuickActionsProps): JSX.Elemen
 
         <Pressable
           onPress={() => void runAction('switch', switchAccountNow)}
-          style={[styles.button, styles.switchButton, controlsDisabled && styles.buttonDisabled]}
-          disabled={controlsDisabled}
+          style={[styles.button, styles.switchButton, (!canSwitch || controlsDisabled) && styles.buttonDisabled]}
+          disabled={!canSwitch || controlsDisabled}
         >
           <Text style={styles.buttonText}>{pendingAction === 'switch' ? 'Switching...' : 'Switch Account'}</Text>
         </Pressable>

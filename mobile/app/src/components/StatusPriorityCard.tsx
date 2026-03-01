@@ -17,22 +17,40 @@ export interface StatusPriorityCardProps {
   footerNote?: string;
 }
 
+interface ToneStyles {
+  border: object;
+  badge: object;
+  badgeText: object;
+  criticalText: object;
+  highlightBand: object;
+  highlightText: object;
+}
+
 function normalizeText(value: string): string {
   const next = value.trim();
   return next.length > 0 ? next : '--';
 }
 
+function getLevelText(level: StatusPriorityLevel): string {
+  if (level === 'error') return 'Immediate Action';
+  if (level === 'warning') return 'Needs Attention';
+  return 'Stable';
+}
+
 export default function StatusPriorityCard(props: StatusPriorityCardProps): JSX.Element {
   const level = props.level ?? 'normal';
   const title = props.title ?? 'Priority Status';
+  const secondaryDetails = props.secondaryDetails ?? [];
 
-  const toneStyles = useMemo(() => {
+  const toneStyles = useMemo<ToneStyles>(() => {
     if (level === 'error') {
       return {
         border: styles.cardErrorBorder,
         badge: styles.badgeError,
         badgeText: styles.badgeTextError,
-        criticalText: styles.criticalValueError
+        criticalText: styles.criticalValueError,
+        highlightBand: styles.highlightBandError,
+        highlightText: styles.highlightTextError
       };
     }
 
@@ -41,7 +59,9 @@ export default function StatusPriorityCard(props: StatusPriorityCardProps): JSX.
         border: styles.cardWarningBorder,
         badge: styles.badgeWarning,
         badgeText: styles.badgeTextWarning,
-        criticalText: styles.criticalValueWarning
+        criticalText: styles.criticalValueWarning,
+        highlightBand: styles.highlightBandWarning,
+        highlightText: styles.highlightTextWarning
       };
     }
 
@@ -49,12 +69,18 @@ export default function StatusPriorityCard(props: StatusPriorityCardProps): JSX.
       border: styles.cardNormalBorder,
       badge: styles.badgeNormal,
       badgeText: styles.badgeTextNormal,
-      criticalText: styles.criticalValueNormal
+      criticalText: styles.criticalValueNormal,
+      highlightBand: styles.highlightBandNormal,
+      highlightText: styles.highlightTextNormal
     };
   }, [level]);
 
   return (
     <View style={[styles.card, toneStyles.border]}>
+      <View style={[styles.highlightBand, toneStyles.highlightBand]}>
+        <Text style={[styles.highlightText, toneStyles.highlightText]}>{getLevelText(level)}</Text>
+      </View>
+
       <View style={styles.headerRow}>
         <Text style={styles.title}>{title}</Text>
         <View style={[styles.badge, toneStyles.badge]}>
@@ -67,14 +93,16 @@ export default function StatusPriorityCard(props: StatusPriorityCardProps): JSX.
         <Text style={[styles.criticalValue, toneStyles.criticalText]}>{normalizeText(props.criticalValue)}</Text>
       </View>
 
-      <View style={styles.secondaryBlock}>
-        {(props.secondaryDetails ?? []).map((detail, index) => (
-          <View key={`${detail.label}:${detail.value}:${index}`} style={styles.secondaryRow}>
-            <Text style={styles.secondaryLabel}>{normalizeText(detail.label)}</Text>
-            <Text style={styles.secondaryValue}>{normalizeText(detail.value)}</Text>
-          </View>
-        ))}
-      </View>
+      {secondaryDetails.length > 0 ? (
+        <View style={styles.secondaryBlock}>
+          {secondaryDetails.map((detail, index) => (
+            <View key={`${detail.label}:${detail.value}:${index}`} style={styles.secondaryRow}>
+              <Text style={styles.secondaryLabel}>{normalizeText(detail.label)}</Text>
+              <Text style={styles.secondaryValue}>{normalizeText(detail.value)}</Text>
+            </View>
+          ))}
+        </View>
+      ) : null}
 
       {props.footerNote ? <Text style={styles.footerNote}>{normalizeText(props.footerNote)}</Text> : null}
     </View>
@@ -98,6 +126,36 @@ const styles = StyleSheet.create({
   cardErrorBorder: {
     borderColor: '#b91c1c'
   },
+  highlightBand: {
+    borderRadius: 8,
+    marginBottom: 2,
+    paddingHorizontal: 8,
+    paddingVertical: 5
+  },
+  highlightBandNormal: {
+    backgroundColor: '#1e3a8a26'
+  },
+  highlightBandWarning: {
+    backgroundColor: '#b453092e'
+  },
+  highlightBandError: {
+    backgroundColor: '#b91c1c2e'
+  },
+  highlightText: {
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.2,
+    textTransform: 'uppercase'
+  },
+  highlightTextNormal: {
+    color: '#93c5fd'
+  },
+  highlightTextWarning: {
+    color: '#fcd34d'
+  },
+  highlightTextError: {
+    color: '#fca5a5'
+  },
   headerRow: {
     alignItems: 'center',
     flexDirection: 'row',
@@ -105,8 +163,10 @@ const styles = StyleSheet.create({
   },
   title: {
     color: '#e2e8f0',
+    flexShrink: 1,
     fontSize: 14,
-    fontWeight: '700'
+    fontWeight: '700',
+    marginRight: 8
   },
   badge: {
     borderRadius: 999,
@@ -142,6 +202,7 @@ const styles = StyleSheet.create({
   criticalBlock: {
     backgroundColor: '#111827',
     borderRadius: 10,
+    minHeight: 64,
     paddingHorizontal: 10,
     paddingVertical: 9
   },
@@ -154,7 +215,8 @@ const styles = StyleSheet.create({
   },
   criticalValue: {
     fontSize: 16,
-    fontWeight: '800'
+    fontWeight: '800',
+    lineHeight: 22
   },
   criticalValueNormal: {
     color: '#e2e8f0'
@@ -169,24 +231,30 @@ const styles = StyleSheet.create({
     gap: 6
   },
   secondaryRow: {
-    alignItems: 'center',
+    alignItems: 'flex-start',
+    borderTopColor: '#1f2937',
+    borderTopWidth: 1,
     flexDirection: 'row',
-    justifyContent: 'space-between'
+    justifyContent: 'space-between',
+    paddingTop: 6
   },
   secondaryLabel: {
     color: '#94a3b8',
+    flex: 1,
     fontSize: 12,
-    fontWeight: '600'
+    fontWeight: '600',
+    marginRight: 10
   },
   secondaryValue: {
     color: '#e2e8f0',
+    flex: 1,
     fontSize: 12,
     fontWeight: '500',
-    marginLeft: 12,
     textAlign: 'right'
   },
   footerNote: {
     color: '#cbd5e1',
-    fontSize: 12
+    fontSize: 12,
+    lineHeight: 17
   }
 });

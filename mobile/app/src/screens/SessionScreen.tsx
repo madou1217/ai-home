@@ -24,6 +24,14 @@ function statusLabel(state: ReconnectSnapshot['state']): string {
   return 'Idle';
 }
 
+function retryCountdown(nextRetryAt?: string): string {
+  if (!nextRetryAt) return 'Not scheduled';
+  const ms = Date.parse(nextRetryAt) - Date.now();
+  if (!Number.isFinite(ms)) return 'Not scheduled';
+  if (ms <= 0) return 'Retrying now';
+  return `in ${Math.ceil(ms / 1000)}s`;
+}
+
 export default function SessionScreen(props: SessionScreenProps): JSX.Element {
   const [snapshot, setSnapshot] = useState<ReconnectSnapshot>(props.reconnectManager.getSnapshot());
   const [lastAction, setLastAction] = useState<string>('Session idle.');
@@ -70,9 +78,10 @@ export default function SessionScreen(props: SessionScreenProps): JSX.Element {
     props.reconnectManager.retryNow();
   };
 
-  const simulateDisconnect = (): void => {
-    setLastAction('Connection loss simulated.');
-    props.reconnectManager.notifyConnectionLost('manual_disconnect');
+  const restartRecovery = (): void => {
+    setLastAction('Recovery flow restarted.');
+    props.reconnectManager.notifyConnectionLost('manual_recovery');
+    props.reconnectManager.retryNow();
   };
 
   const lastUpdatedText = useMemo(() => {
@@ -84,8 +93,23 @@ export default function SessionScreen(props: SessionScreenProps): JSX.Element {
     return new Date(snapshot.nextRetryAt).toLocaleTimeString();
   }, [snapshot.nextRetryAt]);
 
+  const retryCountdownText = useMemo(() => retryCountdown(snapshot.nextRetryAt), [snapshot.nextRetryAt]);
   const stateAccent = useMemo(() => statusColor(snapshot.state), [snapshot.state]);
   const reconnectDisabled = snapshot.state === 'connecting';
+  const stateHeadline = useMemo(() => {
+    if (snapshot.state === 'offline') return 'Connection paused';
+    if (snapshot.state === 'connecting') return 'Linking to daemon';
+    if (snapshot.state === 'reconnecting') return 'Recovering connection';
+    if (snapshot.state === 'connected') return 'Connection stable';
+    return 'Session ready';
+  }, [snapshot.state]);
+  const stateGuidance = useMemo(() => {
+    if (snapshot.state === 'offline') return 'Auto-retry is stopped. Tap Reconnect Now to recover.';
+    if (snapshot.state === 'connecting') return 'Please wait while the secure link is being established.';
+    if (snapshot.state === 'reconnecting') return `Automatic retry is active (${retryCountdownText}).`;
+    if (snapshot.state === 'connected') return 'No action needed. You can still force a fresh reconnect.';
+    return 'Tap Reconnect Now to start or refresh session connectivity.';
+  }, [snapshot.state, retryCountdownText]);
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.screenContent}>
@@ -94,13 +118,21 @@ export default function SessionScreen(props: SessionScreenProps): JSX.Element {
         <Text style={styles.title}>Session</Text>
       </View>
 
+      <View style={styles.stateBanner}>
+        <View style={[styles.dot, { backgroundColor: stateAccent }]} />
+        <View style={styles.stateBannerText}>
+          <Text style={styles.stateHeadline}>{stateHeadline}</Text>
+          <Text style={styles.stateGuidance}>{stateGuidance}</Text>
+        </View>
+      </View>
+
       <View style={styles.statusCard}>
         <View style={styles.statusRow}>
-          <View style={[styles.dot, { backgroundColor: stateAccent }]} />
           <Text style={styles.statusText}>{statusLabel(snapshot.state)}</Text>
           <Text style={styles.attemptText}>Attempt {snapshot.attempt}</Text>
         </View>
         <Text style={styles.subText}>{subtitle}</Text>
+        {!!snapshot.hint && <Text style={styles.hintText}>{snapshot.hint}</Text>}
         <View style={styles.metaGrid}>
           <View style={styles.metaItem}>
             <Text style={styles.metaLabel}>Updated</Text>
@@ -128,31 +160,15 @@ export default function SessionScreen(props: SessionScreenProps): JSX.Element {
             accessibilityRole="button"
             accessibilityLabel="Reconnect session now"
           >
-            <Text style={styles.buttonText}>Reconnect Now</Text>
+            <Text style={styles.buttonText}>{reconnectDisabled ? 'Connecting...' : 'Reconnect Now'}</Text>
           </Pressable>
           <Pressable
             style={styles.buttonSecondary}
-            onPress={simulateDisconnect}
+            onPress={restartRecovery}
             accessibilityRole="button"
-            accessibilityLabel="Simulate connection disconnect"
+            accessibilityLabel="Restart recovery flow"
           >
-            <Text style={styles.buttonText}>Simulate Disconnect</Text>
-          </Pressable>
-          <Pressable
-            style={styles.buttonGhost}
-            onPress={reconnectNow}
-            accessibilityRole="button"
-            accessibilityLabel="Refresh session state"
-          >
-            <Text style={styles.buttonGhostText}>Refresh Session</Text>
-          </Pressable>
-          <Pressable
-            style={styles.buttonGhost}
-            onPress={simulateDisconnect}
-            accessibilityRole="button"
-            accessibilityLabel="Force retry flow"
-          >
-            <Text style={styles.buttonGhostText}>Force Retry Flow</Text>
+            <Text style={styles.buttonText}>Restart Recovery</Text>
           </Pressable>
         </View>
       </View>
@@ -173,6 +189,31 @@ const styles = StyleSheet.create({
   screenContent: {
     padding: 14,
     gap: 12
+  },
+  stateBanner: {
+    backgroundColor: '#0f172a',
+    borderWidth: 1,
+    borderColor: '#1e293b',
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10
+  },
+  stateBannerText: {
+    flex: 1,
+    gap: 2
+  },
+  stateHeadline: {
+    color: '#f8fafc',
+    fontSize: 15,
+    fontWeight: '800'
+  },
+  stateGuidance: {
+    color: '#cbd5e1',
+    fontSize: 12,
+    lineHeight: 17
   },
   header: {
     gap: 2
@@ -222,6 +263,11 @@ const styles = StyleSheet.create({
     color: '#cbd5e1',
     fontSize: 13,
     lineHeight: 18
+  },
+  hintText: {
+    color: '#93c5fd',
+    fontSize: 12,
+    lineHeight: 17
   },
   metaGrid: {
     flexDirection: 'row',
@@ -294,25 +340,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     minWidth: 140
   },
-  buttonGhost: {
-    backgroundColor: '#111827',
-    borderColor: '#334155',
-    borderWidth: 1,
-    borderRadius: 10,
-    paddingVertical: 9,
-    paddingHorizontal: 12,
-    minWidth: 140
-  },
   buttonText: {
     color: '#f8fafc',
     fontSize: 13,
     fontWeight: '700',
-    textAlign: 'center'
-  },
-  buttonGhostText: {
-    color: '#cbd5e1',
-    fontSize: 13,
-    fontWeight: '600',
     textAlign: 'center'
   },
   timelineCard: {
