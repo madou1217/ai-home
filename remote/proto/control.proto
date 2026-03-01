@@ -19,8 +19,10 @@ service ControlPlane {
   rpc ResumeSession(ResumeSessionRequest) returns (ResumeSessionResponse);
   rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
   rpc CloseSession(CloseSessionRequest) returns (CloseSessionResponse);
+  rpc StreamSessionStatus(StreamSessionStatusRequest) returns (stream StreamSessionStatusEvent);
   rpc OpenProjectSession(OpenProjectSessionRequest) returns (OpenProjectSessionResponse);
   rpc RunProjectCommand(RunProjectCommandRequest) returns (RunProjectCommandResponse);
+  rpc StreamProjectCommand(StreamProjectCommandRequest) returns (stream StreamProjectCommandEvent);
   rpc ReadProjectFile(ReadProjectFileRequest) returns (ReadProjectFileResponse);
   rpc WriteProjectFile(WriteProjectFileRequest) returns (WriteProjectFileResponse);
   rpc CloseProjectSession(CloseProjectSessionRequest) returns (CloseProjectSessionResponse);
@@ -31,6 +33,22 @@ enum ConnectionState {
   CONNECTION_STATE_READY = 1;
   CONNECTION_STATE_RECONNECT_WAIT = 2;
   CONNECTION_STATE_CLOSED = 3;
+}
+
+enum SessionStatusEventType {
+  SESSION_STATUS_EVENT_TYPE_UNSPECIFIED = 0;
+  SESSION_STATUS_EVENT_TYPE_HEARTBEAT = 1;
+  SESSION_STATUS_EVENT_TYPE_STATE_CHANGED = 2;
+  SESSION_STATUS_EVENT_TYPE_CONTROL_SESSION_RESUMED = 3;
+  SESSION_STATUS_EVENT_TYPE_REMOTE_SESSION_CLOSED = 4;
+}
+
+enum ProjectCommandEventType {
+  PROJECT_COMMAND_EVENT_TYPE_UNSPECIFIED = 0;
+  PROJECT_COMMAND_EVENT_TYPE_STARTED = 1;
+  PROJECT_COMMAND_EVENT_TYPE_STDOUT = 2;
+  PROJECT_COMMAND_EVENT_TYPE_STDERR = 3;
+  PROJECT_COMMAND_EVENT_TYPE_FINISHED = 4;
 }
 
 message HelloRequest {
@@ -108,6 +126,30 @@ message CloseSessionResponse {
   bool accepted = 1;
 }
 
+// Stream contract:
+// 1) Events are ordered by seq and delivered at-least-once.
+// 2) Clients deduplicate by (stream_id, seq).
+// 3) New event_type values are additive and clients must ignore unknown values.
+message StreamSessionStatusRequest {
+  string control_session_id = 1;
+  string remote_session_id = 2;
+  uint64 since_unix_ms = 3;
+  bool include_heartbeat = 4;
+}
+
+message StreamSessionStatusEvent {
+  string stream_id = 1;
+  uint64 seq = 2;
+  uint64 event_unix_ms = 3;
+  string control_session_id = 4;
+  string remote_session_id = 5;
+  SessionStatusEventType event_type = 6;
+  ConnectionState connection_state = 7;
+  bool control_session_resumed = 8;
+  string reason = 9;
+  map<string, string> metadata = 10;
+}
+
 message OpenProjectSessionRequest {
   string control_session_id = 1;
   string remote_session_id = 2;
@@ -152,6 +194,27 @@ message RunProjectCommandResponse {
   string started_at = 12;
   // RFC3339 UTC timestamp.
   string finished_at = 13;
+}
+
+message StreamProjectCommandRequest {
+  string control_session_id = 1;
+  string project_session_id = 2;
+  string command_id = 3;
+  uint64 since_seq = 4;
+}
+
+message StreamProjectCommandEvent {
+  string stream_id = 1;
+  uint64 seq = 2;
+  uint64 event_unix_ms = 3;
+  string project_session_id = 4;
+  string command_id = 5;
+  ProjectCommandEventType event_type = 6;
+  string chunk = 7;
+  int32 exit_code = 8;
+  string signal = 9;
+  bool timed_out = 10;
+  map<string, string> metadata = 11;
 }
 
 message ReadProjectFileRequest {
