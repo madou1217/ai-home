@@ -90,6 +90,20 @@ const DEFAULT_RETRY_DELAY_MS = 300;
 const DEFAULT_MAX_CONSECUTIVE_WATCH_ERRORS = 5;
 const RETRYABLE_STATUS = new Set([408, 429, 500, 502, 503, 504]);
 
+type ErrorHintKind =
+  | 'bad_request'
+  | 'auth_required'
+  | 'forbidden'
+  | 'not_found'
+  | 'conflict'
+  | 'invalid_payload'
+  | 'rate_limited'
+  | 'service_unavailable'
+  | 'network_unreachable'
+  | 'timeout'
+  | 'aborted'
+  | 'unexpected';
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -118,6 +132,29 @@ function normalizeStatus(value: unknown): TaskStatus {
   return 'running';
 }
 
+function normalizeId(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return trimmed || undefined;
+}
+
+function normalizeTimestamp(value: unknown): string {
+  if (typeof value !== 'string' || !value.trim()) return nowIso();
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed)) return nowIso();
+  return new Date(parsed).toISOString();
+}
+
+function normalizeProgress(value: unknown): number | undefined {
+  if (!Number.isFinite(value)) return undefined;
+  const numeric = Number(value);
+  return Math.max(0, Math.min(100, numeric));
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
 function createDaemonClientError(input: {
   code: DaemonClientErrorCode;
   message: string;
@@ -137,7 +174,7 @@ function createDaemonClientError(input: {
 function normalizeSessionSnapshot(payload: unknown): SessionSnapshot {
   const source = (payload as { session?: unknown; data?: unknown }) || {};
   const session = (source.session || source.data || payload) as Record<string, unknown>;
-  const sessionId = String(session?.sessionId || session?.id || '');
+  const sessionId = normalizeId(session?.sessionId || session?.id);
   if (!sessionId) {
     throw createDaemonClientError({
       code: 'daemon_parse_error',
@@ -149,17 +186,17 @@ function normalizeSessionSnapshot(payload: unknown): SessionSnapshot {
   return {
     sessionId,
     status: normalizeSessionStatus(session?.status),
-    nodeId: session?.nodeId ? String(session.nodeId) : undefined,
-    activeTaskId: session?.activeTaskId ? String(session.activeTaskId) : undefined,
+    nodeId: normalizeId(session?.nodeId),
+    activeTaskId: normalizeId(session?.activeTaskId),
     message: session?.message ? String(session.message) : undefined,
-    updatedAt: session?.updatedAt ? String(session.updatedAt) : nowIso()
+    updatedAt: normalizeTimestamp(session?.updatedAt)
   };
 }
 
 function normalizeTaskSnapshot(payload: unknown): TaskSnapshot {
   const source = (payload as { task?: unknown; data?: unknown }) || {};
   const task = (source.task || source.data || payload) as Record<string, unknown>;
-  const taskId = String(task?.taskId || task?.id || '');
+  const taskId = normalizeId(task?.taskId || task?.id);
   if (!taskId) {
     throw createDaemonClientError({
       code: 'daemon_parse_error',
@@ -169,13 +206,13 @@ function normalizeTaskSnapshot(payload: unknown): TaskSnapshot {
   }
   return {
     taskId,
-    sessionId: task?.sessionId ? String(task.sessionId) : undefined,
+    sessionId: normalizeId(task?.sessionId),
     status: normalizeStatus(task?.status),
-    progress: Number.isFinite(task?.progress) ? Number(task.progress) : undefined,
+    progress: normalizeProgress(task?.progress),
     message: task?.message ? String(task.message) : undefined,
     result: task?.result,
     error: task?.error ? String(task.error) : undefined,
-    updatedAt: task?.updatedAt ? String(task.updatedAt) : nowIso()
+    updatedAt: normalizeTimestamp(task?.updatedAt)
   };
 }
 
@@ -214,6 +251,11 @@ function normalizeMaxConsecutiveWatchErrors(value?: number): number {
   return Math.max(1, Math.floor(Number(value)));
 }
 
+function normalizeTimeoutMs(value: number | undefined, fallback: number): number {
+  if (!Number.isFinite(value) || Number(value) <= 0) return fallback;
+  return Math.max(250, Math.floor(Number(value)));
+}
+
 function isAbortError(error: unknown): boolean {
   if (!error) return false;
   if (error instanceof DOMException && error.name === 'AbortError') return true;
@@ -231,6 +273,19 @@ function parseErrorDetails(raw: string): unknown {
   }
 }
 
+function mapHttpErrorHint(status: number): { kind: ErrorHintKind; action: string; retryable: boolean } {
+  if (status === 400) return { kind: 'bad_request', action: 'verify_request_parameters', retryable: false };
+  if (status === 401) return { kind: 'auth_required', action: 'refresh_auth_token', retryable: false };
+  if (status === 403) return { kind: 'forbidden', action: 'check_account_permission', retryable: false };
+  if (status === 404) return { kind: 'not_found', action: 'refresh_resource_or_session', retryable: false };
+  if (status === 409) return { kind: 'conflict', action: 'retry_after_refresh', retryable: false };
+  if (status === 422) return { kind: 'invalid_payload', action: 'fix_input_payload', retryable: false };
+  if (status === 429) return { kind: 'rate_limited', action: 'backoff_and_retry', retryable: true };
+  if (status === 408) return { kind: 'timeout', action: 'retry_with_backoff', retryable: true };
+  if (status >= 500) return { kind: 'service_unavailable', action: 'retry_with_backoff', retryable: true };
+  return { kind: 'unexpected', action: 'inspect_daemon_logs', retryable: false };
+}
+
 function normalizeDaemonError(error: unknown): DaemonClientError {
   if (error && typeof error === 'object' && (error as { name?: string }).name === 'DaemonClientError') {
     return error as DaemonClientError;
@@ -240,7 +295,8 @@ function normalizeDaemonError(error: unknown): DaemonClientError {
     return createDaemonClientError({
       code: 'daemon_request_aborted',
       message: 'daemon_request_aborted',
-      retryable: false
+      retryable: false,
+      details: { kind: 'aborted', action: 'cancel_pending_ui_loading' }
     });
   }
 
@@ -248,7 +304,8 @@ function normalizeDaemonError(error: unknown): DaemonClientError {
     return createDaemonClientError({
       code: 'daemon_network_error',
       message: error.message || 'daemon_network_error',
-      retryable: true
+      retryable: true,
+      details: { kind: 'network_unreachable', action: 'check_connectivity_and_retry' }
     });
   }
 
@@ -257,7 +314,7 @@ function normalizeDaemonError(error: unknown): DaemonClientError {
       code: 'daemon_request_failed',
       message: error.message || 'daemon_request_failed',
       retryable: false,
-      details: { name: error.name }
+      details: { kind: 'unexpected', action: 'inspect_daemon_logs', name: error.name }
     });
   }
 
@@ -265,15 +322,15 @@ function normalizeDaemonError(error: unknown): DaemonClientError {
     code: 'daemon_request_failed',
     message: 'daemon_request_failed',
     retryable: false,
-    details: error
+    details: { kind: 'unexpected', action: 'inspect_daemon_logs', raw: error }
   });
 }
 
 export function createDaemonClient(options: CreateDaemonClientOptions): DaemonClient {
   const fetchImpl = options.fetchImpl || fetch;
-  const timeoutMs = options.timeoutMs || DEFAULT_TIMEOUT_MS;
-  const retryCount = options.retryCount ?? DEFAULT_RETRY_COUNT;
-  const retryDelayMs = options.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS;
+  const timeoutMs = normalizeTimeoutMs(options.timeoutMs, DEFAULT_TIMEOUT_MS);
+  const retryCount = Math.max(0, Math.floor(options.retryCount ?? DEFAULT_RETRY_COUNT));
+  const retryDelayMs = normalizeTimeoutMs(options.retryDelayMs, DEFAULT_RETRY_DELAY_MS);
   const baseUrl = normalizeBaseUrl(options.baseUrl);
 
   if (!baseUrl) {
@@ -325,6 +382,8 @@ export function createDaemonClient(options: CreateDaemonClientOptions): DaemonCl
         if (!response.ok) {
           const errBody = await response.text().catch(() => '');
           const details = parseErrorDetails(errBody);
+          const hint = mapHttpErrorHint(response.status);
+          const retryable = canRetry || hint.retryable;
           if (attempt < retryCount && canRetry) {
             await sleep(retryDelayMs * (attempt + 1));
             continue;
@@ -333,8 +392,8 @@ export function createDaemonClient(options: CreateDaemonClientOptions): DaemonCl
             code: 'daemon_http_error',
             message: `daemon_http_${response.status}`,
             status: response.status,
-            retryable: canRetry,
-            details
+            retryable,
+            details: { kind: hint.kind, action: hint.action, body: details }
           });
         }
 
@@ -356,7 +415,10 @@ export function createDaemonClient(options: CreateDaemonClientOptions): DaemonCl
           lastError = createDaemonClientError({
             code: timeoutHappened ? 'daemon_request_timeout' : 'daemon_request_aborted',
             message: timeoutHappened ? 'daemon_request_timeout' : 'daemon_request_aborted',
-            retryable: timeoutHappened
+            retryable: timeoutHappened,
+            details: timeoutHappened
+              ? { kind: 'timeout', action: 'retry_with_backoff' }
+              : { kind: 'aborted', action: 'cancel_pending_ui_loading' }
           });
         } else {
           lastError = normalizeDaemonError(error);
@@ -378,7 +440,8 @@ export function createDaemonClient(options: CreateDaemonClientOptions): DaemonCl
   }
 
   async function getSessionStatus(sessionId: string, signal?: AbortSignal): Promise<SessionSnapshot> {
-    if (!sessionId || !String(sessionId).trim()) {
+    const normalizedSessionId = normalizeId(sessionId);
+    if (!normalizedSessionId) {
       throw createDaemonClientError({
         code: 'daemon_validation_error',
         message: 'daemon_session_id_required',
@@ -386,7 +449,7 @@ export function createDaemonClient(options: CreateDaemonClientOptions): DaemonCl
       });
     }
     const payload = await requestJson<unknown>(
-      `/v1/sessions/${encodeURIComponent(String(sessionId).trim())}`,
+      `/v1/sessions/${encodeURIComponent(normalizedSessionId)}`,
       { method: 'GET' },
       signal
     );
@@ -394,16 +457,39 @@ export function createDaemonClient(options: CreateDaemonClientOptions): DaemonCl
   }
 
   async function startTask(input: StartTaskInput, signal?: AbortSignal): Promise<TaskSnapshot> {
-    if (!input.command || !String(input.command).trim()) {
+    if (!input || typeof input !== 'object') {
+      throw createDaemonClientError({
+        code: 'daemon_validation_error',
+        message: 'daemon_task_input_required',
+        retryable: false
+      });
+    }
+    const command = normalizeId(input.command);
+    if (!command) {
       throw createDaemonClientError({
         code: 'daemon_validation_error',
         message: 'daemon_task_command_required',
         retryable: false
       });
     }
+    const sessionId = normalizeId(input.sessionId);
+    if (typeof input.sessionId !== 'undefined' && !sessionId) {
+      throw createDaemonClientError({
+        code: 'daemon_validation_error',
+        message: 'daemon_session_id_required',
+        retryable: false
+      });
+    }
+    if (typeof input.metadata !== 'undefined' && !isPlainObject(input.metadata)) {
+      throw createDaemonClientError({
+        code: 'daemon_validation_error',
+        message: 'daemon_task_metadata_invalid',
+        retryable: false
+      });
+    }
     const body = JSON.stringify({
-      command: String(input.command).trim(),
-      sessionId: input.sessionId,
+      command,
+      ...(sessionId ? { sessionId } : {}),
       metadata: input.metadata || {}
     });
     const payload = await requestJson<unknown>(
@@ -418,19 +504,25 @@ export function createDaemonClient(options: CreateDaemonClientOptions): DaemonCl
   }
 
   async function getTask(taskId: string, signal?: AbortSignal): Promise<TaskSnapshot> {
-    if (!taskId) {
+    const normalizedTaskId = normalizeId(taskId);
+    if (!normalizedTaskId) {
       throw createDaemonClientError({
         code: 'daemon_validation_error',
         message: 'daemon_task_id_required',
         retryable: false
       });
     }
-    const payload = await requestJson<unknown>(`/v1/tasks/${encodeURIComponent(taskId)}`, { method: 'GET' }, signal);
+    const payload = await requestJson<unknown>(
+      `/v1/tasks/${encodeURIComponent(normalizedTaskId)}`,
+      { method: 'GET' },
+      signal
+    );
     return normalizeTaskSnapshot(payload);
   }
 
   async function cancelTask(taskId: string, signal?: AbortSignal): Promise<void> {
-    if (!taskId) {
+    const normalizedTaskId = normalizeId(taskId);
+    if (!normalizedTaskId) {
       throw createDaemonClientError({
         code: 'daemon_validation_error',
         message: 'daemon_task_id_required',
@@ -438,7 +530,7 @@ export function createDaemonClient(options: CreateDaemonClientOptions): DaemonCl
       });
     }
     await requestJson<unknown>(
-      `/v1/tasks/${encodeURIComponent(taskId)}/cancel`,
+      `/v1/tasks/${encodeURIComponent(normalizedTaskId)}/cancel`,
       {
         method: 'POST',
         body: JSON.stringify({})
@@ -451,8 +543,8 @@ export function createDaemonClient(options: CreateDaemonClientOptions): DaemonCl
     taskId: string,
     optionsArg: WaitForTaskCompletionOptions = {}
   ): Promise<TaskSnapshot> {
-    const pollIntervalMs = optionsArg.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
-    const timeout = optionsArg.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS;
+    const pollIntervalMs = normalizePollInterval(optionsArg.pollIntervalMs);
+    const timeout = normalizeTimeoutMs(optionsArg.timeoutMs, DEFAULT_WAIT_TIMEOUT_MS);
     const startedAt = Date.now();
 
     while (true) {
