@@ -3,7 +3,7 @@
 - plan_id: roadmap-m8-hyper-scale-003-2026-03-02
 - coordinator: ai-coordinator
 - created_at: 2026-03-02T00:11:45+08:00
-- updated_at: 2026-03-02T00:16:48+08:00
+- updated_at: 2026-03-01T16:17:29Z
 - status: active
 
 ## Global Rules
@@ -16,7 +16,7 @@
 - target_parallel: 50
 
 ## Checklist
-- [ ] T001 Hyper-scale task 0101
+- [x] T001 Hyper-scale task 0101
 - [ ] T002 Hyper-scale task 0102
 - [ ] T003 Hyper-scale task 0103
 - [ ] T004 Hyper-scale task 0104
@@ -74,15 +74,15 @@ Keep this checklist synced with `status`:
 - id: T001
   title: Hyper-scale task 0101
   scope: Deliver scoped output for scaleout task 0101
-  status: blocked
+  status: done
   owner: hs003001
   claimed_at: 2026-03-01T16:15:41Z
-  done_at:
+  done_at: 2026-03-01T16:16:50Z
   priority: P1
   depends_on: []
   branch: feat/hs003001-m8-t001
-  pr_or_commit:
-  blocker: worker_offline_no_recoverable_session
+  pr_or_commit: local-uncommitted
+  blocker:
   deliverable: Complete task 0101 deliverable
   acceptance:
   - output is complete and reviewable
@@ -112,7 +112,7 @@ Keep this checklist synced with `status`:
 - id: T003
   title: Hyper-scale task 0103
   scope: Deliver scoped output for scaleout task 0103
-  status: doing
+  status: blocked
   owner: aih-task-worker
   claimed_at: 2026-03-01T16:16:54Z
   done_at:
@@ -120,7 +120,7 @@ Keep this checklist synced with `status`:
   depends_on: []
   branch: feat/aih-task-worker-m8-t003
   pr_or_commit:
-  blocker:
+  blocker: worker_offline_no_recoverable_session
   deliverable: Complete task 0103 deliverable
   acceptance:
   - output is complete and reviewable
@@ -131,15 +131,15 @@ Keep this checklist synced with `status`:
 - id: T004
   title: Hyper-scale task 0104
   scope: Deliver scoped output for scaleout task 0104
-  status: todo
-  owner: unassigned
-  claimed_at:
+  status: doing
+  owner: codex
+  claimed_at: 2026-03-01T16:17:29Z
   done_at:
   priority: P1
   depends_on: []
-  branch:
+  branch: feat/codex-m8-t004
   pr_or_commit:
-  blocker:
+  blocker: worker_offline_no_recoverable_session
   deliverable: Complete task 0104 deliverable
   acceptance:
   - output is complete and reviewable
@@ -1029,3 +1029,13 @@ Keep this checklist synced with `status`:
 - 2026-03-02T00:16:26+08:00 [aih-task-worker] Claimed T002 and started implementation on feat/hs003002-m8-t002.
 
 - 2026-03-02T00:16:48+08:00 [ai-watchdog] Marked T002 blocked: worker offline and no recoverable session.
+- 2026-03-01T16:17:13Z [aih-task-worker] Claimed T004 and started implementation on feat/aih-task-worker-m8-t004.
+
+- 2026-03-02T00:17:08+08:00 [ai-watchdog] Marked T003 blocked: worker offline and no recoverable session.
+- 2026-03-01T16:16:25Z [hs003001] Resumed T001 from blocked to doing in current session; cleared blocker and continued implementation.
+
+- 2026-03-01T16:16:50Z [hs003001] Continued and completed T001: delivered docs/scaleout_tasks/batch-003/task-0101.md, set status=done, synced checklist, and wrote pr_or_commit=local-uncommitted.
+
+- 2026-03-02T00:17:28+08:00 [ai-watchdog] Marked T004 blocked: worker offline and no recoverable session.
+
+- 2026-03-01T16:17:29Z [codex] Claimed T004 owner=codex branch=feat/codex-m8-t004.
