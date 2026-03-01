@@ -11,6 +11,7 @@
     "plan:guard": "node scripts/plan-commit-guard.js",
     "plan:watchdog": "node scripts/plan-watchdog.js",
     "plan:hook:install": "node scripts/install-plan-hook.js",
+    "pr:batch": "bash scripts/ops/pr-batch.sh",
     "postinstall": "chmod +x node_modules/node-pty/prebuilds/darwin-x64/spawn-helper node_modules/node-pty/prebuilds/darwin-arm64/spawn-helper 2>/dev/null || true"
   },
   "keywords": [],
