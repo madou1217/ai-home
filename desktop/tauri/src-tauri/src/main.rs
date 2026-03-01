@@ -1,3 +1,9 @@
+mod commands {
+  pub mod accounts;
+  pub mod audit;
+  pub mod migration;
+}
+
 use serde::Serialize;
 use serde_json::Value;
 use std::env;
@@ -5,6 +11,21 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+
+#[derive(Debug, Serialize)]
+pub struct FrontendError {
+  pub namespace: &'static str,
+  pub code: &'static str,
+  pub message: String,
+}
+
+pub fn map_command_error(namespace: &'static str, code: &'static str, message: impl Into<String>) -> FrontendError {
+  FrontendError {
+    namespace,
+    code,
+    message: message.into(),
+  }
+}
 
 #[derive(Serialize)]
 struct CommandResult {
@@ -24,8 +45,15 @@ fn has_aih_entry(root: &Path) -> bool {
   root.join("bin").join("ai-home.js").exists()
 }
 
-fn resolve_repo_root() -> Result<PathBuf, String> {
-  let cwd = env::current_dir().map_err(|e| format!("failed to read cwd: {e}"))?;
+fn resolve_repo_root() -> Result<PathBuf, FrontendError> {
+  let cwd = env::current_dir().map_err(|e| {
+    map_command_error(
+      "core",
+      "CORE_CWD_READ_FAILED",
+      format!("failed to read cwd: {e}"),
+    )
+  })?;
+
   for ancestor in cwd.ancestors() {
     if has_aih_entry(ancestor) {
       return Ok(ancestor.to_path_buf());
@@ -40,10 +68,14 @@ fn resolve_repo_root() -> Result<PathBuf, String> {
     }
   }
 
-  Err("failed to locate repository root (bin/ai-home.js missing)".to_string())
+  Err(map_command_error(
+    "core",
+    "CORE_REPO_ROOT_NOT_FOUND",
+    "failed to locate repository root (bin/ai-home.js missing)",
+  ))
 }
 
-fn prepare_aih_command(args: &[String]) -> Result<Command, String> {
+fn prepare_aih_command(args: &[String]) -> Result<Command, FrontendError> {
   let repo_root = resolve_repo_root()?;
   let mut cmd = Command::new("node");
   cmd.current_dir(repo_root);
@@ -53,10 +85,14 @@ fn prepare_aih_command(args: &[String]) -> Result<Command, String> {
 }
 
 #[tauri::command]
-fn run_aih(args: Vec<String>) -> Result<CommandResult, String> {
-  let output = prepare_aih_command(&args)?
-    .output()
-    .map_err(|e| format!("failed to execute aih command: {e}"))?;
+fn run_aih(args: Vec<String>) -> Result<CommandResult, FrontendError> {
+  let output = prepare_aih_command(&args)?.output().map_err(|e| {
+    map_command_error(
+      "core",
+      "CORE_AIH_EXEC_FAILED",
+      format!("failed to execute aih command: {e}"),
+    )
+  })?;
 
   Ok(CommandResult {
     code: output.status.code().unwrap_or(-1),
@@ -66,7 +102,7 @@ fn run_aih(args: Vec<String>) -> Result<CommandResult, String> {
 }
 
 #[tauri::command]
-fn launch_aih_session(cli: String, account_id: String, prompt: Option<String>) -> Result<u32, String> {
+fn launch_aih_session(cli: String, account_id: String, prompt: Option<String>) -> Result<u32, FrontendError> {
   let mut args = vec![cli, account_id];
   if let Some(prompt_text) = prompt {
     let trimmed = prompt_text.trim();
@@ -80,7 +116,13 @@ fn launch_aih_session(cli: String, account_id: String, prompt: Option<String>) -
     .stdout(Stdio::null())
     .stderr(Stdio::null())
     .spawn()
-    .map_err(|e| format!("failed to launch session: {e}"))?;
+    .map_err(|e| {
+      map_command_error(
+        "core",
+        "CORE_SESSION_LAUNCH_FAILED",
+        format!("failed to launch session: {e}"),
+      )
+    })?;
 
   Ok(child.id())
 }
@@ -93,9 +135,10 @@ fn parse_audit_entry(value: Value) -> Option<AuditEntry> {
 }
 
 #[tauri::command]
-fn read_audit_log(limit: Option<usize>) -> Result<Vec<AuditEntry>, String> {
+fn read_audit_log(limit: Option<usize>) -> Result<Vec<AuditEntry>, FrontendError> {
   let take_n = limit.unwrap_or(200).clamp(1, 2000);
-  let home_dir = env::var("HOME").map_err(|_| "HOME is not set".to_string())?;
+  let home_dir = env::var("HOME")
+    .map_err(|_| map_command_error("audit", "AUDIT_HOME_NOT_SET", "HOME is not set"))?;
   let audit_path = PathBuf::from(home_dir)
     .join(".ai_home")
     .join("audit")
@@ -105,8 +148,13 @@ fn read_audit_log(limit: Option<usize>) -> Result<Vec<AuditEntry>, String> {
     return Ok(vec![]);
   }
 
-  let file = File::open(&audit_path)
-    .map_err(|e| format!("failed to open audit log {}: {e}", audit_path.display()))?;
+  let file = File::open(&audit_path).map_err(|e| {
+    map_command_error(
+      "audit",
+      "AUDIT_LOG_OPEN_FAILED",
+      format!("failed to open audit log {}: {e}", audit_path.display()),
+    )
+  })?;
   let reader = BufReader::new(file);
 
   let mut entries = Vec::new();
@@ -132,7 +180,14 @@ fn read_audit_log(limit: Option<usize>) -> Result<Vec<AuditEntry>, String> {
 
 fn main() {
   tauri::Builder::default()
-    .invoke_handler(tauri::generate_handler![run_aih, launch_aih_session, read_audit_log])
+    .invoke_handler(tauri::generate_handler![
+      run_aih,
+      launch_aih_session,
+      read_audit_log,
+      commands::accounts::accounts_namespace_info,
+      commands::migration::migration_namespace_info,
+      commands::audit::audit_namespace_info
+    ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
 }
