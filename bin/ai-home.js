@@ -1853,6 +1853,7 @@ function showHelp() {
   aih <cli> add [or login]  \x1b[90mCreate a new account and run the login flow\x1b[0m
   aih <cli>                 \x1b[90mRun a tool with the default account (ID: 1)\x1b[0m
   aih <cli> auto            \x1b[90mRun the next non-exhausted account automatically\x1b[0m
+  aih codex auto review --pr <PR> [prompt] \x1b[90mRun codex review then auto-merge PR if pass\x1b[0m
   aih codex auto exec --plan <plans/xxx.plan.md> "<prompt>" \x1b[90mBind one plan to one session\x1b[0m
   aih codex auto exec resume <session_id> [prompt] \x1b[90mResume a specific exec session precisely\x1b[0m
   aih codex sessions [--limit N] \x1b[90mShow recent codex session_id list\x1b[0m
@@ -2042,6 +2043,7 @@ function showCliUsage(cliName) {
   aih ${cliName} add             \x1b[90mCreate a new account and login\x1b[0m
   aih ${cliName} login           \x1b[90mAlias of add\x1b[0m
   aih ${cliName} auto            \x1b[90mAuto-select next non-exhausted account\x1b[0m
+  ${cliName === 'codex' ? `aih codex auto review --pr <PR> [prompt]  \x1b[90mReview then auto-merge PR if pass\x1b[0m` : ''}
   ${cliName === 'codex' ? `aih codex auto exec --plan <plans/xxx.plan.md> "<prompt>"  \x1b[90mBind one plan to one session\x1b[0m` : ''}
   ${cliName === 'codex' ? `aih codex auto exec resume <session_id> [prompt]  \x1b[90mResume specific exec session\x1b[0m` : ''}
   ${cliName === 'codex' ? `aih codex sessions [--limit N]  \x1b[90mShow recent codex session_id list\x1b[0m` : ''}
@@ -2262,23 +2264,7 @@ let currentId = null;
 function spawnPty(cliName, id, forwardArgs, isLogin) {
   currentCliName = cliName;
   currentId = id;
-  const sandboxDir = getProfileDir(cliName, id);
-  
-  let loadedEnv = {};
-  const envPath = path.join(sandboxDir, '.aih_env.json');
-  if (fs.existsSync(envPath)) {
-    try { loadedEnv = JSON.parse(fs.readFileSync(envPath, 'utf8')); } catch(e){}
-  }
-
-  const envOverrides = {
-    ...process.env,
-    ...loadedEnv,
-    HOME: sandboxDir,           
-    USERPROFILE: sandboxDir,    
-    CLAUDE_CONFIG_DIR: path.join(sandboxDir, '.claude'),
-    CODEX_HOME: path.join(sandboxDir, '.codex'),
-    GEMINI_CLI_SYSTEM_SETTINGS_PATH: path.join(sandboxDir, '.gemini', 'settings.json')
-  };
+  const envOverrides = getSandboxEnv(cliName, id);
 
   let argsToRun = isLogin ? (CLI_CONFIGS[cliName]?.loginArgs || []) : forwardArgs;
   if (cliName === 'codex' && !isLogin) {
@@ -2292,6 +2278,26 @@ function spawnPty(cliName, id, forwardArgs, isLogin) {
     cwd: process.cwd(),
     env: envOverrides
   });
+}
+
+function getSandboxEnv(cliName, id) {
+  const sandboxDir = getProfileDir(cliName, id);
+  
+  let loadedEnv = {};
+  const envPath = path.join(sandboxDir, '.aih_env.json');
+  if (fs.existsSync(envPath)) {
+    try { loadedEnv = JSON.parse(fs.readFileSync(envPath, 'utf8')); } catch(e){}
+  }
+
+  return {
+    ...process.env,
+    ...loadedEnv,
+    HOME: sandboxDir,           
+    USERPROFILE: sandboxDir,    
+    CLAUDE_CONFIG_DIR: path.join(sandboxDir, '.claude'),
+    CODEX_HOME: path.join(sandboxDir, '.codex'),
+    GEMINI_CLI_SYSTEM_SETTINGS_PATH: path.join(sandboxDir, '.gemini', 'settings.json')
+  };
 }
 
 function applyCodexDefaultArgs(args) {
@@ -2570,6 +2576,110 @@ function runCliPty(cliName, initialId, forwardArgs, isLogin = false, runtimeOpti
     cleanupRuntime();
     process.exit(0);
   });
+}
+
+function parseCodexAutoReviewArgs(rawArgs) {
+  const out = {
+    prRef: '',
+    repo: '',
+    mergeMethod: 'squash',
+    mergeEnabled: true,
+    autoMerge: true,
+    deleteBranch: false,
+    admin: false,
+    dryRun: false,
+    codexReviewArgs: ['review']
+  };
+  const args = Array.isArray(rawArgs) ? rawArgs.slice(1) : [];
+  for (let i = 0; i < args.length; i++) {
+    const cur = String(args[i] || '');
+    if (cur === '--pr' && i + 1 < args.length) {
+      out.prRef = String(args[++i] || '').trim();
+      continue;
+    }
+    if (cur.startsWith('--pr=')) {
+      out.prRef = cur.slice('--pr='.length).trim();
+      continue;
+    }
+    if (cur === '--repo' && i + 1 < args.length) {
+      out.repo = String(args[++i] || '').trim();
+      continue;
+    }
+    if (cur.startsWith('--repo=')) {
+      out.repo = cur.slice('--repo='.length).trim();
+      continue;
+    }
+    if (cur === '--method' && i + 1 < args.length) {
+      const m = String(args[++i] || '').trim().toLowerCase();
+      if (m === 'merge' || m === 'rebase' || m === 'squash') out.mergeMethod = m;
+      continue;
+    }
+    if (cur.startsWith('--method=')) {
+      const m = cur.slice('--method='.length).trim().toLowerCase();
+      if (m === 'merge' || m === 'rebase' || m === 'squash') out.mergeMethod = m;
+      continue;
+    }
+    if (cur === '--no-merge') { out.mergeEnabled = false; continue; }
+    if (cur === '--auto-merge' || cur === '--auto') { out.autoMerge = true; continue; }
+    if (cur === '--delete-branch' || cur === '-d') { out.deleteBranch = true; continue; }
+    if (cur === '--admin') { out.admin = true; continue; }
+    if (cur === '--dry-run') { out.dryRun = true; continue; }
+    out.codexReviewArgs.push(args[i]);
+  }
+  return out;
+}
+
+function runCodexAutoReviewFlow(accountId, leaseToken, forwardArgs) {
+  const parsed = parseCodexAutoReviewArgs(forwardArgs);
+  if (parsed.dryRun) {
+    console.log('\x1b[36m[aih review]\x1b[0m dry-run mode');
+    console.log(`  codex_args: ${parsed.codexReviewArgs.join(' ')}`);
+    console.log(`  pr: ${parsed.prRef || '(none)'}`);
+    console.log(`  merge: ${parsed.mergeEnabled ? parsed.mergeMethod : 'disabled'}`);
+    releaseAutoAccount('codex', accountId, leaseToken);
+    process.exit(0);
+  }
+
+  const env = getSandboxEnv('codex', accountId);
+  console.log(`\x1b[36m[aih review]\x1b[0m Running codex review on account ${accountId}...`);
+  const review = spawnSync('codex', parsed.codexReviewArgs, {
+    cwd: process.cwd(),
+    env,
+    stdio: 'inherit'
+  });
+  if (review.status !== 0) {
+    releaseAutoAccount('codex', accountId, leaseToken);
+    process.exit(typeof review.status === 'number' ? review.status : 1);
+  }
+
+  if (!parsed.mergeEnabled) {
+    console.log('\x1b[32m[aih review]\x1b[0m Review passed; merge disabled by --no-merge.');
+    releaseAutoAccount('codex', accountId, leaseToken);
+    process.exit(0);
+  }
+  if (!parsed.prRef) {
+    console.log('\x1b[33m[aih review]\x1b[0m Review passed, but no PR specified. Use --pr <number|url|branch> for auto-merge.');
+    releaseAutoAccount('codex', accountId, leaseToken);
+    process.exit(0);
+  }
+
+  const mergeArgs = ['pr', 'merge', parsed.prRef];
+  if (parsed.mergeMethod === 'merge') mergeArgs.push('--merge');
+  else if (parsed.mergeMethod === 'rebase') mergeArgs.push('--rebase');
+  else mergeArgs.push('--squash');
+  if (parsed.autoMerge) mergeArgs.push('--auto');
+  if (parsed.deleteBranch) mergeArgs.push('--delete-branch');
+  if (parsed.admin) mergeArgs.push('--admin');
+  if (parsed.repo) mergeArgs.push('--repo', parsed.repo);
+
+  console.log(`\x1b[36m[aih review]\x1b[0m Review passed. Merging PR ${parsed.prRef} via gh...`);
+  const merge = spawnSync('gh', mergeArgs, {
+    cwd: process.cwd(),
+    env: process.env,
+    stdio: 'inherit'
+  });
+  releaseAutoAccount('codex', accountId, leaseToken);
+  process.exit(typeof merge.status === 'number' ? merge.status : 1);
 }
 
 function createAccount(cliName, id, skipMigration = false) {
@@ -3958,6 +4068,10 @@ if (idOrAction === 'auto') {
   let taskKey = '';
   let planPath = '';
   if (cliName === 'codex') {
+    if (String(forwardArgs[0] || '') === 'review') {
+      runCodexAutoReviewFlow(nextId, allocation.leaseToken, forwardArgs);
+      return;
+    }
     const resolved = resolveCodexAutoExecArgs(forwardArgs);
     if (resolved.error) {
       console.error(`\x1b[31m[aih]\x1b[0m ${resolved.error}`);

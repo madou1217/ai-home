@@ -178,6 +178,15 @@ aih codex plan-sessions
 aih codex auto exec resume <session_id> "继续执行"
 ```
 
+自动审计 + 自动合并（Codex Review + GH Merge）：
+```bash
+# review 通过后自动 merge PR（默认 squash + --auto）
+aih codex auto review --pr 123
+
+# 可选：不合并，仅 review
+aih codex auto review --pr 123 --no-merge
+```
+
 相关文件：
 - `skills/aih-task-orchestrator/SKILL.md`：协调 AI（拆任务 + 分发）
 - `skills/aih-task-worker/SKILL.md`：执行 AI（领任务 + 实现）
