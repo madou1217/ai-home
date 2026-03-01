@@ -153,6 +153,10 @@ impl SessionRegistry {
         self.lifecycle.last_transition = format!("{}_TO_RESTARTING_TO_RUNNING", previous);
         self.lifecycle_status_line()
     }
+
+    fn is_running(&self) -> bool {
+        matches!(self.lifecycle.state, DaemonState::Running)
+    }
 }
 
 fn main() -> io::Result<()> {
@@ -296,6 +300,18 @@ fn process_command(
         Some(raw) => raw.to_ascii_uppercase(),
         None => return String::from("ERR BAD_REQUEST empty%20command"),
     };
+
+    // Allow lifecycle control and basic session management while stopped,
+    // but gate project session operations to keep state transitions deterministic.
+    let blocks_when_stopped = matches!(cmd.as_str(), "OPEN_SESSION" | "RESUME_SESSION");
+    if *authenticated && blocks_when_stopped {
+        let running = sessions.lock().map(|registry| registry.is_running());
+        match running {
+            Ok(true) => {}
+            Ok(false) => return String::from("ERR DAEMON_STOPPED lifecycle%20state%20is%20stopped"),
+            Err(_) => return String::from("ERR INTERNAL session%20registry%20lock%20failed"),
+        }
+    }
 
     match cmd.as_str() {
         "HELLO" => {
