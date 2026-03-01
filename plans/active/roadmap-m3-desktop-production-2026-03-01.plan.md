@@ -3,7 +3,7 @@
 - plan_id: roadmap-m3-desktop-production-2026-03-01
 - coordinator: ai-coordinator
 - created_at: 2026-03-01T21:34:22+08:00
-- updated_at: 2026-03-01T22:18:40+08:00
+- updated_at: 2026-03-01T22:36:51+08:00
 - status: active
 
 ## Global Rules
@@ -15,7 +15,7 @@
 
 ## Checklist
 - [x] T001 Tauri command registration
-- [ ] T002 Desktop accounts command module
+- [x] T002 Desktop accounts command module
 - [ ] T003 Desktop migration command module
 - [ ] T004 Desktop audit command module
 - [ ] T005 Desktop dashboard and launcher UI
@@ -49,14 +49,14 @@ Keep this checklist synced with `status`:
 - id: T002
   title: Desktop accounts command module
   scope: Implement Rust command module for account list/status/default switch operations
-  status: doing
+  status: done
   owner: alice
   claimed_at: 2026-03-01T22:16:27+08:00
-  done_at:
+  done_at: 2026-03-01T22:36:51+08:00
   priority: P0
   depends_on: [T001]
   branch: feat/alice-m3-t002
-  pr_or_commit:
+  pr_or_commit: 822715f
   blocker:
   deliverable: Accounts command module callable from GUI
   acceptance:
@@ -227,3 +227,5 @@ Keep this checklist synced with `status`:
 - 2026-03-01T22:18:39+08:00 [aih-auto] Claimed T005 (m3-t005-dave) owner=dave branch=feat/dave-m3-t005.
 
 - 2026-03-01T22:18:40+08:00 [aih-auto] Claimed T003 (m3-t003-bob) owner=bob branch=feat/bob-m3-t003.
+
+- 2026-03-01T22:36:51+08:00 [alice] Completed T002 (m3-t002-alice); set status=done, synced checklist, and recorded pr_or_commit=822715f.
