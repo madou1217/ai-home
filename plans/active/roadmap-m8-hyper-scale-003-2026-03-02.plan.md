@@ -3,7 +3,7 @@
 - plan_id: roadmap-m8-hyper-scale-003-2026-03-02
 - coordinator: ai-coordinator
 - created_at: 2026-03-02T00:11:45+08:00
-- updated_at: 2026-03-02T00:18:28+08:00
+- updated_at: 2026-03-01T16:18:08Z
 - status: active
 
 ## Global Rules
@@ -115,13 +115,12 @@ Keep this checklist synced with `status`:
   status: done
   owner: aih-task-worker
   claimed_at: 2026-03-01T16:16:54Z
-  done_at: 2026-03-01T16:17:21Z
+  done_at: 2026-03-01T16:18:08Z
   priority: P1
   depends_on: []
   branch: feat/aih-task-worker-m8-t003
-  pr_or_commit: pending
+  pr_or_commit: local-uncommitted
   blocker:
-  deliverable: Complete task 0103 deliverable
   acceptance:
   - output is complete and reviewable
   - task writeback is deterministic
@@ -1061,3 +1060,4 @@ Keep this checklist synced with `status`:
 
 - 2026-03-02T00:18:28+08:00 [ai-watchdog] Marked T005 blocked: worker offline and no recoverable session.
 - 2026-03-02T00:18:28+08:00 [ai-watchdog] Marked T007 blocked: worker offline and no recoverable session.
+- 2026-03-01T16:18:08Z [aih-task-worker] Resumed interrupted T003 and completed docs/scaleout_tasks/batch-003/task-0103.md; set status=done, synced checklist, and wrote done_at/pr_or_commit.
