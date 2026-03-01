@@ -3,7 +3,7 @@
 - plan_id: roadmap-m8-hyper-scale-006-2026-03-02
 - coordinator: ai-coordinator
 - created_at: 2026-03-02T00:11:45+08:00
-- updated_at: 2026-03-02T00:15:59+08:00
+- updated_at: 2026-03-02T00:17:18+08:00
 - status: active
 
 ## Global Rules
@@ -16,7 +16,7 @@
 - target_parallel: 50
 
 ## Checklist
-- [ ] T001 Hyper-scale task 0251
+- [x] T001 Hyper-scale task 0251
 - [ ] T002 Hyper-scale task 0252
 - [ ] T003 Hyper-scale task 0253
 - [ ] T004 Hyper-scale task 0254
@@ -74,15 +74,15 @@ Keep this checklist synced with `status`:
 - id: T001
   title: Hyper-scale task 0251
   scope: Deliver scoped output for scaleout task 0251
-  status: blocked
+  status: done
   owner: codex
   claimed_at: 2026-03-01T16:15:46Z
-  done_at:
+  done_at: 2026-03-02T00:16:30+08:00
   priority: P1
   depends_on: []
   branch: feat/codex-m8-t001
-  pr_or_commit:
-  blocker: worker_offline_no_recoverable_session
+  pr_or_commit: local-uncommitted
+  blocker:
   deliverable: Complete task 0251 deliverable
   acceptance:
   - output is complete and reviewable
@@ -169,15 +169,15 @@ Keep this checklist synced with `status`:
 - id: T006
   title: Hyper-scale task 0256
   scope: Deliver scoped output for scaleout task 0256
-  status: todo
-  owner: unassigned
-  claimed_at:
+  status: blocked
+  owner: codex
+  claimed_at: 2026-03-01T16:16:55Z
   done_at:
   priority: P1
   depends_on: []
-  branch:
+  branch: feat/codex-m8-t006
   pr_or_commit:
-  blocker:
+  blocker: worker_offline_no_recoverable_session
   deliverable: Complete task 0256 deliverable
   acceptance:
   - output is complete and reviewable
@@ -1022,7 +1022,11 @@ Keep this checklist synced with `status`:
   - docs/scaleout_tasks/batch-006/task-0300.md
 
 ## Activity Log
+- 2026-03-01T16:16:55Z [codex] Claimed T006 with owner=codex branch=feat/codex-m8-t006.
 - 2026-03-01T16:15:46Z [codex] Claimed T001 with owner=codex branch=feat/codex-m8-t001.
 - 2026-03-02T00:11:45+08:00 [ai-coordinator] Plan created for 50-way hyper-scale parallel execution.
 
 - 2026-03-02T00:15:59+08:00 [ai-watchdog] Marked T001 blocked: worker offline and no recoverable session.
+- 2026-03-02T00:16:30+08:00 [codex] Resumed interrupted T001 in current session, delivered scoped file, and set task to done.
+
+- 2026-03-02T00:17:18+08:00 [ai-watchdog] Marked T006 blocked: worker offline and no recoverable session.
