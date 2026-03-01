@@ -3,7 +3,7 @@
 - plan_id: roadmap-m8-hyper-scale-003-2026-03-02
 - coordinator: ai-coordinator
 - created_at: 2026-03-02T00:11:45+08:00
-- updated_at: 2026-03-01T16:18:08Z
+- updated_at: 2026-03-01T16:19:22Z
 - status: active
 
 ## Global Rules
@@ -137,7 +137,7 @@ Keep this checklist synced with `status`:
   priority: P1
   depends_on: []
   branch: feat/codex-m8-t004
-  pr_or_commit: local:docs/scaleout_tasks/batch-003/task-0104.md
+  pr_or_commit: 33b6381
   blocker:
   deliverable: Complete task 0104 deliverable
   acceptance:
@@ -190,12 +190,12 @@ Keep this checklist synced with `status`:
   status: blocked
   owner: hs003007
   claimed_at: 2026-03-01T16:18:16Z
-  done_at:
+  done_at: 2026-03-01T16:19:22Z
   priority: P1
   depends_on: []
   branch: feat/hs003007-m8-t007
-  pr_or_commit:
-  blocker: worker_offline_no_recoverable_session
+  pr_or_commit: blocked:missing-scoped-file-task-0107
+  blocker: missing_scoped_file:docs/scaleout_tasks/batch-003/task-0107.md
   deliverable: Complete task 0107 deliverable
   acceptance:
   - output is complete and reviewable
@@ -1060,4 +1060,9 @@ Keep this checklist synced with `status`:
 
 - 2026-03-02T00:18:28+08:00 [ai-watchdog] Marked T005 blocked: worker offline and no recoverable session.
 - 2026-03-02T00:18:28+08:00 [ai-watchdog] Marked T007 blocked: worker offline and no recoverable session.
+- 2026-03-01T16:18:36Z [aih-task-worker] Continued interrupted T003 in original session context; verified status=done with done_at/pr_or_commit/checklist in sync and closed loop.
 - 2026-03-01T16:18:08Z [aih-task-worker] Resumed interrupted T003 and completed docs/scaleout_tasks/batch-003/task-0103.md; set status=done, synced checklist, and wrote done_at/pr_or_commit.
+- 2026-03-01T16:19:16Z [aih-task-worker] T003 commit attempt was blocked by plan-guard due to unrelated active doing tasks; set pr_or_commit=local-uncommitted(plan-guard).
+- 2026-03-01T16:19:22Z [codex] Blocked T007: scoped file docs/scaleout_tasks/batch-003/task-0107.md not found; wrote done_at and pr_or_commit=blocked:missing-scoped-file-task-0107.
+
+- 2026-03-01T16:19:36Z [aih-task-worker] Updated T003 pr_or_commit=local-uncommitted and confirmed done writeback fields are complete.
