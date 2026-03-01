@@ -1568,15 +1568,8 @@ function resolveCodexAutoExecArgs(rawForwardArgs) {
       explicitSessionId = cur;
       continue;
     }
-    if (cur === '--' && i + 2 < tokens.length && String(tokens[i + 1]) === '--prompt') {
-      prompt = String(tokens[i + 2] || '');
-      i += 2;
-      continue;
-    }
-    if (cur === '--prompt' && i + 1 < tokens.length) {
-      prompt = String(tokens[i + 1] || '');
-      i += 1;
-      continue;
+    if (cur === '--prompt' || (cur === '--' && i + 1 < tokens.length && String(tokens[i + 1]) === '--prompt')) {
+      return { args, taskKey, error: 'Unsupported --prompt syntax. Use positional prompt: aih codex auto exec resume <session_id> "你写到哪里了"' };
     }
     rest.push(cur);
   }
