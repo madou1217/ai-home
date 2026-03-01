@@ -154,3 +154,31 @@ aih proxy autostart uninstall
 - `GET /v0/management/accounts`
 - `GET /v0/management/models`
 - `POST /v0/management/reload`
+
+### 11. 多 AI / Subagent 任务看板
+用于并行协作时查看“哪个 AI 在做什么”。
+
+```bash
+# 只看进行中（doing / blocked）
+npm run plan:board
+
+# 看全部（todo / doing / blocked / done）
+npm run plan:board -- --all
+```
+
+会话追踪（推荐）：
+```bash
+# 一个 plan 绑定一个会话
+aih codex auto exec --plan plans/roadmap-m4-2-remote-project-workflow-2026-03-01.plan.md "继续执行 T001"
+
+# 查看 plan -> session_id
+aih codex plan-sessions
+
+# 精准恢复
+aih codex auto exec resume <session_id> "继续执行"
+```
+
+相关文件：
+- `skills/aih-task-orchestrator/SKILL.md`：协调 AI（拆任务 + 分发）
+- `skills/aih-task-worker/SKILL.md`：执行 AI（领任务 + 实现）
+- `plans/AGENT_BOARD.md`：看板规则

@@ -5,6 +5,8 @@ This folder is the single source of truth for parallel task execution.
 ## Goal
 - Allow multiple AIs to work in parallel without touching the same task.
 - Keep every task in one `.plan.md` file with claim/owner/status fields.
+- Every task must also appear as Markdown checklist item (`- [ ]` / `- [x]`).
+- Each active plan should bind to one codex session (`plan -> session_id`).
 
 ## File Naming
 - Active plan: `plans/<topic>-<yyyy-mm-dd>.plan.md`
@@ -23,9 +25,11 @@ This folder is the single source of truth for parallel task execution.
 - `status: done`
 - `done_at: <ISO8601>`
 - add `pr_or_commit: <commit/hash>`
+ - set checklist item to `- [x]`
 6. If blocked, change:
 - `status: blocked`
 - add `blocker: <reason>`
+ - keep checklist item as `- [ ]`
 
 ## Conflict Rule
 - Never work on a task with `status: doing` owned by another AI.
@@ -46,3 +50,16 @@ Each todo item must include:
 - `acceptance`
 - `files`
 
+## Checklist Rule (Mandatory)
+- Add a `## Checklist` section in each plan file.
+- Each task must have one line: `- [ ] T001 <title>`.
+- Only mark `[x]` when task status is `done`.
+
+## Minimal Workflow (No Long Prompt Required)
+1. Start/continue a plan-bound session:
+- `aih codex auto exec --plan plans/<name>.plan.md "<short instruction>"`
+2. Inspect current bindings and recover session:
+- `aih codex plan-sessions`
+- `aih codex last-session`
+3. Precise resume:
+- `aih codex auto exec resume <session_id> "继续执行"`
