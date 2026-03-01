@@ -1516,7 +1516,22 @@ function parseCodexExecTaskKey(forwardArgs) {
 
 function showCodexSessions(limit = 20) {
   const all = readTaskSessionRegistry();
-  const list = Array.isArray(all.sessions) ? all.sessions : [];
+  let list = Array.isArray(all.sessions) ? [...all.sessions] : [];
+  if (list.length === 0) {
+    Object.values(all.tasks || {}).forEach((v) => {
+      if (!v || !v.sessionId) return;
+      list.push({
+        sessionId: v.sessionId,
+        updatedAt: v.updatedAt || '',
+        accountId: v.accountId || '',
+        cwd: v.cwd || '',
+        taskKey: v.taskKey || ''
+      });
+    });
+  }
+  list = list
+    .filter((x) => !!x && !!x.sessionId)
+    .sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
   if (list.length === 0) {
     console.log('\x1b[90m[aih]\x1b[0m No recorded codex sessions.');
     return;
@@ -1530,6 +1545,19 @@ function showCodexSessions(limit = 20) {
     if (v.updatedAt) console.log(`    updated_at: ${v.updatedAt}`);
   });
   console.log('');
+}
+
+function showCodexLastSession() {
+  const latest = getLatestSessionForCwd(process.cwd());
+  if (!latest || !latest.sessionId) {
+    console.log('\x1b[90m[aih]\x1b[0m No recent session for current project.');
+    console.log('\x1b[90mHint:\x1b[0m run `aih codex sessions` first.');
+    return;
+  }
+  console.log(`\x1b[36m[aih]\x1b[0m last_session_id: \x1b[36m${latest.sessionId}\x1b[0m`);
+  if (latest.accountId) console.log(`\x1b[90m[aih]\x1b[0m account_id: ${latest.accountId}`);
+  if (latest.updatedAt) console.log(`\x1b[90m[aih]\x1b[0m updated_at: ${latest.updatedAt}`);
+  console.log(`\x1b[90m[aih]\x1b[0m resume: aih codex auto exec resume ${latest.sessionId} "你写到哪里了"`);
 }
 
 function resolveCodexAutoExecArgs(rawForwardArgs) {
@@ -1701,6 +1729,7 @@ function showHelp() {
   aih <cli> auto            \x1b[90mRun the next non-exhausted account automatically\x1b[0m
   aih codex auto exec resume <session_id> [prompt] \x1b[90mResume a specific exec session precisely\x1b[0m
   aih codex sessions [--limit N] \x1b[90mShow recent codex session_id list\x1b[0m
+  aih codex last-session     \x1b[90mShow current project's latest session_id\x1b[0m
   aih <cli> usage <id>      \x1b[90mShow trusted usage-remaining snapshot (OAuth only)\x1b[0m
   aih <cli> usages          \x1b[90mShow trusted usage-remaining snapshots for all OAuth accounts\x1b[0m
   aih codex import-output [dir] [--parallel N] [--limit N] [--dry-run]\x1b[90mBulk import codex refresh tokens from output files\x1b[0m
@@ -1887,6 +1916,7 @@ function showCliUsage(cliName) {
   aih ${cliName} auto            \x1b[90mAuto-select next non-exhausted account\x1b[0m
   ${cliName === 'codex' ? `aih codex auto exec resume <session_id> [prompt]  \x1b[90mResume specific exec session\x1b[0m` : ''}
   ${cliName === 'codex' ? `aih codex sessions [--limit N]  \x1b[90mShow recent codex session_id list\x1b[0m` : ''}
+  ${cliName === 'codex' ? `aih codex last-session  \x1b[90mShow current project's latest session_id\x1b[0m` : ''}
   aih ${cliName} usage <id>      \x1b[90mShow trusted usage-remaining snapshot (OAuth)\x1b[0m
   aih ${cliName} usages          \x1b[90mShow trusted usage snapshots for all OAuth accounts\x1b[0m
   ${cliName === 'codex' ? 'aih codex import-output [dir] [--parallel N] [--limit N] [--dry-run]  \x1b[90mBulk import codex refresh tokens\x1b[0m' : ''}
@@ -2297,6 +2327,10 @@ function runCliPty(cliName, initialId, forwardArgs, isLogin = false, runtimeOpti
           cwd: process.cwd(),
           taskKey: taskKey || ''
         });
+        if (cliName === 'codex') {
+          process.stdout.write(`\r\n\x1b[90m[aih]\x1b[0m captured_session_id: ${lastCapturedSessionId}\r\n`);
+          process.stdout.write(`\x1b[90m[aih]\x1b[0m resume_cmd: aih codex auto exec resume ${lastCapturedSessionId} "继续执行"\r\n`);
+        }
         if (cliName === 'codex' && taskKey) {
           setTaskSession(taskKey, lastCapturedSessionId, {
             cli: cliName,
@@ -3540,7 +3574,8 @@ const USAGE_ACTIONS = new Set(['usage', '--usage', 'stats']);
 const USAGES_ACTIONS = new Set(['usages', 'usage-all', 'all-usage', 'all-usages']);
 const IMPORT_OUTPUT_ACTIONS = new Set(['import-output', 'import_output', 'bulk-import', 'bulk_import']);
 const SESSION_ACTIONS = new Set(['sessions', 'session', 'task-sessions', 'task_sessions', 'session-map', 'session_map']);
-const KNOWN_ACTIONS = new Set(['ls', 'set-default', 'add', 'login', 'auth', 'auto', ...SESSION_ACTIONS, ...UNLOCK_ACTIONS, ...USAGE_ACTIONS, ...USAGES_ACTIONS, ...IMPORT_OUTPUT_ACTIONS]);
+const LAST_SESSION_ACTIONS = new Set(['last-session', 'last_session', 'latest-session', 'latest_session']);
+const KNOWN_ACTIONS = new Set(['ls', 'set-default', 'add', 'login', 'auth', 'auto', ...SESSION_ACTIONS, ...LAST_SESSION_ACTIONS, ...UNLOCK_ACTIONS, ...USAGE_ACTIONS, ...USAGES_ACTIONS, ...IMPORT_OUTPUT_ACTIONS]);
 
 if (idOrAction === 'help') {
   showCliUsage(cliName);
@@ -3664,6 +3699,15 @@ if (idOrAction && SESSION_ACTIONS.has(idOrAction)) {
   if ((a2 === '--limit' || a2 === '-n') && /^\d+$/.test(a3)) limit = Number(a3);
   if (a2.startsWith('--limit=') && /^\d+$/.test(a2.slice('--limit='.length))) limit = Number(a2.slice('--limit='.length));
   showCodexSessions(limit);
+  process.exit(0);
+}
+
+if (idOrAction && LAST_SESSION_ACTIONS.has(idOrAction)) {
+  if (cliName !== 'codex') {
+    console.error(`\x1b[31m[aih] ${idOrAction} is currently supported only for codex.\x1b[0m`);
+    process.exit(1);
+  }
+  showCodexLastSession();
   process.exit(0);
 }
 
