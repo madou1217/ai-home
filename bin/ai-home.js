@@ -17,6 +17,16 @@ const {
   buildOpenAIModelsList
 } = require('../lib/proxy/models');
 const { renderProxyStatusPage } = require('../lib/proxy/status-page');
+const {
+  buildPromptFromChatRequest,
+  buildPromptFromResponsesRequest,
+  runCodexLocalCompletion,
+  runGeminiLocalCompletion,
+  initProxyMetrics,
+  pushMetricError,
+  isRetriableLocalError,
+  createProviderExecutor
+} = require('../lib/proxy/local');
 
 // Configurations
 const HOST_HOME_DIR = (() => {
@@ -2146,254 +2156,11 @@ async function fetchModelsForAccount(options, account, timeoutMs = 8000) {
     .filter(Boolean);
 }
 
-function extractTextFromContent(content) {
-  if (typeof content === 'string') return content;
-  if (Array.isArray(content)) {
-    return content
-      .map((part) => {
-        if (!part) return '';
-        if (typeof part === 'string') return part;
-        if (part.type === 'text') return String(part.text || '');
-        return '';
-      })
-      .filter(Boolean)
-      .join('\n');
-  }
-  if (content && typeof content === 'object' && typeof content.text === 'string') {
-    return content.text;
-  }
-  return '';
-}
-
-function buildPromptFromChatRequest(body) {
-  const messages = Array.isArray(body && body.messages) ? body.messages : [];
-  if (messages.length === 0) return 'Please respond helpfully.';
-  return messages.map((m) => {
-    const role = String((m && m.role) || 'user');
-    const text = extractTextFromContent(m && m.content);
-    return `${role.toUpperCase()}:\n${text}`;
-  }).join('\n\n');
-}
-
-function buildPromptFromResponsesRequest(body) {
-  const input = body && body.input;
-  if (typeof input === 'string' && input.trim()) return input.trim();
-  if (Array.isArray(input)) {
-    return input.map((item) => {
-      if (typeof item === 'string') return item;
-      if (item && typeof item === 'object') {
-        return extractTextFromContent(item.content);
-      }
-      return '';
-    }).filter(Boolean).join('\n\n');
-  }
-  return 'Please respond helpfully.';
-}
-
-function spawnWithTimeout(command, args, opts, timeoutMs) {
-  return new Promise((resolve) => {
-    const child = spawn(command, args, opts);
-    let stdout = '';
-    let stderr = '';
-    let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      try { child.kill('SIGTERM'); } catch (e) {}
-      setTimeout(() => {
-        try { child.kill('SIGKILL'); } catch (e) {}
-      }, 500);
-    }, timeoutMs);
-    child.stdout.on('data', (chunk) => { stdout += String(chunk || ''); });
-    child.stderr.on('data', (chunk) => { stderr += String(chunk || ''); });
-    child.on('error', (error) => {
-      clearTimeout(timer);
-      resolve({ code: 1, stdout, stderr: `${stderr}\n${String((error && error.message) || error)}`, timedOut });
-    });
-    child.on('close', (code) => {
-      clearTimeout(timer);
-      resolve({ code: Number(code) || 0, stdout, stderr, timedOut });
-    });
-  });
-}
-
-async function runCodexLocalCompletion(account, prompt, timeoutMs) {
-  const sandboxDir = getProfileDir('codex', account.id);
-  const outFile = path.join(os.tmpdir(), `aih-codex-out-${Date.now()}-${Math.random().toString(16).slice(2)}.txt`);
-  const args = [
-    'exec',
-    '--skip-git-repo-check',
-    '--sandbox', 'danger-full-access',
-    '--output-last-message', outFile,
-    prompt
-  ];
-  const env = {
-    ...process.env,
-    HOME: sandboxDir,
-    USERPROFILE: sandboxDir,
-    CODEX_HOME: path.join(sandboxDir, '.codex')
-  };
-  const run = await spawnWithTimeout('codex', args, { env, cwd: process.cwd() }, timeoutMs);
-  let text = '';
-  try {
-    if (fs.existsSync(outFile)) text = String(fs.readFileSync(outFile, 'utf8') || '').trim();
-  } catch (e) {}
-  try { if (fs.existsSync(outFile)) fs.unlinkSync(outFile); } catch (e) {}
-  if (run.timedOut) {
-    throw new Error('codex_exec_timeout');
-  }
-  if (run.code !== 0 && !text) {
-    const msg = String(run.stderr || run.stdout || '').trim();
-    throw new Error(msg || `codex_exec_exit_${run.code}`);
-  }
-  if (!text) {
-    throw new Error('codex_empty_response');
-  }
-  return text;
-}
-
-function parseGeminiJsonPayload(stdoutText) {
-  const text = String(stdoutText || '');
-  const first = text.indexOf('{');
-  const last = text.lastIndexOf('}');
-  if (first < 0 || last <= first) return null;
-  const candidate = text.slice(first, last + 1).trim();
-  try {
-    return JSON.parse(candidate);
-  } catch (e) {}
-  return null;
-}
-
-function cleanGeminiTextOutput(stdoutText) {
-  const lines = String(stdoutText || '')
-    .split(/\r?\n/)
-    .map((x) => x.trim())
-    .filter(Boolean)
-    .filter((x) => !x.includes('YOLO mode is enabled'))
-    .filter((x) => !x.includes('Loaded cached credentials.'));
-  return lines.join('\n').trim();
-}
-
-async function runGeminiLocalCompletion(account, prompt, timeoutMs) {
-  const sandboxDir = getProfileDir('gemini', account.id);
-  const args = [
-    '-p',
-    prompt,
-    '--output-format',
-    'json',
-    '--approval-mode',
-    'yolo'
-  ];
-  const env = {
-    ...process.env,
-    HOME: sandboxDir,
-    USERPROFILE: sandboxDir,
-    GEMINI_CLI_SYSTEM_SETTINGS_PATH: path.join(sandboxDir, '.gemini', 'settings.json')
-  };
-  const run = await spawnWithTimeout('gemini', args, { env, cwd: process.cwd() }, timeoutMs);
-  if (run.timedOut) throw new Error('gemini_exec_timeout');
-  const payload = parseGeminiJsonPayload(run.stdout);
-  let text = payload && typeof payload.response === 'string' ? payload.response : '';
-  if (!text) text = cleanGeminiTextOutput(run.stdout);
-  if (!text && run.code !== 0) {
-    const msg = String(run.stderr || run.stdout || '').trim();
-    throw new Error(msg || `gemini_exec_exit_${run.code}`);
-  }
-  if (!text) throw new Error('gemini_empty_response');
-  const discoveredModels = payload && payload.stats && payload.stats.models && typeof payload.stats.models === 'object'
-    ? Object.keys(payload.stats.models).map((x) => String(x || '').trim()).filter(Boolean)
-    : [];
-  return { text, discoveredModels };
-}
-
-function initProxyMetrics() {
-  return {
-    startedAt: Date.now(),
-    totalRequests: 0,
-    totalSuccess: 0,
-    totalFailures: 0,
-    totalTimeouts: 0,
-    routeCounts: {},
-    providerCounts: { codex: 0, gemini: 0 },
-    providerSuccess: { codex: 0, gemini: 0 },
-    providerFailures: { codex: 0, gemini: 0 },
-    lastErrors: []
-  };
-}
-
-function pushMetricError(metrics, route, provider, message) {
-  const item = {
-    at: new Date().toISOString(),
-    route,
-    provider,
-    error: String(message || '').slice(0, 500)
-  };
-  metrics.lastErrors.push(item);
-  if (metrics.lastErrors.length > 20) {
-    metrics.lastErrors = metrics.lastErrors.slice(-20);
-  }
-}
-
 function appendProxyRequestLog(entry) {
   const line = JSON.stringify(entry);
   try {
     fs.appendFileSync(AIH_PROXY_LOG_FILE, `${line}\n`);
   } catch (e) {}
-}
-
-function isRetriableLocalError(message) {
-  const m = String(message || '').toLowerCase();
-  if (!m) return false;
-  if (m.includes('queue_full')) return false;
-  if (m.includes('unsupported')) return false;
-  if (m.includes('timeout')) return true;
-  if (m.includes('failed')) return true;
-  if (m.includes('exit_')) return true;
-  return false;
-}
-
-function createProviderExecutor(name, maxConcurrency, queueLimit) {
-  const queue = [];
-  let running = 0;
-  let totalScheduled = 0;
-  let totalRejected = 0;
-
-  const runNext = () => {
-    if (running >= maxConcurrency) return;
-    const job = queue.shift();
-    if (!job) return;
-    running += 1;
-    Promise.resolve()
-      .then(job.fn)
-      .then((result) => job.resolve(result))
-      .catch((error) => job.reject(error))
-      .finally(() => {
-        running -= 1;
-        runNext();
-      });
-  };
-
-  const schedule = (fn) => new Promise((resolve, reject) => {
-    if (queue.length >= queueLimit) {
-      totalRejected += 1;
-      reject(new Error(`${name}_queue_full`));
-      return;
-    }
-    totalScheduled += 1;
-    queue.push({ fn, resolve, reject });
-    runNext();
-  });
-
-  const snapshot = () => ({
-    name,
-    running,
-    queued: queue.length,
-    maxConcurrency,
-    queueLimit,
-    totalScheduled,
-    totalRejected
-  });
-
-  return { schedule, snapshot };
 }
 
 function buildChatCompletionPayload(model, text) {
@@ -2484,6 +2251,7 @@ async function startLocalProxyServer(options) {
   const requiredClientKey = String(options.clientKey || '').trim();
   const requiredManagementKey = String(options.managementKey || '').trim();
   const cooldownMs = Math.max(1000, Number(options.cooldownMs) || 60000);
+  const localExecOpts = { getProfileDir, cwd: process.cwd() };
 
   const server = http.createServer(async (req, res) => {
     const method = String(req.method || 'GET').toUpperCase();
@@ -2722,12 +2490,12 @@ async function startLocalProxyServer(options) {
             let text = '';
             await exec.schedule(async () => {
               if (provider === 'gemini') {
-                const out = await runGeminiLocalCompletion(account, prompt, options.upstreamTimeoutMs);
+                const out = await runGeminiLocalCompletion(account, prompt, options.upstreamTimeoutMs, localExecOpts);
                 text = out.text;
                 (out.discoveredModels || []).forEach((m) => addModelToRegistry(state.modelRegistry, 'gemini', m));
                 return;
               }
-              text = await runCodexLocalCompletion(account, prompt, options.upstreamTimeoutMs);
+              text = await runCodexLocalCompletion(account, prompt, options.upstreamTimeoutMs, localExecOpts);
               addModelToRegistry(state.modelRegistry, 'codex', requestJson && requestJson.model);
             });
             const isStream = !!(requestJson && requestJson.stream);
@@ -2815,12 +2583,12 @@ async function startLocalProxyServer(options) {
             let text = '';
             await exec.schedule(async () => {
               if (provider === 'gemini') {
-                const out = await runGeminiLocalCompletion(account, prompt, options.upstreamTimeoutMs);
+                const out = await runGeminiLocalCompletion(account, prompt, options.upstreamTimeoutMs, localExecOpts);
                 text = out.text;
                 (out.discoveredModels || []).forEach((m) => addModelToRegistry(state.modelRegistry, 'gemini', m));
                 return;
               }
-              text = await runCodexLocalCompletion(account, prompt, options.upstreamTimeoutMs);
+              text = await runCodexLocalCompletion(account, prompt, options.upstreamTimeoutMs, localExecOpts);
               addModelToRegistry(state.modelRegistry, 'codex', requestJson && requestJson.model);
             });
             const model = String((requestJson && requestJson.model) || 'gpt-4o-mini');
