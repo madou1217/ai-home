@@ -3,7 +3,7 @@
 - plan_id: roadmap-m8-hyper-scale-003-2026-03-02
 - coordinator: ai-coordinator
 - created_at: 2026-03-02T00:11:45+08:00
-- updated_at: 2026-03-02T00:15:59+08:00
+- updated_at: 2026-03-02T00:16:26+08:00
 - status: active
 
 ## Global Rules
@@ -93,13 +93,13 @@ Keep this checklist synced with `status`:
 - id: T002
   title: Hyper-scale task 0102
   scope: Deliver scoped output for scaleout task 0102
-  status: todo
-  owner: unassigned
-  claimed_at:
+  status: doing
+  owner: hs003002
+  claimed_at: 2026-03-02T00:16:26+08:00
   done_at:
   priority: P1
   depends_on: []
-  branch:
+  branch: feat/hs003002-m8-t002
   pr_or_commit:
   blocker:
   deliverable: Complete task 0102 deliverable
@@ -1026,3 +1026,4 @@ Keep this checklist synced with `status`:
 - 2026-03-01T16:15:41Z [hs003001] Claimed T001 and started implementation on feat/hs003001-m8-t001.
 
 - 2026-03-02T00:15:59+08:00 [ai-watchdog] Marked T001 blocked: worker offline and no recoverable session.
+- 2026-03-02T00:16:26+08:00 [aih-task-worker] Claimed T002 and started implementation on feat/hs003002-m8-t002.
