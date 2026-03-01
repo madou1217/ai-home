@@ -65,6 +65,10 @@ const {
   handleLocalChatCompletions,
   handleLocalResponses
 } = require('../lib/proxy/local-endpoints');
+const {
+  handleUpstreamModels,
+  handleUpstreamPassthrough
+} = require('../lib/proxy/upstream-endpoints');
 
 // Configurations
 const HOST_HOME_DIR = (() => {
@@ -1767,128 +1771,40 @@ async function startLocalProxyServer(options) {
     }
 
     if (method === 'GET' && pathname === '/v1/models') {
-      const now = Date.now();
-      const ttl = Math.max(1000, Number(options.modelsCacheTtlMs) || 300000);
-      if (state.modelsCache.updatedAt > 0 && now - state.modelsCache.updatedAt < ttl && Array.isArray(state.modelsCache.ids)) {
-        const payload = buildOpenAIModelsList(state.modelsCache.ids.length > 0 ? state.modelsCache.ids : FALLBACK_MODELS);
-        res.statusCode = 200;
-        res.setHeader('content-type', 'application/json; charset=utf-8');
-        res.end(JSON.stringify(payload));
-        return;
-      }
-      const candidates = (state.accounts.codex || [])
-        .filter((a) => !!a.accessToken && Date.now() >= (a.cooldownUntil || 0))
-        .slice(0, Math.max(1, Number(options.modelsProbeAccounts) || 2));
-      const modelSet = new Set();
-      let firstError = '';
-      const probeTimeout = Math.min(4000, options.upstreamTimeoutMs);
-      const settled = await Promise.allSettled(
-        candidates.map((acc) => fetchModelsForAccount(options, acc, probeTimeout))
-      );
-      settled.forEach((result) => {
-        if (result.status === 'fulfilled') {
-          result.value.forEach((m) => modelSet.add(m));
-          return;
+      await handleUpstreamModels({
+        options,
+        state,
+        res,
+        deps: {
+          buildOpenAIModelsList,
+          fetchModelsForAccount,
+          FALLBACK_MODELS
         }
-        if (!firstError) firstError = String((result.reason && result.reason.message) || result.reason);
       });
-      const ids = Array.from(modelSet).sort();
-      state.modelsCache = {
-        updatedAt: now,
-        ids,
-        byAccount: {},
-        sourceCount: ids.length > 0 ? candidates.length : 0
-      };
-      const payload = buildOpenAIModelsList(ids.length > 0 ? ids : FALLBACK_MODELS);
-      res.statusCode = 200;
-      res.setHeader('content-type', 'application/json; charset=utf-8');
-      if (ids.length === 0 && firstError) {
-        res.setHeader('x-aih-models-fallback', '1');
-      }
-      res.end(JSON.stringify(payload));
       return;
     }
 
-    let lastError = '';
-    const pool = state.accounts.codex || [];
-    const maxAttempts = Math.min(
-      Math.max(1, Number(options.maxAttempts) || 3),
-      Math.max(1, pool.length)
-    );
-    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-      const account = chooseProxyAccount(pool, state.cursors, 'codex');
-      if (!account) {
-        state.metrics.totalFailures += 1;
-        pushMetricError(state.metrics, routeKey, 'codex', 'no_available_account');
-        return writeJson(res, 503, { ok: false, error: 'no_available_account' });
+    await handleUpstreamPassthrough({
+      options,
+      state,
+      req,
+      res,
+      method,
+      bodyBuffer,
+      routeKey,
+      requestStartedAt,
+      cooldownMs,
+      deps: {
+        chooseProxyAccount,
+        pushMetricError,
+        writeJson,
+        fetchWithTimeout,
+        markProxyAccountFailure,
+        markProxyAccountSuccess,
+        appendProxyRequestLog
       }
-      const upstreamUrl = `${options.upstream}${req.url || ''}`;
-      try {
-        const headers = {};
-        Object.entries(req.headers || {}).forEach(([k, v]) => {
-          const key = String(k || '').toLowerCase();
-          if (key === 'host' || key === 'authorization' || key === 'content-length') return;
-          headers[key] = v;
-        });
-        headers.authorization = `Bearer ${account.accessToken}`;
-        headers['x-aih-account-id'] = account.id;
-        headers['x-aih-account-email'] = account.email || '';
-
-        const upstreamRes = await fetchWithTimeout(upstreamUrl, {
-          method,
-          headers,
-          body: ['GET', 'HEAD'].includes(method) ? undefined : bodyBuffer
-        }, options.upstreamTimeoutMs);
-        if (upstreamRes.status === 401 || upstreamRes.status === 403) {
-          markProxyAccountFailure(account, `upstream_${upstreamRes.status}`, cooldownMs, options.failureThreshold);
-          lastError = `upstream_${upstreamRes.status}_account_${account.id}`;
-          continue;
-        }
-        const raw = Buffer.from(await upstreamRes.arrayBuffer());
-        res.statusCode = upstreamRes.status;
-        upstreamRes.headers.forEach((value, key) => {
-          const low = String(key || '').toLowerCase();
-          if (low === 'transfer-encoding') return;
-          if (low === 'content-length') return;
-          res.setHeader(key, value);
-        });
-        res.setHeader('x-aih-proxy-account-id', account.id);
-        if (account.email) res.setHeader('x-aih-proxy-account-email', account.email);
-        res.setHeader('content-length', raw.length);
-        res.end(raw);
-        markProxyAccountSuccess(account);
-        state.metrics.totalSuccess += 1;
-        if (options.logRequests) {
-          appendProxyRequestLog({
-            at: new Date().toISOString(),
-            route: routeKey,
-            provider: 'codex',
-            accountId: account.id,
-            status: upstreamRes.status,
-            durationMs: Date.now() - requestStartedAt
-          });
-        }
-        return;
-      } catch (e) {
-        const detail = String((e && e.message) || e);
-        if (detail.includes('timeout')) state.metrics.totalTimeouts += 1;
-        markProxyAccountFailure(account, detail, cooldownMs, options.failureThreshold);
-        lastError = detail;
-      }
-    }
-    state.metrics.totalFailures += 1;
-    pushMetricError(state.metrics, routeKey, 'codex', lastError);
-    if (options.logRequests) {
-      appendProxyRequestLog({
-        at: new Date().toISOString(),
-        route: routeKey,
-        provider: 'codex',
-        status: 502,
-        error: lastError,
-        durationMs: Date.now() - requestStartedAt
-      });
-    }
-    return writeJson(res, 502, { ok: false, error: 'upstream_failed', detail: lastError });
+    });
+    return;
   });
 
   await new Promise((resolve, reject) => {
