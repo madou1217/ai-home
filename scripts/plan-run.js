@@ -5,7 +5,14 @@ const { spawn } = require('child_process');
 
 const rootDir = path.resolve(__dirname, '..');
 
-const DEFAULT_PROMPT = '继续执行当前任务：仅修改该任务 files 范围内文件并完成可运行实现；完成后本地 git commit（不要 push），只回复 commit hash 和文件列表。';
+const DEFAULT_PROMPT = [
+  '你是本仓库执行 AI，严格按 plan-worker/aih-task-worker 闭环。',
+  '先确认并保持本任务为 doing（owner/claimed_at/branch）。',
+  '只允许修改该任务 files 范围内文件并完成可运行实现。',
+  '完成后必须在当前会话内回写计划文件：status=done、done_at、pr_or_commit、Checklist=[x]、Activity Log。',
+  '若无法完成，回写 status=blocked 与 blocker，并保持 Checklist=[ ]。',
+  '最后仅回复：task_id、status(done/blocked)、pr_or_commit、变更文件列表。'
+].join(' ');
 
 function parseArgs(argv) {
   const out = {
