@@ -6,6 +6,11 @@ option java_multiple_files = true;
 option java_package = "com.aihome.remote.control.v1";
 option go_package = "github.com/aih/remote/control/v1;controlv1";
 
+// Backward-compatibility strategy:
+// 1) Never reuse field numbers.
+// 2) Add new fields with new numbers; keep existing semantics unchanged.
+// 3) If a field is removed, reserve its number/name before release.
+// 4) New RPCs are additive and must not change existing request/response wire shape.
 service ControlPlane {
   rpc Hello(HelloRequest) returns (HelloResponse);
   rpc Authenticate(AuthenticateRequest) returns (AuthenticateResponse);
@@ -13,6 +18,11 @@ service ControlPlane {
   rpc ResumeSession(ResumeSessionRequest) returns (ResumeSessionResponse);
   rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
   rpc CloseSession(CloseSessionRequest) returns (CloseSessionResponse);
+  rpc OpenProjectSession(OpenProjectSessionRequest) returns (OpenProjectSessionResponse);
+  rpc RunProjectCommand(RunProjectCommandRequest) returns (RunProjectCommandResponse);
+  rpc ReadProjectFile(ReadProjectFileRequest) returns (ReadProjectFileResponse);
+  rpc WriteProjectFile(WriteProjectFileRequest) returns (WriteProjectFileResponse);
+  rpc CloseProjectSession(CloseProjectSessionRequest) returns (CloseProjectSessionResponse);
 }
 
 enum ConnectionState {
@@ -55,12 +65,14 @@ message OpenSessionRequest {
   string control_session_id = 1;
   string target = 2;
   string tty_size = 3;
+  map<string, string> metadata = 10;
 }
 
 message OpenSessionResponse {
   string remote_session_id = 1;
   string target = 2;
   uint64 created_at_unix_ms = 3;
+  map<string, string> metadata = 10;
 }
 
 message ResumeSessionRequest {
@@ -92,5 +104,89 @@ message CloseSessionRequest {
 }
 
 message CloseSessionResponse {
+  bool accepted = 1;
+}
+
+message OpenProjectSessionRequest {
+  string control_session_id = 1;
+  string remote_session_id = 2;
+  string workspace_root = 3;
+  string project_dir = 4;
+  string runtime_profile = 5;
+  map<string, string> metadata = 10;
+}
+
+message OpenProjectSessionResponse {
+  string project_session_id = 1;
+  string workspace_dir = 2;
+  string runtime_profile = 3;
+  uint64 created_at_unix_ms = 4;
+}
+
+message RunProjectCommandRequest {
+  string control_session_id = 1;
+  string project_session_id = 2;
+  string command = 3;
+  repeated string args = 4;
+  string cwd = 5;
+  map<string, string> env = 6;
+  uint64 timeout_ms = 7;
+  string input = 8;
+  bool shell = 9;
+}
+
+message RunProjectCommandResponse {
+  string project_session_id = 1;
+  string command = 2;
+  repeated string args = 3;
+  string cwd = 4;
+  int32 exit_code = 5;
+  string signal = 6;
+  bool timed_out = 7;
+  bool ok = 8;
+  string stdout = 9;
+  string stderr = 10;
+  uint64 duration_ms = 11;
+  string started_at = 12;
+  string finished_at = 13;
+}
+
+message ReadProjectFileRequest {
+  string control_session_id = 1;
+  string project_session_id = 2;
+  string path = 3;
+  string encoding = 4;
+}
+
+message ReadProjectFileResponse {
+  string project_session_id = 1;
+  string path = 2;
+  string encoding = 3;
+  string content = 4;
+  uint64 bytes = 5;
+}
+
+message WriteProjectFileRequest {
+  string control_session_id = 1;
+  string project_session_id = 2;
+  string path = 3;
+  string encoding = 4;
+  string content = 5;
+}
+
+message WriteProjectFileResponse {
+  string project_session_id = 1;
+  string path = 2;
+  string encoding = 3;
+  uint64 bytes = 4;
+}
+
+message CloseProjectSessionRequest {
+  string control_session_id = 1;
+  string project_session_id = 2;
+  string reason = 3;
+}
+
+message CloseProjectSessionResponse {
   bool accepted = 1;
 }

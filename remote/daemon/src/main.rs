@@ -20,16 +20,54 @@ struct DaemonConfig {
     idle_timeout: Duration,
 }
 
-#[derive(Default)]
 struct SessionRegistry {
     control_sessions: HashMap<String, ControlSession>,
     remote_sessions: HashMap<String, String>,
+    lifecycle: DaemonLifecycle,
 }
 
 #[derive(Clone)]
 struct ControlSession {
     last_connection_id: String,
     last_seen_unix_ms: u128,
+}
+
+#[derive(Clone)]
+struct DaemonLifecycle {
+    state: DaemonState,
+    generation: u64,
+    updated_unix_ms: u128,
+    last_transition: String,
+}
+
+#[derive(Clone, Copy)]
+enum DaemonState {
+    Running,
+    Stopped,
+}
+
+impl DaemonState {
+    fn as_str(&self) -> &'static str {
+        match self {
+            DaemonState::Running => "RUNNING",
+            DaemonState::Stopped => "STOPPED",
+        }
+    }
+}
+
+impl Default for SessionRegistry {
+    fn default() -> Self {
+        SessionRegistry {
+            control_sessions: HashMap::new(),
+            remote_sessions: HashMap::new(),
+            lifecycle: DaemonLifecycle {
+                state: DaemonState::Running,
+                generation: 1,
+                updated_unix_ms: unix_time_ms(),
+                last_transition: String::from("INIT_TO_RUNNING"),
+            },
+        }
+    }
 }
 
 impl SessionRegistry {
@@ -71,6 +109,49 @@ impl SessionRegistry {
         self.control_sessions
             .get(control_session_id)
             .map(|session| session.last_seen_unix_ms)
+    }
+
+    fn lifecycle_status_line(&self) -> String {
+        format!(
+            "DAEMON_STATE {} {} {} {}",
+            self.lifecycle.state.as_str(),
+            self.lifecycle.generation,
+            self.lifecycle.updated_unix_ms,
+            percent_encode(&self.lifecycle.last_transition)
+        )
+    }
+
+    fn start_daemon(&mut self) -> String {
+        if matches!(self.lifecycle.state, DaemonState::Running) {
+            return self.lifecycle_status_line();
+        }
+
+        self.lifecycle.state = DaemonState::Running;
+        self.lifecycle.generation += 1;
+        self.lifecycle.updated_unix_ms = unix_time_ms();
+        self.lifecycle.last_transition = String::from("STOPPED_TO_RUNNING");
+        self.lifecycle_status_line()
+    }
+
+    fn stop_daemon(&mut self) -> String {
+        if matches!(self.lifecycle.state, DaemonState::Stopped) {
+            return self.lifecycle_status_line();
+        }
+
+        self.lifecycle.state = DaemonState::Stopped;
+        self.lifecycle.generation += 1;
+        self.lifecycle.updated_unix_ms = unix_time_ms();
+        self.lifecycle.last_transition = String::from("RUNNING_TO_STOPPED");
+        self.lifecycle_status_line()
+    }
+
+    fn restart_daemon(&mut self) -> String {
+        let previous = self.lifecycle.state.as_str();
+        self.lifecycle.state = DaemonState::Running;
+        self.lifecycle.generation += 1;
+        self.lifecycle.updated_unix_ms = unix_time_ms();
+        self.lifecycle.last_transition = format!("{}_TO_RESTARTING_TO_RUNNING", previous);
+        self.lifecycle_status_line()
     }
 }
 
@@ -204,6 +285,12 @@ fn process_command(
     sequence: &AtomicU64,
     sessions: &Arc<Mutex<SessionRegistry>>,
 ) -> String {
+    if *authenticated && !control_session_id.is_empty() {
+        if let Ok(mut registry) = sessions.lock() {
+            registry.touch_control_session(control_session_id, conn_id);
+        }
+    }
+
     let mut parts = line.split_whitespace();
     let cmd = match parts.next() {
         Some(raw) => raw.to_ascii_uppercase(),
@@ -326,6 +413,46 @@ fn process_command(
             }
 
             String::from("ERR INVALID_SESSION resume%20not%20allowed")
+        }
+        "DAEMON_STATUS" => {
+            if !*authenticated {
+                return String::from("ERR UNAUTHENTICATED auth%20required");
+            }
+
+            match sessions.lock() {
+                Ok(registry) => registry.lifecycle_status_line(),
+                Err(_) => String::from("ERR INTERNAL session%20registry%20lock%20failed"),
+            }
+        }
+        "DAEMON_START" => {
+            if !*authenticated {
+                return String::from("ERR UNAUTHENTICATED auth%20required");
+            }
+
+            match sessions.lock() {
+                Ok(mut registry) => registry.start_daemon(),
+                Err(_) => String::from("ERR INTERNAL session%20registry%20lock%20failed"),
+            }
+        }
+        "DAEMON_STOP" => {
+            if !*authenticated {
+                return String::from("ERR UNAUTHENTICATED auth%20required");
+            }
+
+            match sessions.lock() {
+                Ok(mut registry) => registry.stop_daemon(),
+                Err(_) => String::from("ERR INTERNAL session%20registry%20lock%20failed"),
+            }
+        }
+        "DAEMON_RESTART" => {
+            if !*authenticated {
+                return String::from("ERR UNAUTHENTICATED auth%20required");
+            }
+
+            match sessions.lock() {
+                Ok(mut registry) => registry.restart_daemon(),
+                Err(_) => String::from("ERR INTERNAL session%20registry%20lock%20failed"),
+            }
         }
         "CLOSE" => String::from("BYE"),
         _ => String::from("ERR UNKNOWN_COMMAND unsupported%20command"),
