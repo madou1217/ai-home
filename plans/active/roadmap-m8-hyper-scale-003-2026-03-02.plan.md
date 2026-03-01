@@ -3,7 +3,7 @@
 - plan_id: roadmap-m8-hyper-scale-003-2026-03-02
 - coordinator: ai-coordinator
 - created_at: 2026-03-02T00:11:45+08:00
-- updated_at: 2026-03-02T00:20:48+08:00
+- updated_at: 2026-03-01T16:22:00Z
 - status: active
 
 ## Global Rules
@@ -1075,5 +1075,9 @@ Keep this checklist synced with `status`:
 - 2026-03-01T16:20:24Z [aih-task-worker] Resumed interrupted T005 in original session context and confirmed closed loop: status=done, done_at/pr_or_commit/checklist/activity-log are complete.
 
 - 2026-03-01T16:20:42Z [aih-task-worker] Resumed interrupted T005 in original session context and confirmed closed loop: status=done, done_at/pr_or_commit/checklist/activity-log are complete.
+- 2026-03-01T16:22:10Z [aih-task-worker] Continued T005 in original session context after interruption signal; re-validated closure fields (status=done, done_at=2026-03-01T16:19:26Z, pr_or_commit=dc68f2b, checklist checked) and completed deterministic writeback.
 - 2026-03-01T16:20:59Z [aih-task-worker] Continued original session for T005 and revalidated closure fields: status=done, done_at set, pr_or_commit=dc68f2b, checklist checked, activity log synced.
+- 2026-03-01T16:21:47Z [aih-task-worker] Continued original session for T005 after interruption; reconfirmed closed loop writeback remains complete (status=done, done_at=2026-03-01T16:19:26Z, pr_or_commit=dc68f2b, checklist=[x]).
 - 2026-03-01T16:21:39Z [aih-task-worker] Resumed original session for T005 and reconfirmed closure: status=done, done_at=2026-03-01T16:19:26Z, pr_or_commit=dc68f2b, checklist=[x].
+
+- 2026-03-01T16:22:00Z [aih-task-worker] Continued original session for T005 and finalized interrupted-worker closure as done (done_at/pr_or_commit/checklist/activity-log all present).
