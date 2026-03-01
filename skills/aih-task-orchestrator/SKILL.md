@@ -25,6 +25,7 @@ Worker instruction must include:
 - claim-first rule (`todo -> doing` before coding)
 - scope limit (`files` only)
 - finish rule (`doing -> done` with `pr_or_commit`)
+- PR rule (`git push` + `gh pr create`, then write PR into `pr_or_commit`)
 
 ## Visibility Rule
 - Do not maintain separate private state.

@@ -7,6 +7,7 @@ Use this skill when one subagent must claim a task and execute it end-to-end.
 - Implement only claimed scope.
 - Record status changes so coordinator can monitor progress.
 - Continue on the same session bound to this plan when interrupted.
+- Submit a PR after implementation and verification.
 
 ## Required Workflow
 1. Open active plan file.
@@ -29,6 +30,10 @@ Use this skill when one subagent must claim a task and execute it end-to-end.
 10. Resume policy:
 - Preferred command: `aih codex auto exec resume <session_id> "<continue prompt>"`
 - If session_id is unknown: `aih codex last-session` or `aih codex plan-sessions <plan-file>`
+11. PR submission (required when done):
+- push branch: `git push -u origin <branch>`
+- create PR: `gh pr create --fill --base main --head <branch>`
+- write PR link/number to `pr_or_commit`
 
 ## Hard Rules
 - Never modify tasks owned by other AIs in `doing`.
@@ -44,3 +49,4 @@ Use this skill when one subagent must claim a task and execute it end-to-end.
 - Claim commit exists.
 - Implementation commit exists (or blocker recorded).
 - Plan file status reflects current state.
+- PR exists (or blocker explicitly documents why PR is not created).

@@ -24,7 +24,7 @@ This folder is the single source of truth for parallel task execution.
 5. On completion, change:
 - `status: done`
 - `done_at: <ISO8601>`
-- add `pr_or_commit: <commit/hash>`
+- add `pr_or_commit: <PR URL/number preferred, else commit/hash>`
  - set checklist item to `- [x]`
 6. If blocked, change:
 - `status: blocked`
