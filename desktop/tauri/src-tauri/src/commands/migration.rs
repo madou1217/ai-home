@@ -7,7 +7,7 @@ pub struct MigrationNamespaceInfo {
 }
 
 #[tauri::command]
-pub fn migration_namespace_info(simulate_error: Option<String>) -> Result<MigrationNamespaceInfo, crate::FrontendError> {
+pub fn migration_namespace_info(simulate_error: Option<String>) -> crate::FrontendResult<MigrationNamespaceInfo> {
   if let Some(reason) = simulate_error {
     if reason == "unsupported" {
       return Err(crate::map_command_error(

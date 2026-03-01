@@ -7,7 +7,7 @@ pub struct AuditNamespaceInfo {
 }
 
 #[tauri::command]
-pub fn audit_namespace_info(simulate_error: Option<String>) -> Result<AuditNamespaceInfo, crate::FrontendError> {
+pub fn audit_namespace_info(simulate_error: Option<String>) -> crate::FrontendResult<AuditNamespaceInfo> {
   if let Some(reason) = simulate_error {
     if reason == "storage_unavailable" {
       return Err(crate::map_command_error(

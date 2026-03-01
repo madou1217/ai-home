@@ -19,6 +19,8 @@ pub struct FrontendError {
   pub message: String,
 }
 
+pub type FrontendResult<T> = Result<T, FrontendError>;
+
 pub fn map_command_error(namespace: &'static str, code: &'static str, message: impl Into<String>) -> FrontendError {
   FrontendError {
     namespace,
@@ -45,7 +47,7 @@ fn has_aih_entry(root: &Path) -> bool {
   root.join("bin").join("ai-home.js").exists()
 }
 
-fn resolve_repo_root() -> Result<PathBuf, FrontendError> {
+fn resolve_repo_root() -> FrontendResult<PathBuf> {
   let cwd = env::current_dir().map_err(|e| {
     map_command_error(
       "core",
@@ -75,7 +77,7 @@ fn resolve_repo_root() -> Result<PathBuf, FrontendError> {
   ))
 }
 
-fn prepare_aih_command(args: &[String]) -> Result<Command, FrontendError> {
+fn prepare_aih_command(args: &[String]) -> FrontendResult<Command> {
   let repo_root = resolve_repo_root()?;
   let mut cmd = Command::new("node");
   cmd.current_dir(repo_root);
@@ -85,7 +87,7 @@ fn prepare_aih_command(args: &[String]) -> Result<Command, FrontendError> {
 }
 
 #[tauri::command]
-fn run_aih(args: Vec<String>) -> Result<CommandResult, FrontendError> {
+fn run_aih(args: Vec<String>) -> FrontendResult<CommandResult> {
   let output = prepare_aih_command(&args)?.output().map_err(|e| {
     map_command_error(
       "core",
@@ -102,7 +104,7 @@ fn run_aih(args: Vec<String>) -> Result<CommandResult, FrontendError> {
 }
 
 #[tauri::command]
-fn launch_aih_session(cli: String, account_id: String, prompt: Option<String>) -> Result<u32, FrontendError> {
+fn launch_aih_session(cli: String, account_id: String, prompt: Option<String>) -> FrontendResult<u32> {
   let mut args = vec![cli, account_id];
   if let Some(prompt_text) = prompt {
     let trimmed = prompt_text.trim();
@@ -135,7 +137,7 @@ fn parse_audit_entry(value: Value) -> Option<AuditEntry> {
 }
 
 #[tauri::command]
-fn read_audit_log(limit: Option<usize>) -> Result<Vec<AuditEntry>, FrontendError> {
+fn read_audit_log(limit: Option<usize>) -> FrontendResult<Vec<AuditEntry>> {
   let take_n = limit.unwrap_or(200).clamp(1, 2000);
   let home_dir = env::var("HOME")
     .map_err(|_| map_command_error("audit", "AUDIT_HOME_NOT_SET", "HOME is not set"))?;
