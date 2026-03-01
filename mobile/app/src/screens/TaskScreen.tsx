@@ -140,6 +140,9 @@ export default function TaskScreen(props: TaskScreenProps): JSX.Element {
     setIsStarting(true);
     setErrorText('');
     setResultText('');
+    setResultSummary('');
+    setStatusHistory([]);
+    lastStatusRef.current = '';
     try {
       const created = await props.daemonClient.startTask({
         command: command.trim(),
