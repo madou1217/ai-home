@@ -3,7 +3,7 @@
 - plan_id: roadmap-m4-remote-runtime-2026-03-01
 - coordinator: ai-coordinator
 - created_at: 2026-03-01T21:34:22+08:00
-- updated_at: 2026-03-01T22:37:35+08:00
+- updated_at: 2026-03-01T22:38:42+08:00
 - status: active
 
 ## Global Rules
@@ -19,9 +19,9 @@
 - [ ] T003 Remote connector auth/reconnect
 - [x] T004 Remote workspace runner
 - [ ] T005 Remote project session bridge
-- [ ] T006 Remote patch return channel
+- [x] T006 Remote patch return channel
 - [x] T007 Runtime isolation templates
-- [ ] T008 Runtime environment manager
+- [x] T008 Runtime environment manager
 - [ ] T009 Remote session integration tests
 
 Keep this checklist synced with `status`:
@@ -126,14 +126,14 @@ Keep this checklist synced with `status`:
 - id: T006
   title: Remote patch return channel
   scope: Implement minimal patch/file return path from remote agent to local controller
-  status: doing
+  status: done
   owner: alice
   claimed_at: 2026-03-01T22:16:53+08:00
-  done_at:
+  done_at: 2026-03-01T22:38:42+08:00
   priority: P1
   depends_on: [T004]
   branch: feat/alice-m4-t006
-  pr_or_commit:
+  pr_or_commit: ccaebd3
   blocker:
   deliverable: Patch-return channel for remote file modifications
   acceptance:
@@ -165,14 +165,14 @@ Keep this checklist synced with `status`:
 - id: T008
   title: Runtime environment manager
   scope: Implement profile binding/rebind/restart state manager for isolated runtimes
-  status: doing
+  status: done
   owner: bob
   claimed_at: 2026-03-01T22:16:53+08:00
-  done_at:
+  done_at: 2026-03-01T22:38:12+08:00
   priority: P1
   depends_on: [T007]
   branch: feat/bob-m4-t008
-  pr_or_commit:
+  pr_or_commit: 687cf2d
   blocker:
   deliverable: Runtime manager with deterministic binding state machine
   acceptance:
@@ -244,3 +244,5 @@ Keep this checklist synced with `status`:
 
 - 2026-03-01T22:18:54+08:00 [aih-auto] Claimed T009 (m4-t009-carol) owner=carol branch=feat/carol-m4-t009.
 - 2026-03-01T22:37:35+08:00 [frank] Completed T004 implementation in scoped file; set status=done with pr_or_commit=c08ef97.
+- 2026-03-01T22:38:42+08:00 [alice] Completed T006 implementation in scoped file; set status=done with pr_or_commit=ccaebd3.
+- 2026-03-01T22:38:12+08:00 [bob] Completed T008 implementation in scoped file; set status=done with pr_or_commit=687cf2d.
