@@ -7,7 +7,19 @@ const os = require('os');
 const rootDir = path.resolve(__dirname, '..');
 const plansDir = path.join(rootDir, 'plans');
 const showAll = process.argv.includes('--all');
-const sessionRegistryPath = path.join(os.homedir(), '.ai_home', 'codex_task_sessions.json');
+const hostHomeDir = (() => {
+  if (process.env.AIH_HOST_HOME && process.env.AIH_HOST_HOME.trim()) {
+    return path.resolve(process.env.AIH_HOST_HOME.trim());
+  }
+  try {
+    const info = os.userInfo();
+    if (info && info.homedir) return info.homedir;
+  } catch (e) {
+    // fallback below
+  }
+  return os.homedir();
+})();
+const sessionRegistryPath = path.join(hostHomeDir, '.ai_home', 'codex_task_sessions.json');
 
 function readPlanFiles() {
   if (!fs.existsSync(plansDir)) return [];
@@ -85,7 +97,7 @@ function parseChecklist(content) {
 }
 
 function renderTable(rows) {
-  const header = ['plan', 'task', 'check', 'status', 'owner', 'session_id', 'title', 'branch', 'claimed_at'];
+  const header = ['plan', 'task', 'check', 'status', 'owner', 'ai_type', 'account_id', 'session_id', 'title', 'branch', 'claimed_at'];
   const all = [header, ...rows];
   const widths = header.map((_, idx) => Math.max(...all.map((r) => String(r[idx] || '').length)));
   const fmt = (r) => r.map((v, i) => String(v || '').padEnd(widths[i], ' ')).join(' | ');
@@ -95,22 +107,54 @@ function renderTable(rows) {
   rows.forEach((r) => console.log(fmt(r)));
 }
 
-function readPlanSessionMap() {
+function readTaskSessionMap() {
   if (!fs.existsSync(sessionRegistryPath)) return new Map();
   try {
     const parsed = JSON.parse(fs.readFileSync(sessionRegistryPath, 'utf8'));
-    const plans = parsed && typeof parsed === 'object' && parsed.plans && typeof parsed.plans === 'object'
-      ? parsed.plans
+    const tasks = parsed && typeof parsed === 'object' && parsed.tasks && typeof parsed.tasks === 'object'
+      ? parsed.tasks
       : {};
     const map = new Map();
-    Object.values(plans).forEach((entry) => {
-      if (!entry || !entry.planPath || !entry.sessionId) return;
-      map.set(path.resolve(entry.planPath), String(entry.sessionId));
+    Object.entries(tasks).forEach(([taskKey, entry]) => {
+      if (!taskKey || !entry || !entry.sessionId) return;
+      map.set(String(taskKey), {
+        sessionId: String(entry.sessionId),
+        cli: entry.cli ? String(entry.cli) : '',
+        accountId: entry.accountId ? String(entry.accountId) : ''
+      });
     });
     return map;
   } catch (e) {
     return new Map();
   }
+}
+
+function deriveTaskKey(planName, task) {
+  const owner = String(task.owner || '').trim().toLowerCase();
+  if (!owner || owner === 'unassigned') return '';
+
+  const branch = String(task.branch || '').trim().toLowerCase();
+  const branchMatch = branch.match(/\b(m\d+-t\d+)\b/);
+  if (branchMatch) return `${branchMatch[1]}-${owner}`;
+
+  const milestoneMatch = String(planName).toLowerCase().match(/roadmap-(m\d+)-/);
+  const taskIdNum = String(task.id || '').match(/^T(\d+)$/i);
+  if (!milestoneMatch || !taskIdNum) return '';
+  const milestone = milestoneMatch[1];
+  const taskNum = `t${taskIdNum[1]}`;
+  return `${milestone}-${taskNum}-${owner}`;
+}
+
+function formatClaimedAtShort(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '-';
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) return raw;
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mi = String(d.getMinutes()).padStart(2, '0');
+  return `${mm}-${dd} ${hh}:${mi}`;
 }
 
 const planFiles = readPlanFiles();
@@ -120,7 +164,7 @@ if (planFiles.length === 0) {
 }
 
 const rows = [];
-const planSessionMap = readPlanSessionMap();
+const taskSessionMap = readTaskSessionMap();
 let total = 0;
 let doing = 0;
 let blocked = 0;
@@ -144,17 +188,23 @@ for (const absPath of planFiles) {
     if (showAll || isActive) {
       const doneByStatus = t.status === 'done';
       const checked = checklist.has(t.id) ? checklist.get(t.id) : doneByStatus;
-      const sid = planSessionMap.get(path.resolve(absPath)) || '-';
+      const taskKey = deriveTaskKey(planName, t);
+      const binding = (taskKey && taskSessionMap.get(taskKey)) || null;
+      const sid = binding && binding.sessionId ? binding.sessionId : '-';
+      const aiType = binding && binding.cli ? binding.cli : '-';
+      const accountId = binding && binding.accountId ? binding.accountId : '-';
       rows.push([
         planName,
         t.id,
         checked ? '[x]' : '[ ]',
         t.status || '-',
         t.owner || '-',
+        aiType,
+        accountId,
         sid,
         t.title || '-',
         t.branch || '-',
-        t.claimedAt || '-'
+        formatClaimedAtShort(t.claimedAt)
       ]);
     }
   });
