@@ -3,7 +3,7 @@
 - plan_id: m6-client-session-serve-control-2026-03-02
 - coordinator: codex
 - created_at: 2026-03-02T10:31:20+08:00
-- updated_at: 2026-03-02T02:48:02Z
+- updated_at: 2026-03-02T02:48:58Z
 - status: active
 
 ## Global Rules
@@ -154,7 +154,7 @@ Keep this checklist synced with `status`:
   priority: P1
   depends_on: [T001]
   branch: feat/cs007-m6-t007
-  pr_or_commit: local-uncommitted
+  pr_or_commit: 0916d2c
   blocker:
   deliverable: Session history list with continue-chat action bound to session_id.
   acceptance:
@@ -235,3 +235,4 @@ Keep this checklist synced with `status`:
 - 2026-03-02T10:46:31+08:00 [cs007] Resumed original session 019cac67-161c-7b53-a396-e40dfc104474 and finalized T007 by wiring in-file fallback bridge for session history refresh/continue-chat (`run_aih` based when parent callbacks are absent), re-verified `node --test test/desktop.gui.smoke.e2e.test.js` (6/6 pass), and refreshed done_at/pr_or_commit with checklist kept `[x]`.
 - 2026-03-02T02:47:05Z [cs002] Continued interrupted session 019cac67-1332-7bb0-86f8-96611495e727; implemented `/v0/management/restart` in `lib/proxy/management-router.js` with deterministic success/unavailable/failure payloads and stable machine-readable error codes, verified via `node --test test/proxy.management-router.test.js`, and closed T002 with checklist synced/pr_or_commit=local-uncommitted.
 - 2026-03-02T02:48:02Z [cs007] Continued interrupted original session 019cac67-161c-7b53-a396-e40dfc104474; updated `desktop/tauri/src/views/session-launcher.tsx` to support standalone optional-props mode, codex session-history parsing, and direct continue-chat over `run_aih` resume with actionable diagnostics/fallback hints; verification: `node --test test/desktop.gui.smoke.e2e.test.js` (6/6 pass). Kept T007 `status=done` with checklist `[x]`.
+- 2026-03-02T02:48:58Z [cs007] Wrote back closure fields for T007 after commit: `pr_or_commit=0916d2c`, `status=done`, checklist `[x]`, and retained latest verification evidence.
