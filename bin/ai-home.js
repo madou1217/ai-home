@@ -31,6 +31,7 @@ const { resolveGlobalToolConfigRoot, resolveSessionStoreRoot } = require('../lib
 const { runDoctorChecks } = require('../lib/doctor/checks');
 const { createAuditLogger } = require('../lib/audit/logger');
 const { createHostConfigSyncer } = require('../lib/account/host-sync');
+const { buildGhEnv, ensureGhAuthForReview } = require('../lib/review/gh-auth');
 
 // Configurations
 const HOST_HOME_DIR = (() => {
@@ -3107,14 +3108,21 @@ function runCodexAutoReviewFlow(accountId, leaseToken, forwardArgs) {
   if (parsed.admin) mergeArgs.push('--admin');
   if (parsed.repo) mergeArgs.push('--repo', parsed.repo);
 
-  const ghEnv = { ...process.env };
-  // Ensure gh reads the real host login/keyring context rather than sandbox HOME.
-  if (HOST_HOME_DIR) {
-    ghEnv.HOME = HOST_HOME_DIR;
-    if (!ghEnv.GH_CONFIG_DIR) {
-      const ghConfigDir = path.join(HOST_HOME_DIR, '.config', 'gh');
-      if (fs.existsSync(ghConfigDir)) ghEnv.GH_CONFIG_DIR = ghConfigDir;
-    }
+  const ghEnv = buildGhEnv(HOST_HOME_DIR, fs, path, process.env);
+  const ghAuth = ensureGhAuthForReview({
+    spawnSync,
+    cwd: process.cwd(),
+    env: ghEnv,
+    hostHomeDir: HOST_HOME_DIR,
+    runtimeHome: process.env.HOME || ''
+  });
+  if (!ghAuth.ok) {
+    (ghAuth.message || []).forEach((line, idx) => {
+      const color = idx === 0 ? '\x1b[31m' : '\x1b[90m';
+      console.error(`${color}${line}\x1b[0m`);
+    });
+    releaseAutoAccount('codex', accountId, leaseToken);
+    process.exit(1);
   }
 
   console.log(`\x1b[36m[aih review]\x1b[0m Review passed. Merging PR ${parsed.prRef} via gh...`);

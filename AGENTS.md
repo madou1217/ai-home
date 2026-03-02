@@ -18,6 +18,7 @@ When adding features, keep CLI behavior in `bin/ai-home.js` cohesive by grouping
   2) implementation in `lib/<domain>/...`
 - If a change touches existing large inline helpers in `bin/ai-home.js`, prefer extracting them into `lib/*` in the same PR.
 - Avoid adding new long utility blocks directly into `bin/ai-home.js` unless it is a tiny glue-only change.
+- Avoid adding new branch/policy routing logic directly in `bin/ai-home.js`; extract decision logic into `lib/*` and keep `bin` as orchestrator.
 
 ## Build, Test, and Development Commands
 - `npm install`: install dependencies.
