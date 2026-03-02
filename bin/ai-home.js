@@ -26,6 +26,7 @@ const {
   savePermissionPolicy,
   shouldUseDangerFullAccess
 } = require('../lib/runtime/permission-policy');
+const { createCodexSessionStreamTools } = require('../lib/session/codex-session-stream');
 const { resolveGlobalToolConfigRoot, resolveSessionStoreRoot } = require('../lib/session/global-source');
 const { runDoctorChecks } = require('../lib/doctor/checks');
 const { createAuditLogger } = require('../lib/audit/logger');
@@ -1693,6 +1694,16 @@ function looksLikeSessionId(v) {
   return /^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(String(v || '').trim());
 }
 
+const {
+  parseSessionHistoryOptions,
+  showCodexSessionStream
+} = createCodexSessionStreamTools({
+  fs,
+  path,
+  getSessionStoreRoot,
+  looksLikeSessionId
+});
+
 function readTaskSessionRegistry() {
   const empty = { tasks: {}, plans: {}, sessions: [] };
   if (!fs.existsSync(TASK_SESSION_REGISTRY_FILE)) return empty;
@@ -2296,6 +2307,7 @@ function showHelp() {
   aih codex auto exec --plan <plans/xxx.plan.md> "<prompt>" \x1b[90mBind one plan to one session\x1b[0m
   aih codex auto exec resume <session_id> [--account <id>] [prompt] \x1b[90mResume a specific exec session precisely\x1b[0m
   aih codex sessions [--limit N] \x1b[90mShow recent codex session_id list\x1b[0m
+  aih codex session <session_id> [--once] [--limit N] [--raw] [--self-only] [--timeout N] \x1b[90mShow/follow one session history stream\x1b[0m
   aih codex sessions delete <session_id> \x1b[90mDelete one session binding/history entry\x1b[0m
   aih codex plan-sessions [plan] \x1b[90mShow plan -> session_id bindings\x1b[0m
   aih codex last-session     \x1b[90mShow current project's latest session_id\x1b[0m
@@ -2303,7 +2315,6 @@ function showHelp() {
   aih <cli> usage <id>      \x1b[90mShow trusted usage-remaining snapshot (OAuth only)\x1b[0m
   aih <cli> usages          \x1b[90mShow trusted usage-remaining snapshots for all OAuth accounts\x1b[0m
   aih codex account import [dir] [--parallel N] [--limit N] [--dry-run]\x1b[90mImport Codex accounts from output refresh-token files\x1b[0m
-  aih codex import-output [dir] [--parallel N] [--limit N] [--dry-run]\x1b[90mDeprecated alias of 'codex account import'\x1b[0m
   aih <cli> <id> usage      \x1b[90mSame as above, ID-first style\x1b[0m
   aih <cli> unlock <id>     \x1b[90mManually clear [Exhausted Limit] for an account\x1b[0m
   aih <cli> <id> unlock     \x1b[90mSame as above, ID-first style\x1b[0m
@@ -2498,6 +2509,7 @@ function showCliUsage(cliName) {
   ${cliName === 'codex' ? `aih codex auto exec --plan <plans/xxx.plan.md> "<prompt>"  \x1b[90mBind one plan to one session\x1b[0m` : ''}
   ${cliName === 'codex' ? `aih codex auto exec resume <session_id> [--account <id>] [prompt]  \x1b[90mResume specific exec session\x1b[0m` : ''}
   ${cliName === 'codex' ? `aih codex sessions [--limit N]  \x1b[90mShow recent codex session_id list\x1b[0m` : ''}
+  ${cliName === 'codex' ? `aih codex session <session_id> [--once] [--limit N] [--raw] [--self-only] [--timeout N]  \x1b[90mShow/follow one session history stream\x1b[0m` : ''}
   ${cliName === 'codex' ? `aih codex sessions delete <session_id>  \x1b[90mDelete one session binding/history entry\x1b[0m` : ''}
   ${cliName === 'codex' ? `aih codex plan-sessions [plan]  \x1b[90mShow plan -> session_id bindings\x1b[0m` : ''}
   ${cliName === 'codex' ? `aih codex last-session  \x1b[90mShow current project's latest session_id\x1b[0m` : ''}
@@ -2505,13 +2517,16 @@ function showCliUsage(cliName) {
   aih ${cliName} usage <id>      \x1b[90mShow trusted usage-remaining snapshot (OAuth)\x1b[0m
   aih ${cliName} usages          \x1b[90mShow trusted usage snapshots for all OAuth accounts\x1b[0m
   ${cliName === 'codex' ? 'aih codex account import [dir] [--parallel N] [--limit N] [--dry-run]  \x1b[90mImport Codex accounts from output refresh-token files\x1b[0m' : ''}
-  ${cliName === 'codex' ? 'aih codex import-output [dir] [--parallel N] [--limit N] [--dry-run]  \x1b[90mDeprecated alias of account import\x1b[0m' : ''}
   aih ${cliName} unlock <id>     \x1b[90mClear exhausted flag manually\x1b[0m
   aih ${cliName} <id> usage      \x1b[90mID-first style usage query\x1b[0m
   aih ${cliName} <id> unlock     \x1b[90mID-first style manual unlock\x1b[0m
   aih ${cliName} <id> [args]     \x1b[90mRun ${cliName} under a specific account\x1b[0m
   aih ${cliName}                 \x1b[90mRun with default account\x1b[0m
 `);
+}
+
+function showCodexAccountImportUsage() {
+  console.log('\x1b[90mUsage:\x1b[0m aih codex account import [sourceDir] [--parallel <1-32>] [--limit <n>] [--dry-run]');
 }
 
 function showProxyUsage() {
@@ -4257,14 +4272,15 @@ let forwardArgs = [];
 const UNLOCK_ACTIONS = new Set(['unlock', '--unlock', 'unexhaust', 'unban', 'release']);
 const USAGE_ACTIONS = new Set(['usage', '--usage', 'stats']);
 const USAGES_ACTIONS = new Set(['usages', 'usage-all', 'all-usage', 'all-usages']);
-const IMPORT_OUTPUT_ACTIONS = new Set(['import-output', 'import_output', 'bulk-import', 'bulk_import']);
+const DEPRECATED_IMPORT_OUTPUT_ACTIONS = new Set(['import-output', 'import_output', 'bulk-import', 'bulk_import']);
 const ACCOUNT_ACTIONS = new Set(['account', 'accounts', 'acct']);
-const ACCOUNT_IMPORT_ACTIONS = new Set(['import', 'import-output', 'import_output', 'bulk-import', 'bulk_import']);
-const SESSION_ACTIONS = new Set(['sessions', 'session', 'task-sessions', 'task_sessions', 'session-map', 'session_map']);
+const ACCOUNT_IMPORT_ACTIONS = new Set(['import']);
+const SESSION_LIST_ACTIONS = new Set(['sessions', 'task-sessions', 'task_sessions', 'session-map', 'session_map']);
+const SESSION_STREAM_ACTIONS = new Set(['session']);
 const PLAN_SESSION_ACTIONS = new Set(['plan-sessions', 'plan_sessions', 'plansessions']);
 const LAST_SESSION_ACTIONS = new Set(['last-session', 'last_session', 'latest-session', 'latest_session']);
 const PERMISSION_POLICY_ACTIONS = new Set(['policy', 'permission-policy', 'permission_policy', 'permissions']);
-const KNOWN_ACTIONS = new Set(['ls', 'set-default', 'add', 'login', 'auth', 'auto', ...ACCOUNT_ACTIONS, ...SESSION_ACTIONS, ...PLAN_SESSION_ACTIONS, ...LAST_SESSION_ACTIONS, ...PERMISSION_POLICY_ACTIONS, ...UNLOCK_ACTIONS, ...USAGE_ACTIONS, ...USAGES_ACTIONS, ...IMPORT_OUTPUT_ACTIONS]);
+const KNOWN_ACTIONS = new Set(['ls', 'set-default', 'add', 'login', 'auth', 'auto', ...ACCOUNT_ACTIONS, ...SESSION_LIST_ACTIONS, ...SESSION_STREAM_ACTIONS, ...PLAN_SESSION_ACTIONS, ...LAST_SESSION_ACTIONS, ...PERMISSION_POLICY_ACTIONS, ...UNLOCK_ACTIONS, ...USAGE_ACTIONS, ...USAGES_ACTIONS, ...DEPRECATED_IMPORT_OUTPUT_ACTIONS]);
 
 if (idOrAction === 'help') {
   showCliUsage(cliName);
@@ -4372,52 +4388,21 @@ if (idOrAction && USAGES_ACTIONS.has(idOrAction)) {
   process.exit(0);
 }
 
-if (idOrAction && IMPORT_OUTPUT_ACTIONS.has(idOrAction)) {
-  if (cliName !== 'codex') {
-    console.error(`\x1b[31m[aih] ${idOrAction} is currently supported only for codex.\x1b[0m`);
-    process.exit(1);
-  }
-  console.log(`\x1b[33m[aih]\x1b[0m 'codex ${idOrAction}' is deprecated. Use: aih codex account import ...`);
-  let parsedOptions;
-  try {
-    parsedOptions = parseCodexBulkImportArgs(args.slice(2));
-  } catch (e) {
-    console.error(`\x1b[31m[aih] ${e.message}\x1b[0m`);
-    console.log(`\x1b[90mUsage:\x1b[0m aih codex account import [sourceDir] [--parallel <1-32>] [--limit <n>] [--dry-run]`);
-    process.exit(1);
-  }
-
-  (async () => {
-    try {
-      const result = await importCodexTokensFromOutput(parsedOptions);
-      const modeLabel = result.dryRun ? 'dry-run' : 'write';
-      console.log(`\x1b[36m[aih]\x1b[0m codex account import done (${modeLabel})`);
-      console.log(`  source: ${result.sourceDir}`);
-      console.log(`  files: ${result.scannedFiles}`);
-      console.log(`  parsed: ${result.parsedLines}`);
-      console.log(`  imported: ${result.imported}`);
-      console.log(`  duplicates: ${result.duplicates}`);
-      console.log(`  invalid: ${result.invalid}`);
-      if (!result.dryRun) {
-        console.log(`  failed: ${result.failed || 0}`);
-        if (result.firstError) {
-          console.log(`  first_error: ${result.firstError}`);
-        }
-      }
-      process.exit(0);
-    } catch (e) {
-      console.error(`\x1b[31m[aih] account import failed: ${e.message}\x1b[0m`);
-      process.exit(1);
-    }
-  })();
-  return;
+if (idOrAction && DEPRECATED_IMPORT_OUTPUT_ACTIONS.has(idOrAction)) {
+  console.error(`\x1b[31m[aih]\x1b[0m '${idOrAction}' has been removed.`);
+  showCodexAccountImportUsage();
+  process.exit(1);
 }
 
 if (idOrAction && ACCOUNT_ACTIONS.has(idOrAction)) {
   const accountSubAction = String(args[2] || '').trim().toLowerCase();
+  if (!accountSubAction || accountSubAction === 'help' || accountSubAction === '--help' || accountSubAction === '-h') {
+    showCodexAccountImportUsage();
+    process.exit(0);
+  }
   if (!ACCOUNT_IMPORT_ACTIONS.has(accountSubAction)) {
     console.error(`\x1b[31m[aih] Unknown account action '${accountSubAction || '(empty)'}'.\x1b[0m`);
-    console.log(`\x1b[90mUsage:\x1b[0m aih codex account import [sourceDir] [--parallel <1-32>] [--limit <n>] [--dry-run]`);
+    showCodexAccountImportUsage();
     process.exit(1);
   }
   if (cliName !== 'codex') {
@@ -4429,7 +4414,7 @@ if (idOrAction && ACCOUNT_ACTIONS.has(idOrAction)) {
     parsedOptions = parseCodexBulkImportArgs(args.slice(3));
   } catch (e) {
     console.error(`\x1b[31m[aih] ${e.message}\x1b[0m`);
-    console.log(`\x1b[90mUsage:\x1b[0m aih codex account import [sourceDir] [--parallel <1-32>] [--limit <n>] [--dry-run]`);
+    showCodexAccountImportUsage();
     process.exit(1);
   }
 
@@ -4459,7 +4444,19 @@ if (idOrAction && ACCOUNT_ACTIONS.has(idOrAction)) {
   return;
 }
 
-if (idOrAction && SESSION_ACTIONS.has(idOrAction)) {
+if (idOrAction && SESSION_STREAM_ACTIONS.has(idOrAction)) {
+  if (cliName !== 'codex') {
+    console.error(`\x1b[31m[aih] ${idOrAction} is currently supported only for codex.\x1b[0m`);
+    process.exit(1);
+  }
+  const targetSid = String(args[2] || '').trim();
+  const options = parseSessionHistoryOptions(args.slice(3));
+  showCodexSessionStream(targetSid, options);
+  if (options.once) process.exit(0);
+  return;
+}
+
+if (idOrAction && SESSION_LIST_ACTIONS.has(idOrAction)) {
   if (cliName !== 'codex') {
     console.error(`\x1b[31m[aih] ${idOrAction} is currently supported only for codex.\x1b[0m`);
     process.exit(1);
