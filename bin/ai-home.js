@@ -81,6 +81,98 @@ function getProfileDir(cliName, id) {
   return path.join(PROFILES_DIR, cliName, String(id));
 }
 
+function pruneBackupFiles(filePaths, keep = 3) {
+  const sorted = (filePaths || [])
+    .filter((p) => fs.existsSync(p))
+    .map((p) => {
+      let mtimeMs = 0;
+      try {
+        mtimeMs = fs.statSync(p).mtimeMs || 0;
+      } catch (e) {}
+      return { path: p, mtimeMs };
+    })
+    .sort((a, b) => b.mtimeMs - a.mtimeMs);
+
+  if (sorted.length <= keep) return 0;
+  const toDelete = sorted.slice(keep);
+  let deleted = 0;
+  toDelete.forEach((entry) => {
+    try {
+      fs.unlinkSync(entry.path);
+      deleted += 1;
+    } catch (e) {}
+  });
+  return deleted;
+}
+
+function backupHostGlobalConfig(cliName, hostGlobalDir, maxBackups = 3) {
+  const backupFileByCli = {
+    codex: 'auth.json',
+    claude: '.credentials.json',
+    gemini: 'google_accounts.json'
+  };
+  const baseName = backupFileByCli[cliName];
+  if (!baseName) return { created: false };
+
+  const target = path.join(hostGlobalDir, baseName);
+  if (!fs.existsSync(target)) return { created: false };
+
+  const stamp = new Date().toISOString().replace(/[-:TZ.]/g, '').slice(0, 14);
+  const backupPath = path.join(hostGlobalDir, `${baseName}.aih.bak.${stamp}`);
+  fse.copySync(target, backupPath, { overwrite: true, errorOnExist: false });
+
+  let removed = 0;
+  try {
+    const names = fs.readdirSync(hostGlobalDir);
+    const backupCandidates = names
+      .filter((n) => n.startsWith(`${baseName}.aih.bak.`) || n.startsWith(`${baseName}.bak.`))
+      .map((n) => path.join(hostGlobalDir, n));
+    removed = pruneBackupFiles(backupCandidates, maxBackups);
+  } catch (e) {}
+
+  return { created: true, backupPath, removed };
+}
+
+function syncDirEntriesSafe(srcDir, dstDir) {
+  ensureDir(dstDir);
+  const entries = fs.readdirSync(srcDir, { withFileTypes: true });
+  entries.forEach((entry) => {
+    if (entry.isSymbolicLink()) return;
+    const srcPath = path.join(srcDir, entry.name);
+    const dstPath = path.join(dstDir, entry.name);
+    if (fs.existsSync(dstPath)) {
+      try {
+        const srcIsDir = fs.statSync(srcPath).isDirectory();
+        const dstIsDir = fs.statSync(dstPath).isDirectory();
+        if (srcIsDir !== dstIsDir) {
+          fse.removeSync(dstPath);
+        }
+      } catch (e) {
+        // ignore stat/remove issues and let copy raise if needed
+      }
+    }
+    fse.copySync(srcPath, dstPath, { overwrite: true, errorOnExist: false });
+  });
+}
+
+function syncGlobalConfigToHost(cliName, id) {
+  const cfg = CLI_CONFIGS[cliName];
+  if (!cfg || !cfg.globalDir) {
+    return { ok: false, reason: 'unsupported-cli' };
+  }
+
+  const accountGlobalDir = path.join(getProfileDir(cliName, id), cfg.globalDir);
+  if (!fs.existsSync(accountGlobalDir)) {
+    return { ok: false, reason: 'missing-account-global-dir', accountGlobalDir };
+  }
+
+  const hostGlobalDir = path.join(HOST_HOME_DIR, cfg.globalDir);
+  ensureDir(hostGlobalDir);
+  const backup = backupHostGlobalConfig(cliName, hostGlobalDir, 3);
+  syncDirEntriesSafe(accountGlobalDir, hostGlobalDir);
+  return { ok: true, accountGlobalDir, hostGlobalDir, backup };
+}
+
 function askYesNo(query, defaultYes = true) {
   const promptStr = defaultYes ? `${query} [Y/n]: ` : `${query} [y/N]: `;
   const ans = readline.question(promptStr).trim().toLowerCase();
@@ -2041,7 +2133,7 @@ function showHelp() {
   aih proxy                 \x1b[90mStart local OpenAI-compatible proxy (auto uses local codex accounts)\x1b[0m
   
 \x1b[33mAdvanced:\x1b[0m
-  aih <cli> set-default <id>\x1b[90mSet default account for aih only\x1b[0m
+  aih <cli> set-default <id>\x1b[90mSet default account and sync host ~/.<cli> config\x1b[0m
   aih export [file.aes] [selectors...] \x1b[90mSecurely export profiles. Selectors e.g. codex:1,2 gemini\x1b[0m
   aih import [-o] <file.aes>\x1b[90mRestore profiles; default skips same account, -o overwrites\x1b[0m
 `);
@@ -4077,9 +4169,21 @@ if (idOrAction === 'set-default') {
   }
   fs.writeFileSync(path.join(toolDir, '.aih_default'), targetId);
   console.log(`\x1b[32m[Success]\x1b[0m Set Account ID ${targetId} as default for ${cliName} in ai-home.`);
+  const syncResult = syncGlobalConfigToHost(cliName, targetId);
+  if (syncResult.ok) {
+    console.log(`\x1b[32m[Success]\x1b[0m Synced ${cliName} host config (${syncResult.hostGlobalDir}) from Account ID ${targetId}.`);
+    if (syncResult.backup && syncResult.backup.created) {
+      const removedText = syncResult.backup.removed > 0 ? `, pruned ${syncResult.backup.removed} old backup(s)` : '';
+      console.log(`\x1b[90m[aih]\x1b[0m Backup created: ${syncResult.backup.backupPath}${removedText}.`);
+    }
+  } else if (syncResult.reason !== 'unsupported-cli') {
+    console.log(`\x1b[33m[Warning]\x1b[0m Default set, but host config sync skipped (${syncResult.reason}).`);
+  }
   logAuditEvent('account.set-default', {
     cli: cliName,
-    accountId: targetId
+    accountId: targetId,
+    hostConfigSynced: !!syncResult.ok,
+    hostConfigSyncReason: syncResult.reason || ''
   });
   process.exit(0);
 }
