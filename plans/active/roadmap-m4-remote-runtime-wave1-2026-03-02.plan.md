@@ -3,7 +3,7 @@
 - plan_id: m4-remote-runtime-wave1-2026-03-02
 - coordinator: codex
 - created_at: 2026-03-02T10:23:40+08:00
-- updated_at: 2026-03-02T10:31:25+08:00
+- updated_at: 2026-03-02T10:37:44+08:00
 - status: active
 
 ## Global Rules
@@ -18,7 +18,7 @@
 ## Checklist
 - [ ] T001 Remote connector handshake and retry hardening
 - [ ] T002 Remote project session lifecycle hardening
-- [ ] T003 Remote patch return idempotency hardening
+- [x] T003 Remote patch return idempotency hardening
 - [x] T004 Runtime command-path fallback hardening
 - [x] T005 Watchdog recovery behavior hardening
 - [ ] T006 Remote runtime regression contract update
@@ -69,14 +69,14 @@ Keep this checklist synced with `status`:
 - id: T003
   title: Remote patch return idempotency hardening
   scope: Ensure patch-return channel handles duplicate and partial return flows safely.
-  status: doing
+  status: done
   owner: rne3003
   claimed_at: 2026-03-02T10:24:20+08:00
-  done_at: 
+  done_at: 2026-03-02T10:36:59+08:00
   priority: P1
   depends_on: [T002]
   branch: feat/rne3003-m4-t003
-  pr_or_commit:
+  pr_or_commit: local-uncommitted
   blocker:
   deliverable: Idempotent patch-return behavior with deterministic error handling.
   acceptance:
@@ -126,7 +126,7 @@ Keep this checklist synced with `status`:
 - id: T006
   title: Remote runtime regression contract update
   scope: Expand remote runtime regression tests for connector/session/patch-return/watchdog interactions.
-  status: blocked
+  status: doing
   owner: rne3006
   claimed_at: 2026-03-02T10:24:23+08:00
   done_at: 
@@ -209,3 +209,20 @@ Keep this checklist synced with `status`:
 - 2026-03-02T10:28:35+08:00 [rne3004] Continued interrupted session 019cac5d-02f2-73e0-8fa4-a7a38061015b; completed deterministic runtime command-path fallback diagnostics in lib/runtime/command-path.js and verified via `node --test test/command-path.test.js` (9/9 pass), then closed T004 with status=done/checklist synced/pr_or_commit=local-uncommitted.
 - 2026-03-02T10:28:51+08:00 [worker-codex] Completed T007 by hardening executable validation in lib/runtime/command-path.js PATH scan fallback and validating `node --test test/command-path.test.js` (9/9 pass); set status=done/checklist synced/pr_or_commit=424cdfeb8b14aced4e7f4d866ba876eda1ea99e4.
 - 2026-03-02T10:31:25+08:00 [worker-codex] Backfilled T007 pr_or_commit=84c072c after committing `test/command-path.test.js` regression coverage in resumed worker session.
+
+- 2026-03-02T10:35:00+08:00 [ai-watchdog] Relaunched T001 (m4-t001-rne3001) via resume session 019cac5c-50a8-7601-85e1-1cf31f9de537 (attempt_window=1/2 in 10m).
+- 2026-03-02T10:35:00+08:00 [ai-watchdog] Relaunched T002 (m4-t002-rne3002) via resume session 019cac5c-6295-7711-8c79-5a70d2d53ecb (attempt_window=1/2 in 10m).
+- 2026-03-02T10:35:00+08:00 [ai-watchdog] Relaunched T003 (m4-t003-rne3003) via resume session 019cac5c-676d-74a0-b022-a0fa62c6cdaf (attempt_window=1/2 in 10m).
+
+- 2026-03-02T10:35:49+08:00 [ai-watchdog] Relaunched T001 (m4-t001-rne3001) via resume session 019cac5c-50a8-7601-85e1-1cf31f9de537 (attempt_window=2/2 in 10m).
+
+- 2026-03-02T10:36:14+08:00 [ai-watchdog] Relaunched T003 (m4-t003-rne3003) via resume session 019cac5c-676d-74a0-b022-a0fa62c6cdaf (attempt_window=2/2 in 10m).
+
+- 2026-03-02T10:36:24+08:00 [aih-auto] Claimed T006 (m4-t006-rne3006) owner=rne3006 branch=feat/rne3006-m4-t006.
+
+- 2026-03-02T10:36:48+08:00 [ai-watchdog] Marked T006 blocked: worker offline and no recoverable session.
+- 2026-03-02T10:36:59+08:00 [rne3003] Continued interrupted session 019cac5c-676d-74a0-b022-a0fa62c6cdaf; hardened `lib/remote/patch-return.js` with idempotency-key dedup suppression for duplicate transmit requests and structured partial-failure diagnostics (`stage/path/retriable/hint`), verified via targeted node behavioral check and `node --test test/remote.protocol.contract.test.js` (2/2 pass), then closed T003 with status=done/checklist synced/pr_or_commit=local-uncommitted.
+
+- 2026-03-02T10:37:01+08:00 [aih-auto] Claimed T006 (m4-t006-rne3006) owner=rne3006 branch=feat/rne3006-m4-t006.
+
+- 2026-03-02T10:37:44+08:00 [worker-codex] Resumed interrupted worker session for T007 and verified closure is intact: status=done, done_at=2026-03-02T10:28:51+08:00, pr_or_commit=84c072c, checklist=[x]; no additional scoped file changes required.
