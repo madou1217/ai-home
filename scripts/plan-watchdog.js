@@ -7,6 +7,12 @@ const { execSync, spawn } = require('child_process');
 
 const rootDir = path.resolve(__dirname, '..');
 const plansDir = path.join(rootDir, 'plans', 'active');
+const WATCHDOG_RELAUNCH_LIMIT = Number(process.env.AIH_WATCHDOG_RELAUNCH_LIMIT || 2);
+const WATCHDOG_RELAUNCH_WINDOW_MS = Number(process.env.AIH_WATCHDOG_RELAUNCH_WINDOW_MS || (10 * 60 * 1000));
+const WATCHDOG_BLOCK_COOLDOWN_MS = Number(process.env.AIH_WATCHDOG_BLOCK_COOLDOWN_MS || (3 * 60 * 1000));
+const WATCHDOG_RELAUNCH_MIN_INTERVAL_MS = Number(process.env.AIH_WATCHDOG_RELAUNCH_MIN_INTERVAL_MS || (90 * 1000));
+const WATCHDOG_MAX_RELAUNCH_PER_SCAN = Math.max(0, Number(process.env.AIH_WATCHDOG_MAX_RELAUNCH_PER_SCAN || 20));
+const WATCHDOG_NEW_CLAIM_GRACE_MS = Math.max(0, Number(process.env.AIH_WATCHDOG_NEW_CLAIM_GRACE_MS || (2 * 60 * 1000)));
 const hostHomeDir = (() => {
   if (process.env.AIH_HOST_HOME && process.env.AIH_HOST_HOME.trim()) {
     return path.resolve(process.env.AIH_HOST_HOME.trim());
@@ -18,6 +24,7 @@ const hostHomeDir = (() => {
   return os.homedir();
 })();
 const sessionRegistryPath = path.join(hostHomeDir, '.ai_home', 'codex_task_sessions.json');
+const watchdogStatePath = path.join(hostHomeDir, '.ai_home', 'watchdog_state.json');
 
 function nowIsoUtc8() {
   const d = new Date(Date.now() + 8 * 60 * 60 * 1000);
@@ -37,24 +44,47 @@ function isPidAlive(pid) {
 }
 
 function parseArgs(argv) {
+  const hasLoopFlag = argv.includes('--loop');
+  const hasOnceFlag = argv.includes('--once');
+  const hasScanFlag = argv.includes('--scan');
+  const hasRepairFlag = argv.includes('--repair');
+  const hasForceReviveFlag = argv.includes('--force-revive');
+  const hasNoForceReviveFlag = argv.includes('--no-force-revive');
+
   return {
-    repair: argv.includes('--repair'),
+    // Default behavior: keep repairing in loop without requiring extra flags.
+    repair: hasScanFlag ? false : (hasRepairFlag || true),
     intervalSec: (() => {
       const idx = argv.findIndex((x) => x === '--interval-sec');
-      if (idx >= 0 && idx + 1 < argv.length) return Number(argv[idx + 1]) || 30;
+      if (idx >= 0 && idx + 1 < argv.length) return Number(argv[idx + 1]) || 15;
       const inline = argv.find((x) => x.startsWith('--interval-sec='));
-      if (inline) return Number(inline.split('=')[1]) || 30;
+      if (inline) return Number(inline.split('=')[1]) || 15;
       return 0;
     })(),
-    once: argv.includes('--once') || !argv.includes('--loop'),
+    once: hasOnceFlag ? true : (hasLoopFlag ? false : false),
+    reviveBlocked: !argv.includes('--no-revive-blocked'),
+    forceRevive: hasNoForceReviveFlag ? false : (hasForceReviveFlag || true),
     prompt: (() => {
       const idx = argv.findIndex((x) => x === '--prompt');
       if (idx >= 0 && idx + 1 < argv.length) return String(argv[idx + 1] || '').trim();
       const inline = argv.find((x) => x.startsWith('--prompt='));
       if (inline) return String(inline.split('=').slice(1).join('=') || '').trim();
-      return '使用 $aih-task-worker skill。检测到 worker 中断，请在原 session 内继续当前任务并闭环回写 done/blocked（含 done_at/pr_or_commit/checklist/activity log）。';
+      return '使用 $aih-task-worker skill。检测到 worker 中断，请在原 session 内继续当前任务并闭环回写 done/blocked（含 done_at/pr_or_commit/checklist/activity log）；若 files 中目标文件不存在，先创建再实现，不要以 scope_file_missing 直接阻塞。';
     })()
   };
+}
+
+function isRecoverableBlockedReason(blocker) {
+  const b = String(blocker || '').trim().toLowerCase();
+  if (!b) return true;
+  // Only auto-revive transient runtime/connectivity issues. Product/scope/
+  // dependency blockers must remain blocked until coordinator replans.
+  if (b.startsWith('watchdog_relaunch_exhausted_')) return true;
+  if (b === 'worker_offline_no_recoverable_session') return true;
+  if (b === 'missing_session_binding') return true;
+  if (b === 'detached_session') return true;
+  if (b === 'stale_pid') return true;
+  return false;
 }
 
 function readPlans() {
@@ -85,7 +115,7 @@ function parsePlanTasks(content) {
     const idMatch = line.match(/^- id:\s*(T\d+)/i);
     if (idMatch) {
       if (cur) flush(i);
-      cur = { id: idMatch[1], title: '', status: '', owner: '', branch: '', blocker: '' };
+      cur = { id: idMatch[1], title: '', status: '', owner: '', branch: '', blocker: '', claimedAt: '', doneAt: '' };
       start = i;
       continue;
     }
@@ -99,10 +129,48 @@ function parsePlanTasks(content) {
     if (key === 'owner') cur.owner = val;
     if (key === 'branch') cur.branch = val;
     if (key === 'blocker') cur.blocker = val;
+    if (key === 'claimed_at') cur.claimedAt = val;
+    if (key === 'done_at') cur.doneAt = val;
   }
   if (cur) flush(lines.length);
 
   return { lines, tasks };
+}
+
+function parseIsoTimestampFromLine(line) {
+  const m = String(line || '').match(/^-\s+(\d{4}-\d{2}-\d{2}T\S+)\s+\[/);
+  if (!m) return 0;
+  const ms = Date.parse(m[1]);
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+function parseTimeMs(value) {
+  const ms = Date.parse(String(value || '').trim());
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+function parseWatchdogTaskHistory(lines, task) {
+  const nowMs = Date.now();
+  const relaunchNeedle = `[ai-watchdog] Relaunched ${task.id} `;
+  const blockedNeedle = `[ai-watchdog] Marked ${task.id} blocked:`;
+  let relaunchRecent = 0;
+  let relaunchTotal = 0;
+  let lastRelaunchMs = 0;
+  let lastBlockedMs = 0;
+
+  for (const line of lines) {
+    if (!line || !line.includes('[ai-watchdog]')) continue;
+    const tsMs = parseIsoTimestampFromLine(line);
+    if (line.includes(relaunchNeedle)) {
+      relaunchTotal += 1;
+      if (tsMs > lastRelaunchMs) lastRelaunchMs = tsMs;
+      if (tsMs > 0 && (nowMs - tsMs) <= WATCHDOG_RELAUNCH_WINDOW_MS) relaunchRecent += 1;
+      continue;
+    }
+    if (line.includes(blockedNeedle) && tsMs > lastBlockedMs) lastBlockedMs = tsMs;
+  }
+
+  return { relaunchRecent, relaunchTotal, lastRelaunchMs, lastBlockedMs };
 }
 
 function deriveTaskKey(planName, task) {
@@ -125,6 +193,23 @@ function readTaskSessions() {
   } catch (_) {
     return {};
   }
+}
+
+function readWatchdogState() {
+  if (!fs.existsSync(watchdogStatePath)) return {};
+  try {
+    const parsed = JSON.parse(fs.readFileSync(watchdogStatePath, 'utf8'));
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch (_) {
+    return {};
+  }
+}
+
+function writeWatchdogState(state) {
+  try {
+    fs.mkdirSync(path.dirname(watchdogStatePath), { recursive: true });
+    fs.writeFileSync(watchdogStatePath, JSON.stringify(state, null, 2) + '\n');
+  } catch (_) {}
 }
 
 function readRunningIndex() {
@@ -201,13 +286,21 @@ function relaunchBySession(sessionId, prompt) {
   }
 }
 
+function taskStateKey(planName, task) {
+  return `${planName}:${task.id}:${String(task.owner || '').trim().toLowerCase() || 'unassigned'}`;
+}
+
 function scanAndRepair(opts) {
   const taskSessions = readTaskSessions();
   const running = readRunningIndex();
+  const watchdogState = readWatchdogState();
 
   let staleCount = 0;
   let relaunched = 0;
   let blocked = 0;
+  let throttled = 0;
+  let scanRelaunchCount = 0;
+  let stateChanged = false;
 
   for (const planPath of readPlans()) {
     const planName = path.basename(planPath);
@@ -216,7 +309,16 @@ function scanAndRepair(opts) {
     let changed = false;
 
     for (const t of parsed.tasks) {
-      if (t.status !== 'doing') continue;
+      const status = String(t.status || '').trim().toLowerCase();
+      const recoverableBlocked = status === 'blocked' && opts.reviveBlocked && isRecoverableBlockedReason(t.blocker);
+      if (status !== 'doing' && !recoverableBlocked) continue;
+      if (status !== 'done' && String(t.doneAt || '').trim()) {
+        const ts = nowIsoUtc8();
+        replaceField(lines, t, 'done_at', '');
+        updateUpdatedAt(lines, ts);
+        appendActivity(lines, `- ${ts} [ai-watchdog] Cleared stale done_at for ${t.id} (status=${status}).`);
+        changed = true;
+      }
       const taskKey = deriveTaskKey(planName, t);
       const bind = taskSessions[taskKey] || {};
       const sid = bind.sessionId ? String(bind.sessionId) : '';
@@ -224,16 +326,79 @@ function scanAndRepair(opts) {
       const pidSid = sid ? running.bySessionId.get(sid) : '';
       const pid = pidTask || pidSid || (bind.pid ? String(bind.pid) : '');
       const alive = pid ? isPidAlive(pid) : false;
-      if (alive) continue;
+      const stateKey = taskStateKey(planName, t);
+      if (alive) {
+        if (recoverableBlocked) {
+          const ts = nowIsoUtc8();
+          replaceField(lines, t, 'status', 'doing');
+          replaceField(lines, t, 'blocker', '');
+          setChecklist(lines, t.id, false);
+          updateUpdatedAt(lines, ts);
+          appendActivity(lines, `- ${ts} [ai-watchdog] Revived ${t.id}: process attached, status moved blocked -> doing.`);
+          changed = true;
+        }
+        if (watchdogState[stateKey]) {
+          delete watchdogState[stateKey];
+          stateChanged = true;
+        }
+        continue;
+      }
 
       staleCount += 1;
       if (!opts.repair) continue;
 
       const ts = nowIsoUtc8();
-      if (sid && relaunchBySession(sid, opts.prompt)) {
-        relaunched += 1;
+      const history = parseWatchdogTaskHistory(lines, t);
+      const shouldBlockOnLoop = !opts.forceRevive && status === 'doing' && sid && history.relaunchRecent >= WATCHDOG_RELAUNCH_LIMIT;
+      const state = watchdogState[stateKey] || {};
+      const now = Date.now();
+      const claimedAtMs = parseTimeMs(t.claimedAt);
+      const isNewClaimGrace =
+        status === 'doing' &&
+        claimedAtMs > 0 &&
+        (now - claimedAtMs) >= 0 &&
+        (now - claimedAtMs) < WATCHDOG_NEW_CLAIM_GRACE_MS;
+      if (isNewClaimGrace) {
+        continue;
+      }
+      const inBlockedCooldown = !opts.forceRevive && Number(state.blockedAtMs) > 0 && (now - Number(state.blockedAtMs)) < WATCHDOG_BLOCK_COOLDOWN_MS;
+      if (shouldBlockOnLoop) {
+        blocked += 1;
+        replaceField(lines, t, 'status', 'blocked');
+        replaceField(lines, t, 'blocker', `watchdog_relaunch_exhausted_${WATCHDOG_RELAUNCH_LIMIT}_in_${Math.floor(WATCHDOG_RELAUNCH_WINDOW_MS / 60000)}m`);
+        setChecklist(lines, t.id, false);
         updateUpdatedAt(lines, ts);
-        appendActivity(lines, `- ${ts} [ai-watchdog] Relaunched ${t.id} (${taskKey}) via resume session ${sid}.`);
+        appendActivity(lines, `- ${ts} [ai-watchdog] Marked ${t.id} blocked: relaunch loop detected (${history.relaunchRecent}/${WATCHDOG_RELAUNCH_LIMIT} in ${Math.floor(WATCHDOG_RELAUNCH_WINDOW_MS / 60000)}m).`);
+        watchdogState[stateKey] = {
+          blockedAtMs: now,
+          reason: 'relaunch_loop_detected'
+        };
+        stateChanged = true;
+        changed = true;
+      } else if (inBlockedCooldown) {
+        continue;
+      } else if (scanRelaunchCount >= WATCHDOG_MAX_RELAUNCH_PER_SCAN) {
+        throttled += 1;
+        continue;
+      } else if (!opts.forceRevive && Number(state.lastRelaunchAtMs) > 0 && (now - Number(state.lastRelaunchAtMs)) < WATCHDOG_RELAUNCH_MIN_INTERVAL_MS) {
+        throttled += 1;
+        continue;
+      } else if (sid && relaunchBySession(sid, opts.prompt)) {
+        relaunched += 1;
+        scanRelaunchCount += 1;
+        const attempts = Number(state.attempts) || 0;
+        watchdogState[stateKey] = {
+          attempts: attempts + 1,
+          lastRelaunchAtMs: now
+        };
+        stateChanged = true;
+        if (recoverableBlocked) {
+          replaceField(lines, t, 'status', 'doing');
+          replaceField(lines, t, 'blocker', '');
+          setChecklist(lines, t.id, false);
+        }
+        updateUpdatedAt(lines, ts);
+        appendActivity(lines, `- ${ts} [ai-watchdog] Relaunched ${t.id} (${taskKey}) via resume session ${sid} (attempt_window=${history.relaunchRecent + 1}/${WATCHDOG_RELAUNCH_LIMIT} in ${Math.floor(WATCHDOG_RELAUNCH_WINDOW_MS / 60000)}m).${recoverableBlocked ? ' status blocked -> doing.' : ''}`);
         changed = true;
       } else {
         blocked += 1;
@@ -242,14 +407,20 @@ function scanAndRepair(opts) {
         setChecklist(lines, t.id, false);
         updateUpdatedAt(lines, ts);
         appendActivity(lines, `- ${ts} [ai-watchdog] Marked ${t.id} blocked: worker offline and no recoverable session.`);
+        watchdogState[stateKey] = {
+          blockedAtMs: now,
+          reason: 'worker_offline_no_recoverable_session'
+        };
+        stateChanged = true;
         changed = true;
       }
     }
 
     if (changed) fs.writeFileSync(planPath, lines.join('\n').replace(/\n+$/, '') + '\n');
   }
+  if (stateChanged) writeWatchdogState(watchdogState);
 
-  console.log(`[watchdog] stale=${staleCount}, relaunched=${relaunched}, blocked=${blocked}, mode=${opts.repair ? 'repair' : 'scan'}`);
+  console.log(`[watchdog] stale=${staleCount}, relaunched=${relaunched}, blocked=${blocked}, throttled=${throttled}, mode=${opts.repair ? 'repair' : 'scan'}`);
 }
 
 function main() {
