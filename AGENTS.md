@@ -11,6 +11,14 @@ This repository is a small Node.js CLI project.
 
 When adding features, keep CLI behavior in `bin/ai-home.js` cohesive by grouping related helpers (profile state, auth/env routing, process control).
 
+### Collaboration Rule: Keep `bin/ai-home.js` Thin
+- Treat `bin/ai-home.js` as an entry/router layer. Put new business logic in `lib/*` modules by default.
+- For non-trivial changes, prefer:
+  1) parse/dispatch in `bin/ai-home.js`
+  2) implementation in `lib/<domain>/...`
+- If a change touches existing large inline helpers in `bin/ai-home.js`, prefer extracting them into `lib/*` in the same PR.
+- Avoid adding new long utility blocks directly into `bin/ai-home.js` unless it is a tiny glue-only change.
+
 ## Build, Test, and Development Commands
 - `npm install`: install dependencies.
 - `npm test`: currently a placeholder and exits with error (`"no test specified"`).

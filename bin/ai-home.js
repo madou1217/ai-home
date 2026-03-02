@@ -19,9 +19,17 @@ const { runProxyCommand } = require('../lib/proxy/command-handler');
 const { syncCodexAccountsToProxy } = require('../lib/proxy/sync');
 const { startLocalProxyServer: startLocalProxyServerModule } = require('../lib/proxy/server');
 const { runProxyEntry } = require('../lib/proxy/entry');
+const { resolveCommandPath: resolveCommandPathPortable } = require('../lib/runtime/command-path');
+const { buildPtyLaunch } = require('../lib/runtime/pty-launch');
+const {
+  loadPermissionPolicy,
+  savePermissionPolicy,
+  shouldUseDangerFullAccess
+} = require('../lib/runtime/permission-policy');
 const { resolveGlobalToolConfigRoot, resolveSessionStoreRoot } = require('../lib/session/global-source');
 const { runDoctorChecks } = require('../lib/doctor/checks');
 const { createAuditLogger } = require('../lib/audit/logger');
+const { createHostConfigSyncer } = require('../lib/account/host-sync');
 
 // Configurations
 const HOST_HOME_DIR = (() => {
@@ -79,6 +87,15 @@ function getProfileDir(cliName, id) {
   return path.join(PROFILES_DIR, cliName, String(id));
 }
 
+const syncGlobalConfigToHost = createHostConfigSyncer({
+  fs,
+  fse,
+  ensureDir,
+  getProfileDir,
+  hostHomeDir: HOST_HOME_DIR,
+  cliConfigs: CLI_CONFIGS
+});
+
 function askYesNo(query, defaultYes = true) {
   const promptStr = defaultYes ? `${query} [Y/n]: ` : `${query} [y/N]: `;
   const ans = readline.question(promptStr).trim().toLowerCase();
@@ -127,6 +144,7 @@ const USAGE_SOURCE_GEMINI = 'gemini_refresh_user_quota';
 const USAGE_SOURCE_CODEX = 'codex_app_server';
 const USAGE_SOURCE_CLAUDE_OAUTH = 'claude_oauth_usage_api';
 const USAGE_SOURCE_CLAUDE_AUTH_TOKEN = 'claude_auth_token_usage_api';
+const USAGE_THRESHOLD_DEFAULT_PCT = 95;
 const TRUSTED_CLAUDE_USAGE_SOURCES = new Set([
   USAGE_SOURCE_CLAUDE_OAUTH,
   USAGE_SOURCE_CLAUDE_AUTH_TOKEN
@@ -152,6 +170,43 @@ const SESSION_STORE_METADATA_PATTERNS = {
     /^state_\d+\.sqlite(?:-(?:shm|wal))?$/i
   ]
 };
+const CODEX_SANDBOX_VALUES = new Set(['workspace-write', 'read-only', 'danger-full-access']);
+
+function loadExecPermissionPolicy() {
+  return loadPermissionPolicy({ aiHomeDir: AI_HOME_DIR });
+}
+
+function resolveCodexSandboxFromPolicy(policy) {
+  const loaded = policy || loadExecPermissionPolicy();
+  if (shouldUseDangerFullAccess(loaded)) return 'danger-full-access';
+  const sandbox = String((loaded && loaded.exec && loaded.exec.defaultSandbox) || '').trim().toLowerCase();
+  if (sandbox === 'read-only') return 'read-only';
+  if (sandbox === 'workspace-write') return 'workspace-write';
+  return 'workspace-write';
+}
+
+function stripCodexExecSandboxArgs(args) {
+  const src = Array.isArray(args) ? [...args] : [];
+  if (String(src[0] || '') !== 'exec') return src;
+  const cleaned = ['exec'];
+  for (let i = 1; i < src.length; i++) {
+    const cur = String(src[i] || '');
+    if (cur === '--sandbox') {
+      if (i + 1 < src.length) i += 1;
+      continue;
+    }
+    if (cur.startsWith('--sandbox=')) continue;
+    cleaned.push(src[i]);
+  }
+  return cleaned;
+}
+
+function applyCodexExecSandboxPolicy(args, policy) {
+  const withoutSandbox = stripCodexExecSandboxArgs(args);
+  if (String(withoutSandbox[0] || '') !== 'exec') return withoutSandbox;
+  const sandbox = resolveCodexSandboxFromPolicy(policy);
+  return ['exec', '--sandbox', sandbox, ...withoutSandbox.slice(1)];
+}
 
 function getToolConfigDir(cliName, id) {
   const globalFolder = CLI_CONFIGS[cliName] ? CLI_CONFIGS[cliName].globalDir : `.${cliName}`;
@@ -358,6 +413,27 @@ function readUsageCache(cliName, id) {
   }
 }
 
+function clampUsageThresholdPct(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return USAGE_THRESHOLD_DEFAULT_PCT;
+  if (num < 1) return 1;
+  if (num > 100) return 100;
+  return Math.round(num);
+}
+
+function readUsageThresholdPct() {
+  const configPath = path.join(AI_HOME_DIR, 'usage-config.json');
+  if (!fs.existsSync(configPath)) return USAGE_THRESHOLD_DEFAULT_PCT;
+  try {
+    const parsed = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    if (!parsed || typeof parsed !== 'object') return USAGE_THRESHOLD_DEFAULT_PCT;
+    const raw = parsed.threshold_pct ?? parsed.thresholdPct;
+    return clampUsageThresholdPct(raw);
+  } catch (e) {
+    return USAGE_THRESHOLD_DEFAULT_PCT;
+  }
+}
+
 function isTrustedUsageSnapshot(cliName, snapshot) {
   if (!snapshot || typeof snapshot !== 'object') return false;
   if (snapshot.schemaVersion !== USAGE_SNAPSHOT_SCHEMA_VERSION) return false;
@@ -407,6 +483,18 @@ function formatResetInFromUnixSeconds(resetAtSeconds) {
   if (hours > 0) return `${hours}h`;
   if (minutes > 0) return `${minutes}m`;
   return 'soon';
+}
+
+function toUnixSecondsNumber(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num) || num <= 0) return 0;
+  return Math.floor(num);
+}
+
+function toEpochMsFromIso(value) {
+  const ms = Date.parse(String(value || '').trim());
+  if (!Number.isFinite(ms) || ms <= 0) return 0;
+  return Math.floor(ms);
 }
 
 function parseGeminiQuotaBuckets(buckets) {
@@ -597,6 +685,7 @@ function parseCodexRateLimits(rateLimits, capturedAt, source) {
     const normalizedBucket = normalizeCodexRateLimitWindow(rateLimits[bucketName]);
     if (!normalizedBucket) return;
     const { windowMinutes, usedPct, resetsAt } = normalizedBucket;
+    const resetAt = toUnixSecondsNumber(resetsAt) > 0 ? toUnixSecondsNumber(resetsAt) * 1000 : 0;
     const remainingPct = typeof usedPct === 'number'
       ? Math.max(0, Math.min(100, 100 - usedPct))
       : null;
@@ -606,6 +695,7 @@ function parseCodexRateLimits(rateLimits, capturedAt, source) {
       windowMinutes,
       window: formatCodexWindow(windowMinutes),
       remainingPct,
+      resetAt,
       resetIn: formatResetInFromUnixSeconds(resetsAt)
     });
   });
@@ -789,22 +879,26 @@ function parseClaudeUsagePayload(payload, capturedAt, source) {
 
   const fiveHourUtil = fiveHourRaw ? toPercentNumber(fiveHourRaw.utilization) : null;
   if (typeof fiveHourUtil === 'number') {
+    const fiveHourResetAt = toEpochMsFromIso(fiveHourRaw.resets_at || fiveHourRaw.resetsAt || null);
     entries.push({
       bucket: 'five_hour',
       windowMinutes: 300,
       window: '5h',
       remainingPct: Math.max(0, Math.min(100, 100 - fiveHourUtil)),
+      resetAt: fiveHourResetAt,
       resetIn: formatResetInFromIso(fiveHourRaw.resets_at || fiveHourRaw.resetsAt || null)
     });
   }
 
   const sevenDayUtil = sevenDayRaw ? toPercentNumber(sevenDayRaw.utilization) : null;
   if (typeof sevenDayUtil === 'number') {
+    const sevenDayResetAt = toEpochMsFromIso(sevenDayRaw.resets_at || sevenDayRaw.resetsAt || null);
     entries.push({
       bucket: 'seven_day',
       windowMinutes: 10080,
       window: '7days',
       remainingPct: Math.max(0, Math.min(100, 100 - sevenDayUtil)),
+      resetAt: sevenDayResetAt,
       resetIn: formatResetInFromIso(sevenDayRaw.resets_at || sevenDayRaw.resetsAt || null)
     });
   }
@@ -1027,23 +1121,37 @@ function findEnvSandbox(cliName, targetEnv) {
 
 function isExhausted(cliName, id) {
   const p = path.join(getProfileDir(cliName, id), '.aih_exhausted');
+  const now = Date.now();
   if (fs.existsSync(p)) {
-    let time = NaN;
+    let raw = '';
     try {
-      time = parseInt(fs.readFileSync(p, 'utf8'), 10);
+      raw = String(fs.readFileSync(p, 'utf8') || '').trim();
     } catch (e) {
-      return false;
+      raw = '';
     }
-    // Cooldown 1 hour (3600000 ms)
-    if (Number.isFinite(time) && Date.now() - time < 3600000) {
-      return true;
-    } else {
+    let expireAt = 0;
+    if (raw.startsWith('{')) {
       try {
-        fs.unlinkSync(p); // Remove exhausted flag if expired
-      } catch (e) {
-        // Ignore cleanup failures (permission/sandbox). Treat as non-exhausted now.
+        const parsed = JSON.parse(raw);
+        const candidate = Number(parsed && parsed.expireAt);
+        if (Number.isFinite(candidate) && candidate > 0) expireAt = candidate;
+      } catch (e) {}
+    } else {
+      const legacyMarkedAt = parseInt(raw, 10);
+      if (Number.isFinite(legacyMarkedAt) && legacyMarkedAt > 0) {
+        expireAt = legacyMarkedAt + 3600000;
       }
     }
+
+    if (expireAt > now) return true;
+    try {
+      fs.unlinkSync(p);
+    } catch (e) {}
+  }
+
+  if (isUsageManagedCli(cliName)) {
+    const cache = readUsageCache(cliName, id);
+    if (applyExhaustedStateFromUsageCache(cliName, id, cache) === true) return true;
   }
   return false;
 }
@@ -1059,10 +1167,34 @@ function clearExhausted(cliName, id) {
   }
 }
 
-function markExhaustedFromUsage(cliName, id) {
+function resolveUsageExhaustedExpireAt(cache, thresholdPct = readUsageThresholdPct()) {
+  const now = Date.now();
+  const minRemainingPct = Math.max(0, 100 - clampUsageThresholdPct(thresholdPct));
+  if (!cache || typeof cache !== 'object' || !Array.isArray(cache.entries)) {
+    return now + 3600000;
+  }
+  const exhaustedResets = cache.entries
+    .filter((x) => Number(x && x.remainingPct) <= minRemainingPct)
+    .map((x) => Number(x && x.resetAt))
+    .filter((n) => Number.isFinite(n) && n > now);
+  if (exhaustedResets.length === 0) {
+    return now + 3600000;
+  }
+  return Math.max(...exhaustedResets) + 60 * 1000;
+}
+
+function markExhaustedFromUsage(cliName, id, cache = null, thresholdPct = readUsageThresholdPct()) {
   const p = path.join(getProfileDir(cliName, id), '.aih_exhausted');
   try {
-    fs.writeFileSync(p, Date.now().toString());
+    const payload = {
+      schemaVersion: 2,
+      reason: 'usage_exhausted',
+      markedAt: Date.now(),
+      expireAt: resolveUsageExhaustedExpireAt(cache, thresholdPct),
+      thresholdPct: clampUsageThresholdPct(thresholdPct),
+      source: cache && cache.source ? cache.source : 'unknown'
+    };
+    fs.writeFileSync(p, JSON.stringify(payload, null, 2));
     return true;
   } catch (e) {
     return false;
@@ -1086,14 +1218,26 @@ function getUsageRemainingPercentValues(cache) {
   return [];
 }
 
-function isUsageSnapshotExhausted(cache) {
+function isUsageSnapshotExhausted(cache, thresholdPct = readUsageThresholdPct()) {
   const values = getUsageRemainingPercentValues(cache);
   if (values.length === 0) return false;
   const minRemaining = Math.min(...values);
-  return minRemaining <= 0;
+  const minRemainingPct = Math.max(0, 100 - clampUsageThresholdPct(thresholdPct));
+  return minRemaining <= minRemainingPct;
 }
 
-function syncExhaustedStateFromUsage(cliName, id) {
+function applyExhaustedStateFromUsageCache(cliName, id, cache, thresholdPct = readUsageThresholdPct()) {
+  if (!isUsageManagedCli(cliName)) return null;
+  if (!cache) return null;
+  if (isUsageSnapshotExhausted(cache, thresholdPct)) {
+    markExhaustedFromUsage(cliName, id, cache, thresholdPct);
+    return true;
+  }
+  clearExhausted(cliName, id);
+  return false;
+}
+
+function syncExhaustedStateFromUsage(cliName, id, options = {}) {
   if (!isUsageManagedCli(cliName)) return null;
   const profileDir = getProfileDir(cliName, id);
   if (!fs.existsSync(profileDir)) return null;
@@ -1101,16 +1245,13 @@ function syncExhaustedStateFromUsage(cliName, id) {
   if (!configured) return null;
   if (accountName && accountName.startsWith('API Key')) return null;
 
+  const mode = options && options.mode === 'cached' ? 'cached' : 'refresh';
   let cache = readUsageCache(cliName, id);
-  cache = ensureUsageSnapshot(cliName, id, cache);
-  if (!cache) return null;
-
-  if (isUsageSnapshotExhausted(cache)) {
-    markExhaustedFromUsage(cliName, id);
-    return true;
+  if (mode !== 'cached') {
+    cache = ensureUsageSnapshot(cliName, id, cache);
   }
-  clearExhausted(cliName, id);
-  return false;
+  if (!cache) return null;
+  return applyExhaustedStateFromUsageCache(cliName, id, cache);
 }
 
 function getUsageNoSnapshotHint(cliName, id = null) {
@@ -1191,6 +1332,7 @@ function printUsageSnapshot(cliName, id) {
     }
     return;
   }
+  applyExhaustedStateFromUsageCache(cliName, id, cache);
 
   const ageLabel = cache.capturedAt
     ? `${Math.max(0, Math.floor((Date.now() - cache.capturedAt) / 1000))}s`
@@ -1241,6 +1383,7 @@ function printAllUsageSnapshots(cliName) {
       }
       return;
     }
+    applyExhaustedStateFromUsageCache(cliName, id, cache);
 
     withSnapshot += 1;
     const ageLabel = cache.capturedAt
@@ -1350,7 +1493,7 @@ function allocateAutoAccount(cliName, currentId, options = {}) {
   return withAutoPoolLock(cliName, () => {
     const { toolDir } = getAutoPoolPaths(cliName);
     if (!fs.existsSync(toolDir)) return null;
-    const runDeepUsageCheck = process.env.AIH_DEEP_USAGE_CHECK === '1';
+    const runDeepUsageCheck = isUsageManagedCli(cliName) || process.env.AIH_DEEP_USAGE_CHECK === '1';
     const leaseMsRaw = Number(process.env.AIH_AUTO_LEASE_MS || options.leaseMs);
     const leaseMs = Number.isFinite(leaseMsRaw) && leaseMsRaw > 1000 ? leaseMsRaw : AUTO_POOL_LEASE_MS_DEFAULT;
     const exclude = new Set([String(currentId || ''), ...((options.excludeIds || []).map((x) => String(x)))].filter(Boolean));
@@ -1596,6 +1739,29 @@ function getTaskSession(taskKey) {
   return entry;
 }
 
+function findBoundAccountIdBySessionId(sessionId) {
+  const sid = String(sessionId || '').trim();
+  if (!looksLikeSessionId(sid)) return '';
+  const all = readTaskSessionRegistry();
+  if (all.tasks && typeof all.tasks === 'object') {
+    for (const entry of Object.values(all.tasks)) {
+      if (!entry || typeof entry !== 'object') continue;
+      if (String(entry.sessionId || '').trim() !== sid) continue;
+      const accountId = String(entry.accountId || '').trim();
+      if (accountId) return accountId;
+    }
+  }
+  if (all.plans && typeof all.plans === 'object') {
+    for (const entry of Object.values(all.plans)) {
+      if (!entry || typeof entry !== 'object') continue;
+      if (String(entry.sessionId || '').trim() !== sid) continue;
+      const accountId = String(entry.accountId || '').trim();
+      if (accountId) return accountId;
+    }
+  }
+  return '';
+}
+
 function setTaskSession(taskKey, sessionId, metadata = {}) {
   const key = sanitizeTaskKey(taskKey);
   if (!key || !sessionId) return;
@@ -1653,6 +1819,50 @@ function setPlanSession(planPathRaw, sessionId, metadata = {}) {
     ...metadata
   };
   writeTaskSessionRegistry(all);
+}
+
+function refreshSessionBindingsBySessionId(sessionId, metadata = {}) {
+  const sid = String(sessionId || '').trim();
+  if (!looksLikeSessionId(sid)) return { tasks: 0, plans: 0 };
+  const all = readTaskSessionRegistry();
+  const nowIso = new Date().toISOString();
+  let taskHits = 0;
+  let planHits = 0;
+
+  if (all.tasks && typeof all.tasks === 'object') {
+    Object.keys(all.tasks).forEach((key) => {
+      const entry = all.tasks[key];
+      if (!entry || typeof entry !== 'object') return;
+      if (String(entry.sessionId || '').trim() !== sid) return;
+      all.tasks[key] = {
+        ...entry,
+        ...metadata,
+        sessionId: sid,
+        updatedAt: nowIso
+      };
+      taskHits += 1;
+    });
+  }
+
+  if (all.plans && typeof all.plans === 'object') {
+    Object.keys(all.plans).forEach((absPath) => {
+      const entry = all.plans[absPath];
+      if (!entry || typeof entry !== 'object') return;
+      if (String(entry.sessionId || '').trim() !== sid) return;
+      all.plans[absPath] = {
+        ...entry,
+        ...metadata,
+        sessionId: sid,
+        updatedAt: nowIso
+      };
+      planHits += 1;
+    });
+  }
+
+  if (taskHits > 0 || planHits > 0) {
+    writeTaskSessionRegistry(all);
+  }
+  return { tasks: taskHits, plans: planHits };
 }
 
 function parseCodexExecPlanArg(forwardArgs) {
@@ -1788,6 +1998,53 @@ function showCodexSessions(limit = 20) {
   console.log('');
 }
 
+function deleteCodexSession(sessionId) {
+  const sid = String(sessionId || '').trim();
+  if (!looksLikeSessionId(sid)) {
+    return { ok: false, reason: 'invalid_session_id' };
+  }
+
+  const all = readTaskSessionRegistry();
+  let removedTasks = 0;
+  let removedPlans = 0;
+
+  if (all.tasks && typeof all.tasks === 'object') {
+    Object.keys(all.tasks).forEach((taskKey) => {
+      const entry = all.tasks[taskKey];
+      if (!entry || typeof entry !== 'object') return;
+      if (String(entry.sessionId || '').trim() !== sid) return;
+      delete all.tasks[taskKey];
+      removedTasks += 1;
+    });
+  }
+
+  if (all.plans && typeof all.plans === 'object') {
+    Object.keys(all.plans).forEach((planPath) => {
+      const entry = all.plans[planPath];
+      if (!entry || typeof entry !== 'object') return;
+      if (String(entry.sessionId || '').trim() !== sid) return;
+      delete all.plans[planPath];
+      removedPlans += 1;
+    });
+  }
+
+  const before = Array.isArray(all.sessions) ? all.sessions.length : 0;
+  all.sessions = (Array.isArray(all.sessions) ? all.sessions : [])
+    .filter((entry) => String((entry && entry.sessionId) || '').trim() !== sid);
+  const removedRecent = Math.max(0, before - all.sessions.length);
+
+  writeTaskSessionRegistry(all);
+  return {
+    ok: true,
+    changed: removedTasks + removedPlans + removedRecent > 0,
+    removed: {
+      tasks: removedTasks,
+      plans: removedPlans,
+      recentSessions: removedRecent
+    }
+  };
+}
+
 function showCodexLastSession() {
   const latest = getLatestSessionForCwd(process.cwd());
   if (!latest || !latest.sessionId) {
@@ -1802,6 +2059,7 @@ function showCodexLastSession() {
 }
 
 function resolveCodexAutoExecArgs(rawForwardArgs) {
+  const policy = loadExecPermissionPolicy();
   const parsedTask = parseCodexExecTaskKey(rawForwardArgs);
   const parsedPlan = parseCodexExecPlanArg(parsedTask.args);
   let args = parsedPlan.args;
@@ -1815,25 +2073,8 @@ function resolveCodexAutoExecArgs(rawForwardArgs) {
   if (!planPath && sub !== 'resume') {
     planPath = detectSinglePlanFromPrompt(args);
   }
-  const stripExecSandboxArgs = (arr) => {
-    const src = Array.isArray(arr) ? [...arr] : [];
-    if (String(src[0] || '') !== 'exec') return src;
-    const cleaned = ['exec'];
-    for (let i = 1; i < src.length; i++) {
-      const cur = String(src[i] || '');
-      if (cur === '--sandbox') {
-        if (i + 1 < src.length) i += 1;
-        continue;
-      }
-      if (cur.startsWith('--sandbox=')) continue;
-      cleaned.push(src[i]);
-    }
-    return cleaned;
-  };
   const ensureWritableExecArgs = (arr) => {
-    const withoutSandbox = stripExecSandboxArgs(arr);
-    if (String(withoutSandbox[0] || '') !== 'exec') return withoutSandbox;
-    return ['exec', '--sandbox', 'danger-full-access', ...withoutSandbox.slice(1)];
+    return applyCodexExecSandboxPolicy(arr, policy);
   };
   if (sub !== 'resume') {
     args = ensureWritableExecArgs(args);
@@ -1844,9 +2085,10 @@ function resolveCodexAutoExecArgs(rawForwardArgs) {
       const bound = getTaskSession(taskKey);
       if (bound && bound.sessionId) {
         const execPrompt = args.slice(1);
-        const resumePrompt = stripExecSandboxArgs(['exec', ...execPrompt]).slice(1);
+        const resumePrompt = stripCodexExecSandboxArgs(['exec', ...execPrompt]).slice(1);
+        const resumeArgs = applyCodexExecSandboxPolicy(['exec', 'resume', bound.sessionId, ...resumePrompt], policy);
         return {
-          args: ['exec', '--sandbox', 'danger-full-access', 'resume', bound.sessionId, ...resumePrompt],
+          args: resumeArgs,
           taskKey,
           planPath,
           error: '',
@@ -1860,9 +2102,10 @@ function resolveCodexAutoExecArgs(rawForwardArgs) {
       const planBound = getPlanSession(planPath);
       if (planBound && planBound.sessionId) {
         const execPrompt = args.slice(1);
-        const resumePrompt = stripExecSandboxArgs(['exec', ...execPrompt]).slice(1);
+        const resumePrompt = stripCodexExecSandboxArgs(['exec', ...execPrompt]).slice(1);
+        const resumeArgs = applyCodexExecSandboxPolicy(['exec', 'resume', planBound.sessionId, ...resumePrompt], policy);
         return {
-          args: ['exec', '--sandbox', 'danger-full-access', 'resume', planBound.sessionId, ...resumePrompt],
+          args: resumeArgs,
           taskKey,
           planPath,
           error: '',
@@ -1875,6 +2118,7 @@ function resolveCodexAutoExecArgs(rawForwardArgs) {
 
   const tokens = args.slice(2);
   let explicitSessionId = '';
+  let overrideAccountId = '';
   let prompt = '';
   const rest = [];
 
@@ -1886,6 +2130,31 @@ function resolveCodexAutoExecArgs(rawForwardArgs) {
     }
     if (cur === '--prompt' || (cur === '--' && i + 1 < tokens.length && String(tokens[i + 1]) === '--prompt')) {
       return { args, taskKey, planPath, error: 'Unsupported --prompt syntax. Use positional prompt: aih codex auto exec resume <session_id> "你写到哪里了"' };
+    }
+    if (cur === '--account' || cur === '--id') {
+      const next = String(tokens[i + 1] || '').trim();
+      if (!/^\d+$/.test(next)) {
+        return { args, taskKey, planPath, error: 'Invalid account override. Use: aih codex auto exec resume <session_id> --account <id> [prompt]' };
+      }
+      overrideAccountId = next;
+      i += 1;
+      continue;
+    }
+    if (cur.startsWith('--account=')) {
+      const val = String(cur.slice('--account='.length) || '').trim();
+      if (!/^\d+$/.test(val)) {
+        return { args, taskKey, planPath, error: 'Invalid account override. Use: aih codex auto exec resume <session_id> --account <id> [prompt]' };
+      }
+      overrideAccountId = val;
+      continue;
+    }
+    if (cur.startsWith('--id=')) {
+      const val = String(cur.slice('--id='.length) || '').trim();
+      if (!/^\d+$/.test(val)) {
+        return { args, taskKey, planPath, error: 'Invalid account override. Use: aih codex auto exec resume <session_id> --account <id> [prompt]' };
+      }
+      overrideAccountId = val;
+      continue;
     }
     rest.push(cur);
   }
@@ -1913,13 +2182,13 @@ function resolveCodexAutoExecArgs(rawForwardArgs) {
   }
   if (!prompt) prompt = DEFAULT_RESUME_PROMPT;
 
-  // Force writable resume mode for exec sessions to avoid read-only policy stalls.
-  const resumeArgs = ['exec', '--sandbox', 'danger-full-access', 'resume', resolvedSessionId, prompt];
+  const resumeArgs = applyCodexExecSandboxPolicy(['exec', 'resume', resolvedSessionId, prompt], policy);
 
   return {
     args: resumeArgs,
     taskKey,
     planPath,
+    overrideAccountId,
     error: '',
     note: explicitSessionId
       ? `Resuming explicit session ${resolvedSessionId}`
@@ -2025,13 +2294,16 @@ function showHelp() {
   aih <cli> auto            \x1b[90mRun the next non-exhausted account automatically\x1b[0m
   aih codex auto review --pr <PR> [prompt] \x1b[90mRun codex review then auto-merge PR if pass\x1b[0m
   aih codex auto exec --plan <plans/xxx.plan.md> "<prompt>" \x1b[90mBind one plan to one session\x1b[0m
-  aih codex auto exec resume <session_id> [prompt] \x1b[90mResume a specific exec session precisely\x1b[0m
+  aih codex auto exec resume <session_id> [--account <id>] [prompt] \x1b[90mResume a specific exec session precisely\x1b[0m
   aih codex sessions [--limit N] \x1b[90mShow recent codex session_id list\x1b[0m
+  aih codex sessions delete <session_id> \x1b[90mDelete one session binding/history entry\x1b[0m
   aih codex plan-sessions [plan] \x1b[90mShow plan -> session_id bindings\x1b[0m
   aih codex last-session     \x1b[90mShow current project's latest session_id\x1b[0m
+  aih codex policy [set <sandbox>] \x1b[90mShow/update persistent exec sandbox policy\x1b[0m
   aih <cli> usage <id>      \x1b[90mShow trusted usage-remaining snapshot (OAuth only)\x1b[0m
   aih <cli> usages          \x1b[90mShow trusted usage-remaining snapshots for all OAuth accounts\x1b[0m
-  aih codex import-output [dir] [--parallel N] [--limit N] [--dry-run]\x1b[90mBulk import codex refresh tokens from output files\x1b[0m
+  aih codex account import [dir] [--parallel N] [--limit N] [--dry-run]\x1b[90mImport Codex accounts from output refresh-token files\x1b[0m
+  aih codex import-output [dir] [--parallel N] [--limit N] [--dry-run]\x1b[90mDeprecated alias of 'codex account import'\x1b[0m
   aih <cli> <id> usage      \x1b[90mSame as above, ID-first style\x1b[0m
   aih <cli> unlock <id>     \x1b[90mManually clear [Exhausted Limit] for an account\x1b[0m
   aih <cli> <id> unlock     \x1b[90mSame as above, ID-first style\x1b[0m
@@ -2039,27 +2311,27 @@ function showHelp() {
   aih proxy                 \x1b[90mStart local OpenAI-compatible proxy (auto uses local codex accounts)\x1b[0m
   
 \x1b[33mAdvanced:\x1b[0m
-  aih <cli> set-default <id>\x1b[90mSet default account for aih only\x1b[0m
+  aih <cli> set-default <id>\x1b[90mSet default account and sync host ~/.<cli> config\x1b[0m
   aih export [file.aes] [selectors...] \x1b[90mSecurely export profiles. Selectors e.g. codex:1,2 gemini\x1b[0m
   aih import [-o] <file.aes>\x1b[90mRestore profiles; default skips same account, -o overwrites\x1b[0m
 `);
 }
 
-function resolveCommandPath(cmdName) {
-  if (!cmdName) return '';
-  if (process.platform === 'win32') {
-    const probe = spawnSync('where', [cmdName], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-    if (probe.status !== 0) return '';
-    const lines = String(probe.stdout || '')
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean);
-    return lines[0] || '';
+function printCodexPermissionPolicy(policy = null) {
+  const loaded = policy || loadExecPermissionPolicy();
+  const effectiveSandbox = resolveCodexSandboxFromPolicy(loaded);
+  console.log('\n\x1b[36m[aih]\x1b[0m Codex exec permission policy');
+  console.log(`  - default_sandbox: ${loaded.exec.defaultSandbox}`);
+  console.log(`  - allow_danger_full_access: ${loaded.exec.allowDangerFullAccess ? 'true' : 'false'}`);
+  console.log(`  - effective_exec_sandbox: ${effectiveSandbox}`);
+  if (loaded.updatedAt) {
+    console.log(`  - updated_at: ${loaded.updatedAt}`);
   }
-  const safe = String(cmdName).replace(/(["\\$`])/g, '\\$1');
-  const probe = spawnSync('sh', ['-lc', `command -v "${safe}"`], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-  if (probe.status !== 0) return '';
-  return String(probe.stdout || '').trim();
+  console.log('');
+}
+
+function resolveCommandPath(cmdName) {
+  return resolveCommandPathPortable(cmdName);
 }
 
 function readDefaultAccountId(cliName) {
@@ -2224,13 +2496,16 @@ function showCliUsage(cliName) {
   aih ${cliName} auto            \x1b[90mAuto-select next non-exhausted account\x1b[0m
   ${cliName === 'codex' ? `aih codex auto review --pr <PR> [prompt]  \x1b[90mReview then auto-merge PR if pass\x1b[0m` : ''}
   ${cliName === 'codex' ? `aih codex auto exec --plan <plans/xxx.plan.md> "<prompt>"  \x1b[90mBind one plan to one session\x1b[0m` : ''}
-  ${cliName === 'codex' ? `aih codex auto exec resume <session_id> [prompt]  \x1b[90mResume specific exec session\x1b[0m` : ''}
+  ${cliName === 'codex' ? `aih codex auto exec resume <session_id> [--account <id>] [prompt]  \x1b[90mResume specific exec session\x1b[0m` : ''}
   ${cliName === 'codex' ? `aih codex sessions [--limit N]  \x1b[90mShow recent codex session_id list\x1b[0m` : ''}
+  ${cliName === 'codex' ? `aih codex sessions delete <session_id>  \x1b[90mDelete one session binding/history entry\x1b[0m` : ''}
   ${cliName === 'codex' ? `aih codex plan-sessions [plan]  \x1b[90mShow plan -> session_id bindings\x1b[0m` : ''}
   ${cliName === 'codex' ? `aih codex last-session  \x1b[90mShow current project's latest session_id\x1b[0m` : ''}
+  ${cliName === 'codex' ? `aih codex policy [set <workspace-write|read-only|danger-full-access>]  \x1b[90mShow/update persistent exec sandbox policy\x1b[0m` : ''}
   aih ${cliName} usage <id>      \x1b[90mShow trusted usage-remaining snapshot (OAuth)\x1b[0m
   aih ${cliName} usages          \x1b[90mShow trusted usage snapshots for all OAuth accounts\x1b[0m
-  ${cliName === 'codex' ? 'aih codex import-output [dir] [--parallel N] [--limit N] [--dry-run]  \x1b[90mBulk import codex refresh tokens\x1b[0m' : ''}
+  ${cliName === 'codex' ? 'aih codex account import [dir] [--parallel N] [--limit N] [--dry-run]  \x1b[90mImport Codex accounts from output refresh-token files\x1b[0m' : ''}
+  ${cliName === 'codex' ? 'aih codex import-output [dir] [--parallel N] [--limit N] [--dry-run]  \x1b[90mDeprecated alias of account import\x1b[0m' : ''}
   aih ${cliName} unlock <id>     \x1b[90mClear exhausted flag manually\x1b[0m
   aih ${cliName} <id> usage      \x1b[90mID-first style usage query\x1b[0m
   aih ${cliName} <id> unlock     \x1b[90mID-first style manual unlock\x1b[0m
@@ -2449,8 +2724,10 @@ function spawnPty(cliBin, cliName, id, forwardArgs, isLogin) {
   if (cliName === 'codex' && !isLogin) {
     argsToRun = applyCodexDefaultArgs(argsToRun);
   }
-  
-  return pty.spawn(cliBin, argsToRun, {
+
+  const launch = buildPtyLaunch(cliBin, argsToRun);
+
+  return pty.spawn(launch.command, launch.args, {
     name: 'xterm-color',
     cols: process.stdout.columns || 80,
     rows: process.stdout.rows || 24,
@@ -2483,10 +2760,30 @@ function applyCodexDefaultArgs(args) {
   const out = Array.isArray(args) ? [...args] : [];
   const first = String(out[0] || '').trim().toLowerCase();
   if (first === 'auth' || first === 'login') return out;
-  if (out.includes('--sandbox')) return out;
-  out.unshift('danger-full-access');
+  const hasSandbox = out.includes('--sandbox') || out.some((x) => String(x || '').startsWith('--sandbox='));
+  if (hasSandbox) return out;
+  const sandbox = resolveCodexSandboxFromPolicy();
+  out.unshift(sandbox);
   out.unshift('--sandbox');
   return out;
+}
+
+function extractCodexResumeSessionId(forwardArgs) {
+  const arr = Array.isArray(forwardArgs) ? forwardArgs : [];
+  if (String(arr[0] || '') !== 'exec') return '';
+  for (let i = 1; i < arr.length; i++) {
+    const cur = String(arr[i] || '');
+    if (cur === '--sandbox') {
+      if (i + 1 < arr.length) i += 1;
+      continue;
+    }
+    if (cur.startsWith('--sandbox=')) continue;
+    if (cur === 'resume') {
+      const sid = String(arr[i + 1] || '').trim();
+      return looksLikeSessionId(sid) ? sid : '';
+    }
+  }
+  return '';
 }
 
 function runCliPty(cliName, initialId, forwardArgs, isLogin = false, runtimeOptions = {}) {
@@ -2519,6 +2816,42 @@ function runCliPty(cliName, initialId, forwardArgs, isLogin = false, runtimeOpti
   const initialSessionSync = ensureSessionStoreLinks(cliName, activeId);
   if (initialSessionSync.migrated > 0 || initialSessionSync.linked > 0) {
     console.log(`\x1b[36m[aih]\x1b[0m Session links ready (${cliName}): migrated ${initialSessionSync.migrated}, linked ${initialSessionSync.linked}.`);
+  }
+
+  const resumeSessionId = cliName === 'codex' ? extractCodexResumeSessionId(forwardArgs) : '';
+  if (resumeSessionId) {
+    // Resume flows may switch auto accounts while keeping the same session_id.
+    // Refresh binding metadata immediately so board account_id reflects the
+    // currently selected account instead of the original one.
+    if (taskKey) {
+      setTaskSession(taskKey, resumeSessionId, {
+        cli: cliName,
+        accountId: String(activeId),
+        pid: process.pid,
+        cwd: process.cwd()
+      });
+    }
+    if (planPath) {
+      setPlanSession(planPath, resumeSessionId, {
+        cli: cliName,
+        accountId: String(activeId),
+        cwd: process.cwd()
+      });
+    }
+    appendRecentSession(resumeSessionId, {
+      cli: cliName,
+      accountId: String(activeId),
+      pid: process.pid,
+      cwd: process.cwd(),
+      taskKey: taskKey || '',
+      planPath: planPath || ''
+    });
+    refreshSessionBindingsBySessionId(resumeSessionId, {
+      cli: cliName,
+      accountId: String(activeId),
+      pid: process.pid,
+      cwd: process.cwd()
+    });
   }
 
   let ptyProc = spawnPty(cliBin, cliName, activeId, forwardArgs, isLogin);
@@ -3893,6 +4226,7 @@ if (cmd === 'proxy') {
       fetchImpl: fetch,
       http,
       processObj: process,
+      aiHomeDir: AI_HOME_DIR,
       logFile: AIH_PROXY_LOG_FILE,
       getToolAccountIds,
       getToolConfigDir,
@@ -3924,10 +4258,13 @@ const UNLOCK_ACTIONS = new Set(['unlock', '--unlock', 'unexhaust', 'unban', 'rel
 const USAGE_ACTIONS = new Set(['usage', '--usage', 'stats']);
 const USAGES_ACTIONS = new Set(['usages', 'usage-all', 'all-usage', 'all-usages']);
 const IMPORT_OUTPUT_ACTIONS = new Set(['import-output', 'import_output', 'bulk-import', 'bulk_import']);
+const ACCOUNT_ACTIONS = new Set(['account', 'accounts', 'acct']);
+const ACCOUNT_IMPORT_ACTIONS = new Set(['import', 'import-output', 'import_output', 'bulk-import', 'bulk_import']);
 const SESSION_ACTIONS = new Set(['sessions', 'session', 'task-sessions', 'task_sessions', 'session-map', 'session_map']);
 const PLAN_SESSION_ACTIONS = new Set(['plan-sessions', 'plan_sessions', 'plansessions']);
 const LAST_SESSION_ACTIONS = new Set(['last-session', 'last_session', 'latest-session', 'latest_session']);
-const KNOWN_ACTIONS = new Set(['ls', 'set-default', 'add', 'login', 'auth', 'auto', ...SESSION_ACTIONS, ...PLAN_SESSION_ACTIONS, ...LAST_SESSION_ACTIONS, ...UNLOCK_ACTIONS, ...USAGE_ACTIONS, ...USAGES_ACTIONS, ...IMPORT_OUTPUT_ACTIONS]);
+const PERMISSION_POLICY_ACTIONS = new Set(['policy', 'permission-policy', 'permission_policy', 'permissions']);
+const KNOWN_ACTIONS = new Set(['ls', 'set-default', 'add', 'login', 'auth', 'auto', ...ACCOUNT_ACTIONS, ...SESSION_ACTIONS, ...PLAN_SESSION_ACTIONS, ...LAST_SESSION_ACTIONS, ...PERMISSION_POLICY_ACTIONS, ...UNLOCK_ACTIONS, ...USAGE_ACTIONS, ...USAGES_ACTIONS, ...IMPORT_OUTPUT_ACTIONS]);
 
 if (idOrAction === 'help') {
   showCliUsage(cliName);
@@ -3946,6 +4283,41 @@ if (idOrAction === 'ls') {
 
 if (idOrAction === '--help' || idOrAction === '-h') {
   showCliUsage(cliName);
+  process.exit(0);
+}
+
+if (idOrAction && PERMISSION_POLICY_ACTIONS.has(idOrAction)) {
+  if (cliName !== 'codex') {
+    console.error(`\x1b[31m[aih] ${idOrAction} is currently supported only for codex.\x1b[0m`);
+    process.exit(1);
+  }
+  const action = String(args[2] || '').trim().toLowerCase();
+  let targetSandbox = '';
+  if (!action || action === 'show' || action === 'get' || action === 'ls') {
+    printCodexPermissionPolicy();
+    process.exit(0);
+  }
+  if (action === 'set' || action === 'use') {
+    targetSandbox = String(args[3] || '').trim().toLowerCase();
+  } else {
+    targetSandbox = action;
+  }
+  if (!CODEX_SANDBOX_VALUES.has(targetSandbox)) {
+    console.error('\x1b[31m[aih]\x1b[0m Invalid sandbox policy. Use: workspace-write | read-only | danger-full-access');
+    process.exit(1);
+  }
+  const saved = savePermissionPolicy({
+    exec: {
+      defaultSandbox: targetSandbox,
+      allowDangerFullAccess: targetSandbox === 'danger-full-access'
+    }
+  }, { aiHomeDir: AI_HOME_DIR });
+  console.log(`\x1b[32m[Success]\x1b[0m Updated codex exec policy: ${targetSandbox}`);
+  printCodexPermissionPolicy(saved);
+  logAuditEvent('codex.permission-policy.update', {
+    sandbox: targetSandbox,
+    allowDangerFullAccess: targetSandbox === 'danger-full-access'
+  });
   process.exit(0);
 }
 
@@ -4005,12 +4377,13 @@ if (idOrAction && IMPORT_OUTPUT_ACTIONS.has(idOrAction)) {
     console.error(`\x1b[31m[aih] ${idOrAction} is currently supported only for codex.\x1b[0m`);
     process.exit(1);
   }
+  console.log(`\x1b[33m[aih]\x1b[0m 'codex ${idOrAction}' is deprecated. Use: aih codex account import ...`);
   let parsedOptions;
   try {
     parsedOptions = parseCodexBulkImportArgs(args.slice(2));
   } catch (e) {
     console.error(`\x1b[31m[aih] ${e.message}\x1b[0m`);
-    console.log(`\x1b[90mUsage:\x1b[0m aih codex import-output [sourceDir] [--parallel <1-32>] [--limit <n>] [--dry-run]`);
+    console.log(`\x1b[90mUsage:\x1b[0m aih codex account import [sourceDir] [--parallel <1-32>] [--limit <n>] [--dry-run]`);
     process.exit(1);
   }
 
@@ -4018,7 +4391,7 @@ if (idOrAction && IMPORT_OUTPUT_ACTIONS.has(idOrAction)) {
     try {
       const result = await importCodexTokensFromOutput(parsedOptions);
       const modeLabel = result.dryRun ? 'dry-run' : 'write';
-      console.log(`\x1b[36m[aih]\x1b[0m codex import-output done (${modeLabel})`);
+      console.log(`\x1b[36m[aih]\x1b[0m codex account import done (${modeLabel})`);
       console.log(`  source: ${result.sourceDir}`);
       console.log(`  files: ${result.scannedFiles}`);
       console.log(`  parsed: ${result.parsedLines}`);
@@ -4033,7 +4406,53 @@ if (idOrAction && IMPORT_OUTPUT_ACTIONS.has(idOrAction)) {
       }
       process.exit(0);
     } catch (e) {
-      console.error(`\x1b[31m[aih] import-output failed: ${e.message}\x1b[0m`);
+      console.error(`\x1b[31m[aih] account import failed: ${e.message}\x1b[0m`);
+      process.exit(1);
+    }
+  })();
+  return;
+}
+
+if (idOrAction && ACCOUNT_ACTIONS.has(idOrAction)) {
+  const accountSubAction = String(args[2] || '').trim().toLowerCase();
+  if (!ACCOUNT_IMPORT_ACTIONS.has(accountSubAction)) {
+    console.error(`\x1b[31m[aih] Unknown account action '${accountSubAction || '(empty)'}'.\x1b[0m`);
+    console.log(`\x1b[90mUsage:\x1b[0m aih codex account import [sourceDir] [--parallel <1-32>] [--limit <n>] [--dry-run]`);
+    process.exit(1);
+  }
+  if (cliName !== 'codex') {
+    console.error(`\x1b[31m[aih] account import is currently supported only for codex.\x1b[0m`);
+    process.exit(1);
+  }
+  let parsedOptions;
+  try {
+    parsedOptions = parseCodexBulkImportArgs(args.slice(3));
+  } catch (e) {
+    console.error(`\x1b[31m[aih] ${e.message}\x1b[0m`);
+    console.log(`\x1b[90mUsage:\x1b[0m aih codex account import [sourceDir] [--parallel <1-32>] [--limit <n>] [--dry-run]`);
+    process.exit(1);
+  }
+
+  (async () => {
+    try {
+      const result = await importCodexTokensFromOutput(parsedOptions);
+      const modeLabel = result.dryRun ? 'dry-run' : 'write';
+      console.log(`\x1b[36m[aih]\x1b[0m codex account import done (${modeLabel})`);
+      console.log(`  source: ${result.sourceDir}`);
+      console.log(`  files: ${result.scannedFiles}`);
+      console.log(`  parsed: ${result.parsedLines}`);
+      console.log(`  imported: ${result.imported}`);
+      console.log(`  duplicates: ${result.duplicates}`);
+      console.log(`  invalid: ${result.invalid}`);
+      if (!result.dryRun) {
+        console.log(`  failed: ${result.failed || 0}`);
+        if (result.firstError) {
+          console.log(`  first_error: ${result.firstError}`);
+        }
+      }
+      process.exit(0);
+    } catch (e) {
+      console.error(`\x1b[31m[aih] account import failed: ${e.message}\x1b[0m`);
       process.exit(1);
     }
   })();
@@ -4044,6 +4463,28 @@ if (idOrAction && SESSION_ACTIONS.has(idOrAction)) {
   if (cliName !== 'codex') {
     console.error(`\x1b[31m[aih] ${idOrAction} is currently supported only for codex.\x1b[0m`);
     process.exit(1);
+  }
+  const sessionAction = String(args[2] || '').trim().toLowerCase();
+  if (sessionAction === 'delete' || sessionAction === 'rm' || sessionAction === 'remove') {
+    const targetSid = String(args[3] || '').trim();
+    if (!looksLikeSessionId(targetSid)) {
+      console.error('\x1b[31m[aih] Invalid session_id. Usage: aih codex sessions delete <session_id>\x1b[0m');
+      process.exit(1);
+    }
+    const removed = deleteCodexSession(targetSid);
+    if (!removed.ok) {
+      console.error('\x1b[31m[aih] Failed to delete session entry.\x1b[0m');
+      process.exit(1);
+    }
+    const summary = removed.removed || { tasks: 0, plans: 0, recentSessions: 0 };
+    const statusColor = removed.changed ? '\x1b[32m' : '\x1b[33m';
+    const statusText = removed.changed ? 'Deleted session bindings.' : 'No matching session binding found.';
+    console.log(`${statusColor}[aih]\x1b[0m ${statusText}`);
+    console.log(`  session_id: ${targetSid}`);
+    console.log(`  removed.tasks: ${summary.tasks}`);
+    console.log(`  removed.plans: ${summary.plans}`);
+    console.log(`  removed.recent_sessions: ${summary.recentSessions}`);
+    process.exit(0);
   }
   let limit = 20;
   const a2 = String(args[2] || '').trim();
@@ -4084,11 +4525,83 @@ if (idOrAction === 'set-default') {
      console.error(`\x1b[31m[aih] Account ID ${targetId} does not exist.\x1b[0m`);
      process.exit(1);
   }
-  fs.writeFileSync(path.join(toolDir, '.aih_default'), targetId);
-  console.log(`\x1b[32m[Success]\x1b[0m Set Account ID ${targetId} as default for ${cliName} in ai-home.`);
+  const defaultPath = path.join(toolDir, '.aih_default');
+  const currentDefaultId = fs.existsSync(defaultPath) ? String(fs.readFileSync(defaultPath, 'utf8') || '').trim() : '';
+
+  let usageProtectionTriggered = false;
+  let usageThresholdPct = 0;
+  if (isUsageManagedCli(cliName)) {
+    const usageCheckStartedAt = Date.now();
+    const existingUsage = readUsageCache(cliName, targetId);
+    const usageAgeMs = existingUsage && existingUsage.capturedAt ? (Date.now() - Number(existingUsage.capturedAt)) : Number.POSITIVE_INFINITY;
+    const needsRefresh = !existingUsage || !Number.isFinite(usageAgeMs) || usageAgeMs > USAGE_REFRESH_STALE_MS;
+    if (needsRefresh) {
+      process.stdout.write(`\x1b[90m[aih]\x1b[0m Usage cache ${existingUsage ? 'stale' : 'missing'}, refreshing quota for Account ID ${targetId} ... `);
+    } else {
+      process.stdout.write(`\x1b[90m[aih]\x1b[0m Checking usage quota for Account ID ${targetId} (cache) ... `);
+    }
+    usageThresholdPct = readUsageThresholdPct();
+    const usageMarked = syncExhaustedStateFromUsage(cliName, targetId, { mode: needsRefresh ? 'refresh' : 'cached' });
+    const usageCheckMs = Date.now() - usageCheckStartedAt;
+    process.stdout.write(`done (${usageCheckMs}ms)\n`);
+    usageProtectionTriggered = usageMarked === true || isExhausted(cliName, targetId);
+    if (usageProtectionTriggered) {
+      const reserveRemainingPct = Math.max(0, 100 - usageThresholdPct);
+      console.log(`\x1b[33m[Warning]\x1b[0m Account ID ${targetId} is below quota reserve (${reserveRemainingPct}%).`);
+      const proceed = askYesNo('Still set this account as default?', false);
+      if (!proceed) {
+        console.log('\x1b[90m[aih]\x1b[0m set-default cancelled.');
+        logAuditEvent('account.set-default.cancelled_by_quota_protection', {
+          cli: cliName,
+          accountId: targetId,
+          thresholdPct: usageThresholdPct
+        });
+        process.exit(0);
+      }
+    }
+  }
+
+  if (currentDefaultId !== targetId) {
+    fs.writeFileSync(defaultPath, targetId);
+    console.log(`\x1b[32m[Success]\x1b[0m Set Account ID ${targetId} as default for ${cliName} in ai-home.`);
+  } else {
+    console.log(`\x1b[90m[aih]\x1b[0m Account ID ${targetId} is already default for ${cliName}.`);
+  }
+  let syncResult;
+  if (currentDefaultId === targetId) {
+    const cfg = CLI_CONFIGS[cliName];
+    const hostGlobalDir = cfg && cfg.globalDir ? path.join(HOST_HOME_DIR, cfg.globalDir) : '';
+    syncResult = {
+      ok: true,
+      reason: 'unchanged_default',
+      hostGlobalDir,
+      skippedSync: true,
+      backup: { created: false }
+    };
+  } else {
+    syncResult = syncGlobalConfigToHost(cliName, targetId);
+  }
+  if (syncResult.ok && syncResult.reason === 'already_in_sync') {
+    console.log(`\x1b[90m[aih]\x1b[0m Host config already up to date, sync skipped (${syncResult.hostGlobalDir}).`);
+  } else if (syncResult.ok && syncResult.reason === 'unchanged_default') {
+    console.log(`\x1b[90m[aih]\x1b[0m Default unchanged, host config sync skipped (${syncResult.hostGlobalDir}).`);
+  } else if (syncResult.ok) {
+    console.log(`\x1b[32m[Success]\x1b[0m Synced ${cliName} host config (${syncResult.hostGlobalDir}) from Account ID ${targetId}.`);
+    if (syncResult.backup && syncResult.backup.created) {
+      const removedText = syncResult.backup.removed > 0 ? `, pruned ${syncResult.backup.removed} old backup(s)` : '';
+      console.log(`\x1b[90m[aih]\x1b[0m Backup created: ${syncResult.backup.backupPath}${removedText}.`);
+    }
+  } else if (syncResult.reason !== 'unsupported-cli') {
+    console.log(`\x1b[33m[Warning]\x1b[0m Default set, but host config sync skipped (${syncResult.reason}).`);
+  }
   logAuditEvent('account.set-default', {
     cli: cliName,
-    accountId: targetId
+    accountId: targetId,
+    usageProtectionTriggered,
+    usageThresholdPct,
+    hostConfigSynced: !!syncResult.ok,
+    hostConfigSyncReason: syncResult.reason || '',
+    defaultAlreadySet: currentDefaultId === targetId
   });
   process.exit(0);
 }
@@ -4162,7 +4675,7 @@ if (idOrAction === 'auto') {
     process.exit(1);
   }
   
-  const nextId = String(allocation.id);
+  let nextId = String(allocation.id);
   console.log(`\x1b[36m[aih auto]\x1b[0m Auto-selected Account ID: \x1b[32m${nextId}\x1b[0m`);
   
   forwardArgs = args.slice(2);
@@ -4181,20 +4694,54 @@ if (idOrAction === 'auto') {
     forwardArgs = resolved.args;
     taskKey = resolved.taskKey;
     planPath = resolved.planPath;
+    const resumeSid = extractCodexResumeSessionId(forwardArgs);
+    if (resumeSid) {
+      const previousAccountId = findBoundAccountIdBySessionId(resumeSid);
+      if (previousAccountId && previousAccountId === nextId) {
+        let rotated = null;
+        try {
+          rotated = allocateAutoAccount(cliName, null, { excludeIds: [previousAccountId] });
+        } catch (_) {
+          rotated = null;
+        }
+        if (rotated && rotated.id) {
+          releaseAutoAccount(cliName, nextId, allocation.leaseToken);
+          allocation = rotated;
+          nextId = String(rotated.id);
+          console.log(`\x1b[36m[aih auto]\x1b[0m Resume rotation switched account: \x1b[32m${previousAccountId}\x1b[0m -> \x1b[32m${nextId}\x1b[0m`);
+        }
+      }
+    }
+    const overrideAccountId = String(resolved.overrideAccountId || '').trim();
+    if (overrideAccountId) {
+      const overrideDir = getProfileDir(cliName, overrideAccountId);
+      if (!fs.existsSync(overrideDir)) {
+        console.error(`\x1b[31m[aih auto]\x1b[0m Override account ID ${overrideAccountId} does not exist.`);
+        releaseAutoAccount(cliName, nextId, allocation.leaseToken);
+        process.exit(1);
+      }
+      const overrideStatus = checkStatus(cliName, overrideDir);
+      if (!overrideStatus.configured) {
+        console.error(`\x1b[31m[aih auto]\x1b[0m Override account ID ${overrideAccountId} is not configured.`);
+        releaseAutoAccount(cliName, nextId, allocation.leaseToken);
+        process.exit(1);
+      }
+      if (isExhausted(cliName, overrideAccountId)) {
+        console.error(`\x1b[31m[aih auto]\x1b[0m Override account ID ${overrideAccountId} is exhausted.`);
+        releaseAutoAccount(cliName, nextId, allocation.leaseToken);
+        process.exit(1);
+      }
+      if (overrideAccountId !== nextId) {
+        releaseAutoAccount(cliName, nextId, allocation.leaseToken);
+        allocation = { id: overrideAccountId, leaseToken: '' };
+        nextId = overrideAccountId;
+        console.log(`\x1b[36m[aih auto]\x1b[0m Override-selected Account ID: \x1b[32m${nextId}\x1b[0m`);
+      }
+    }
     const normalizedForwardArgs = (() => {
       const src = Array.isArray(forwardArgs) ? [...forwardArgs] : [];
       if (String(src[0] || '') !== 'exec') return src;
-      const cleaned = ['exec'];
-      for (let i = 1; i < src.length; i++) {
-        const cur = String(src[i] || '');
-        if (cur === '--sandbox') {
-          if (i + 1 < src.length) i += 1;
-          continue;
-        }
-        if (cur.startsWith('--sandbox=')) continue;
-        cleaned.push(src[i]);
-      }
-      return cleaned;
+      return stripCodexExecSandboxArgs(src);
     })();
     const isExec = String(normalizedForwardArgs[0] || '') === 'exec';
     const isResume = String(normalizedForwardArgs[1] || '') === 'resume';
@@ -4212,7 +4759,7 @@ if (idOrAction === 'auto') {
     }
   }
   runCliPty(cliName, nextId, forwardArgs, false, {
-    leaseToken: allocation.leaseToken,
+    leaseToken: allocation.leaseToken || '',
     taskKey,
     planPath
   });
