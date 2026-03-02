@@ -3,7 +3,7 @@
 - plan_id: m4-remote-runtime-wave1-2026-03-02
 - coordinator: codex
 - created_at: 2026-03-02T10:23:40+08:00
-- updated_at: 2026-03-02T10:28:51+08:00
+- updated_at: 2026-03-02T10:31:25+08:00
 - status: active
 
 ## Global Rules
@@ -154,7 +154,7 @@ Keep this checklist synced with `status`:
   priority: P1
   depends_on: []
   branch: feat/worker-codex-m4-t007
-  pr_or_commit: 424cdfeb8b14aced4e7f4d866ba876eda1ea99e4
+  pr_or_commit: 84c072c
   blocker:
   deliverable: Safer PATH-scan resolution logic that only accepts runnable command targets.
   acceptance:
@@ -208,3 +208,4 @@ Keep this checklist synced with `status`:
 - 2026-03-02T10:27:23+08:00 [rne3005] Continued interrupted session 019cac5d-076f-71d3-b35b-e441ef1ec8ce; hardened scripts/plan-watchdog.js with deterministic relaunch-window limit and explicit loop-to-blocked audit trail, verified via `node scripts/plan-watchdog.js --once` and `node scripts/plan-watchdog.js --repair --once`, and closed T005 with status=done/checklist synced/pr_or_commit=local-uncommitted.
 - 2026-03-02T10:28:35+08:00 [rne3004] Continued interrupted session 019cac5d-02f2-73e0-8fa4-a7a38061015b; completed deterministic runtime command-path fallback diagnostics in lib/runtime/command-path.js and verified via `node --test test/command-path.test.js` (9/9 pass), then closed T004 with status=done/checklist synced/pr_or_commit=local-uncommitted.
 - 2026-03-02T10:28:51+08:00 [worker-codex] Completed T007 by hardening executable validation in lib/runtime/command-path.js PATH scan fallback and validating `node --test test/command-path.test.js` (9/9 pass); set status=done/checklist synced/pr_or_commit=424cdfeb8b14aced4e7f4d866ba876eda1ea99e4.
+- 2026-03-02T10:31:25+08:00 [worker-codex] Backfilled T007 pr_or_commit=84c072c after committing `test/command-path.test.js` regression coverage in resumed worker session.
