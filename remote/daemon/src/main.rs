@@ -22,7 +22,7 @@ struct DaemonConfig {
 
 struct SessionRegistry {
     control_sessions: HashMap<String, ControlSession>,
-    remote_sessions: HashMap<String, String>,
+    remote_sessions: HashMap<String, RemoteSession>,
     lifecycle: DaemonLifecycle,
 }
 
@@ -30,6 +30,12 @@ struct SessionRegistry {
 struct ControlSession {
     last_connection_id: String,
     last_seen_unix_ms: u128,
+}
+
+#[derive(Clone)]
+struct RemoteSession {
+    owner_control_session_id: String,
+    lifecycle_generation: u64,
 }
 
 #[derive(Clone)]
@@ -88,14 +94,19 @@ impl SessionRegistry {
     fn register_remote_session(&mut self, remote_session_id: &str, control_session_id: &str) {
         self.remote_sessions.insert(
             String::from(remote_session_id),
-            String::from(control_session_id),
+            RemoteSession {
+                owner_control_session_id: String::from(control_session_id),
+                lifecycle_generation: self.lifecycle.generation,
+            },
         );
     }
 
     fn can_resume_remote_session(&self, remote_session_id: &str, control_session_id: &str) -> bool {
         matches!(
             self.remote_sessions.get(remote_session_id),
-            Some(owner) if owner == control_session_id
+            Some(session)
+                if session.owner_control_session_id == control_session_id
+                    && session.lifecycle_generation == self.lifecycle.generation
         )
     }
 
@@ -138,6 +149,8 @@ impl SessionRegistry {
             return self.lifecycle_status_line();
         }
 
+        // Remote project sessions cannot survive a stopped daemon state.
+        self.remote_sessions.clear();
         self.lifecycle.state = DaemonState::Stopped;
         self.lifecycle.generation += 1;
         self.lifecycle.updated_unix_ms = unix_time_ms();
@@ -147,6 +160,8 @@ impl SessionRegistry {
 
     fn restart_daemon(&mut self) -> String {
         let previous = self.lifecycle.state.as_str();
+        // Restart reinitializes runtime state and invalidates pre-restart project sessions.
+        self.remote_sessions.clear();
         self.lifecycle.state = DaemonState::Running;
         self.lifecycle.generation += 1;
         self.lifecycle.updated_unix_ms = unix_time_ms();
@@ -308,7 +323,12 @@ fn process_command(
         let running = sessions.lock().map(|registry| registry.is_running());
         match running {
             Ok(true) => {}
-            Ok(false) => return String::from("ERR DAEMON_STOPPED lifecycle%20state%20is%20stopped"),
+            Ok(false) => {
+                return format!(
+                    "ERR DAEMON_STOPPED {}%20blocked%20while%20daemon%20is%20stopped",
+                    percent_encode(&cmd.to_ascii_lowercase())
+                )
+            }
             Err(_) => return String::from("ERR INTERNAL session%20registry%20lock%20failed"),
         }
     }
@@ -428,7 +448,13 @@ fn process_command(
                 return format!("SESSION_RESUMED {}", percent_encode(&session_id));
             }
 
-            String::from("ERR INVALID_SESSION resume%20not%20allowed")
+            if registry.remote_sessions.contains_key(&session_id) {
+                return String::from(
+                    "ERR STALE_SESSION lifecycle%20generation%20changed%20for%20session",
+                );
+            }
+
+            String::from("ERR INVALID_SESSION session%20not%20owned%20or%20unknown")
         }
         "DAEMON_STATUS" => {
             if !*authenticated {

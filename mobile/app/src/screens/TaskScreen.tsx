@@ -68,14 +68,19 @@ function buildGuidance(task: TaskSnapshot | null, runtimeError: string): string 
 }
 
 export default function TaskScreen(props: TaskScreenProps): JSX.Element {
+  const scrollViewRef = useRef<ScrollView | null>(null);
   const [command, setCommand] = useState<string>('aih ls');
   const [sessionId, setSessionId] = useState<string>('');
   const [task, setTask] = useState<TaskSnapshot | null>(null);
   const [resultText, setResultText] = useState<string>('');
   const [resultSummary, setResultSummary] = useState<string>('');
+  const [escalationText, setEscalationText] = useState<string>('');
   const [errorText, setErrorText] = useState<string>('');
   const [isStarting, setIsStarting] = useState<boolean>(false);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
+  const [isRetryingTask, setIsRetryingTask] = useState<boolean>(false);
+  const [isRetryingConnection, setIsRetryingConnection] = useState<boolean>(false);
+  const [isPreparingEscalation, setIsPreparingEscalation] = useState<boolean>(false);
   const [watchStatus, setWatchStatus] = useState<string>('No active task.');
   const [statusHistory, setStatusHistory] = useState<string[]>([]);
   const watchStopRef = useRef<(() => void) | null>(null);
@@ -92,7 +97,15 @@ export default function TaskScreen(props: TaskScreenProps): JSX.Element {
 
   const canStart = useMemo(() => !isStarting && command.trim().length > 0, [isStarting, command]);
   const canCancel = useMemo(() => Boolean(task && (task.status === 'queued' || task.status === 'running')), [task]);
+  const hasFailure = useMemo(() => Boolean(errorText || task?.error || task?.status === 'failed'), [errorText, task]);
   const guidanceText = useMemo(() => buildGuidance(task, errorText), [task, errorText]);
+
+  const stopWatch = (): void => {
+    if (watchStopRef.current) {
+      watchStopRef.current();
+      watchStopRef.current = null;
+    }
+  };
 
   const appendStatusHistory = (nextTask: TaskSnapshot): void => {
     if (lastStatusRef.current === nextTask.status) return;
@@ -101,10 +114,7 @@ export default function TaskScreen(props: TaskScreenProps): JSX.Element {
   };
 
   const beginWatch = (taskId: string): void => {
-    if (watchStopRef.current) {
-      watchStopRef.current();
-      watchStopRef.current = null;
-    }
+    stopWatch();
 
     const controller = props.daemonClient.watchTask(taskId, {
       pollIntervalMs: 1_250,
@@ -115,6 +125,9 @@ export default function TaskScreen(props: TaskScreenProps): JSX.Element {
         if (isTerminalStatus(nextTask.status)) {
           setResultSummary(summarizeResult(nextTask.result));
           setResultText(prettyJson(nextTask.result));
+          setWatchStatus(`Task ${nextTask.taskId} completed (${nextTask.status}).`);
+          stopWatch();
+          scrollViewRef.current?.scrollToEnd({ animated: true });
           void props.pushNotifications.notifyTaskCompleted(nextTask);
         } else {
           void props.pushNotifications.notifyTaskUpdated(nextTask);
@@ -142,6 +155,7 @@ export default function TaskScreen(props: TaskScreenProps): JSX.Element {
     setErrorText('');
     setResultText('');
     setResultSummary('');
+    setEscalationText('');
     setStatusHistory([]);
     lastStatusRef.current = '';
     try {
@@ -170,9 +184,12 @@ export default function TaskScreen(props: TaskScreenProps): JSX.Element {
       const fresh = await props.daemonClient.getTask(task.taskId);
       setTask(fresh);
       appendStatusHistory(fresh);
+      setWatchStatus(`Tracking ${fresh.taskId} (${fresh.status})`);
       if (isTerminalStatus(fresh.status)) {
         setResultSummary(summarizeResult(fresh.result));
         setResultText(prettyJson(fresh.result));
+        stopWatch();
+        scrollViewRef.current?.scrollToEnd({ animated: true });
       }
     } catch (error) {
       setErrorText(toErrorMessage(error));
@@ -183,12 +200,64 @@ export default function TaskScreen(props: TaskScreenProps): JSX.Element {
 
   const cancelTask = async (): Promise<void> => {
     if (!task || !canCancel) return;
-    await props.daemonClient.cancelTask(task.taskId);
-    await refreshStatus();
+    setErrorText('');
+    try {
+      await props.daemonClient.cancelTask(task.taskId);
+      await refreshStatus();
+    } catch (error) {
+      setErrorText(toErrorMessage(error));
+    }
+  };
+
+  const retryTask = async (): Promise<void> => {
+    if (isRetryingTask || !command.trim()) return;
+    setIsRetryingTask(true);
+    try {
+      await startTask();
+    } finally {
+      setIsRetryingTask(false);
+    }
+  };
+
+  const retryConnection = async (): Promise<void> => {
+    if (isRetryingConnection) return;
+    setIsRetryingConnection(true);
+    setErrorText('');
+    try {
+      await props.reconnectManager.retryNow();
+      await connectSession();
+      setWatchStatus('Connection recovered. You can retry the task now.');
+    } catch (error) {
+      setErrorText(toErrorMessage(error));
+    } finally {
+      setIsRetryingConnection(false);
+    }
+  };
+
+  const prepareEscalation = async (): Promise<void> => {
+    if (isPreparingEscalation) return;
+    setIsPreparingEscalation(true);
+    try {
+      const lines = [
+        `Task ID: ${task?.taskId || 'not-started'}`,
+        `Session ID: ${task?.sessionId || sessionId.trim() || 'unknown'}`,
+        `Status: ${task?.status || 'unknown'}`,
+        `Command: ${command.trim() || 'n/a'}`,
+        `Runtime Error: ${errorText || task?.error || 'none'}`,
+        `Watch Status: ${watchStatus}`,
+        `Updated At: ${task?.updatedAt || new Date().toISOString()}`,
+        '',
+        'Result Summary:',
+        resultSummary || 'n/a'
+      ];
+      setEscalationText(lines.join('\n'));
+    } finally {
+      setIsPreparingEscalation(false);
+    }
   };
 
   return (
-    <ScrollView style={styles.page} contentContainerStyle={styles.content}>
+    <ScrollView ref={scrollViewRef} style={styles.page} contentContainerStyle={styles.content}>
       <Text style={styles.heading}>Mobile Control Center</Text>
       <Text style={styles.subHeading}>Initiate commands, track status, and inspect task output remotely.</Text>
 
@@ -243,10 +312,51 @@ export default function TaskScreen(props: TaskScreenProps): JSX.Element {
       <View style={styles.card}>
         <Text style={styles.label}>Live Status</Text>
         <Text style={styles.statusText}>{task ? `${task.taskId} • ${task.status}` : 'No task created yet.'}</Text>
+        {typeof task?.progress === 'number' ? <Text style={styles.metaText}>Progress: {Math.max(0, Math.min(100, Math.round(task.progress)))}%</Text> : null}
         {task?.message ? <Text style={styles.metaText}>{task.message}</Text> : null}
         {task?.error ? <Text style={styles.errorText}>{task.error}</Text> : null}
         {errorText ? <Text style={styles.errorText}>{errorText}</Text> : null}
         <Text style={styles.guidanceText}>{guidanceText}</Text>
+        {hasFailure ? (
+          <View style={styles.failureActionsRow}>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => void retryTask()}
+              disabled={isRetryingTask || !command.trim()}
+              style={({ pressed }) => [
+                styles.inlineActionButton,
+                styles.retryTaskButton,
+                (isRetryingTask || !command.trim() || pressed) && styles.inlineActionButtonDisabled
+              ]}
+            >
+              <Text style={styles.inlineActionText}>{isRetryingTask ? 'Retrying...' : 'Retry Task'}</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => void retryConnection()}
+              disabled={isRetryingConnection}
+              style={({ pressed }) => [
+                styles.inlineActionButton,
+                styles.retryConnectionButton,
+                (isRetryingConnection || pressed) && styles.inlineActionButtonDisabled
+              ]}
+            >
+              <Text style={styles.inlineActionText}>{isRetryingConnection ? 'Reconnecting...' : 'Retry Connection'}</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => void prepareEscalation()}
+              disabled={isPreparingEscalation}
+              style={({ pressed }) => [
+                styles.inlineActionButton,
+                styles.escalateButton,
+                (isPreparingEscalation || pressed) && styles.inlineActionButtonDisabled
+              ]}
+            >
+              <Text style={styles.inlineActionText}>{isPreparingEscalation ? 'Preparing...' : 'Escalate'}</Text>
+            </Pressable>
+          </View>
+        ) : null}
       </View>
 
       <View style={styles.card}>
@@ -271,6 +381,13 @@ export default function TaskScreen(props: TaskScreenProps): JSX.Element {
         <Text style={styles.label}>Raw Result</Text>
         <Text style={styles.resultText}>{resultText || 'Task result will appear here when available.'}</Text>
       </View>
+
+      {escalationText ? (
+        <View style={styles.card}>
+          <Text style={styles.label}>Escalation Notes</Text>
+          <Text style={styles.resultText}>{escalationText}</Text>
+        </View>
+      ) : null}
     </ScrollView>
   );
 }
@@ -360,5 +477,35 @@ const styles = StyleSheet.create({
     color: '#dbeafe',
     fontSize: 12,
     lineHeight: 18
+  },
+  failureActionsRow: {
+    marginTop: 4,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8
+  },
+  inlineActionButton: {
+    borderRadius: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    minWidth: 100,
+    alignItems: 'center'
+  },
+  inlineActionButtonDisabled: {
+    opacity: 0.6
+  },
+  retryTaskButton: {
+    backgroundColor: '#2563eb'
+  },
+  retryConnectionButton: {
+    backgroundColor: '#0f766e'
+  },
+  escalateButton: {
+    backgroundColor: '#7c2d12'
+  },
+  inlineActionText: {
+    color: '#f8fafc',
+    fontSize: 12,
+    fontWeight: '700'
   }
 });

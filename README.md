@@ -120,7 +120,22 @@ aih import -o backup.aes
 - 若系统未安装 `age`，CLI 会先给出平台安装命令，并支持交互式自动安装
 - `-o` 未指定时，若目标账号已存在则跳过该账号；指定 `-o` 时覆盖该账号目录
 
-### 10. 本地账号能力代理（OpenAI 兼容）
+### 10. 批量导入 Codex 账号（refresh_token JSON）
+```bash
+# 推荐用法
+aih codex account import accounts --parallel 8 --limit 200
+
+# 预览不落盘
+aih codex account import accounts --dry-run
+
+```
+说明：
+- 输入目录下递归扫描 `*.json`
+- 识别包含 `refresh_token`（`rt_`）的记录
+- 自动跳过重复 token
+- 支持并行导入和限量导入
+
+### 11. 本地账号能力代理（OpenAI 兼容）
 `aih` 现在内置本地代理，不依赖额外上游。默认后端为 `codex-local`，可按模型路由到 `codex/gemini`。
 
 ```bash
@@ -155,7 +170,7 @@ aih proxy autostart uninstall
 - `GET /v0/management/models`
 - `POST /v0/management/reload`
 
-### 11. 多 AI / Subagent 任务看板
+### 12. 多 AI / Subagent 任务看板
 用于并行协作时查看“哪个 AI 在做什么”。
 
 ```bash
@@ -164,6 +179,15 @@ npm run plan:board
 
 # 看全部（todo / doing / blocked / done）
 npm run plan:board -- --all
+
+# 实时看板（内建刷新，推荐替代 watch -n 1）
+npm run plan:board:live
+
+# 实时看板 + 全量视图
+npm run plan:board:live -- --all
+
+# 客户端/GUI 可消费 JSON
+npm run plan:board -- --json
 ```
 
 会话追踪（推荐）：
@@ -186,6 +210,11 @@ aih codex auto review --pr 123
 # 可选：不合并，仅 review
 aih codex auto review --pr 123 --no-merge
 ```
+
+排障（全局记录）：
+- 若提示 `gh auth` 不可用，先检查 `HOME` 是否被切到 sandbox profile（如 `~/.ai_home/profiles/...`）。
+- `aih` 的 review/merge 依赖宿主机 GitHub 登录态；请在宿主环境先执行一次 `gh auth login`。
+- 必要时显式设置 `AIH_HOST_HOME=/Users/<your_user>`，确保读取宿主 `~/.config/gh`。
 
 相关文件：
 - `skills/aih-task-orchestrator/SKILL.md`：协调 AI（拆任务 + 分发）

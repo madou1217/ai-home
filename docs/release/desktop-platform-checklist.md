@@ -9,6 +9,21 @@ Target platforms:
 
 Use this as a release gate. Any failed P0 gate is `NO-GO`.
 
+## Build Blocker Note (2026-03-02, UTC+8)
+Observed mac arm packaging blocker:
+- `desktop/tauri/src-tauri` missed required Tauri Rust scaffolding files (`Cargo.toml`, `build.rs`).
+- Release workflow preflight only checked directory + `tauri.conf.json`, so missing Rust build manifests were not blocked early.
+
+Recovery path before GA sign-off:
+- Restore minimal Tauri Rust scaffolding under `desktop/tauri/src-tauri`.
+- Run local arm64 packaging dry run:
+  - `cd desktop/tauri`
+  - `npm ci`
+  - `npm run tauri build -- --target aarch64-apple-darwin --bundles app,dmg --config src-tauri/tauri.conf.json`
+- Verify output exists:
+  - `desktop/tauri/src-tauri/target/aarch64-apple-darwin/release/bundle/{app,dmg}/`
+- Only then continue full workflow matrix release.
+
 ## Release Metadata
 - Release version:
 - Release tag (must match `desktop-vX.Y.Z`):
@@ -67,6 +82,17 @@ Run on each platform with installed artifact.
 - [ ] Start claude session and verify status/result feedback.
 - [ ] Start gemini session and verify status/result feedback.
 - [ ] Failure path (network/tool unavailable) shows actionable retry guidance.
+
+## Packaged-Mode Core Path Verification (P0)
+Run using installed artifact from outside repo (`cwd` not under ai-home workspace).
+- [ ] Launch installed app from outside repo and confirm dashboard loads.
+- [ ] Account list (`run_aih ls/<cli> ls`) works in packaged mode.
+- [ ] Default switch persists after restart in packaged mode.
+- [ ] Account status state is visible for codex/claude/gemini and failure state includes remediation hint.
+- [ ] Session launcher can start codex/claude/gemini in packaged mode.
+- [ ] Session launcher failure path (timeout/bridge/account validation) shows actionable retry guidance.
+- [ ] Simulated runtime bootstrap failure returns actionable guidance (not silent crash).
+- [ ] If any item above fails, mark release as NO-GO and trigger rollback policy immediately.
 
 ## Basic Regression (P0)
 - [ ] Dashboard loads without blank screen or unhandled error.

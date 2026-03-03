@@ -1,0 +1,25 @@
+[package]
+name = "ai-home-desktop"
+version = "1.0.0"
+description = "AI Home desktop control center"
+authors = ["AI Home Team"]
+license = "MIT"
+repository = "https://github.com/madou1217/ai-home"
+edition = "2021"
+rust-version = "1.77"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2", features = [] }
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
+[package.metadata.ai_home_runtime]
+resource_root = "."
+cli_entry = "bin/ai-home.js"

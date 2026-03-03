@@ -25,6 +25,35 @@ function parseArgs(argv) {
   return out;
 }
 
+function isAmbiguousPlanInput(planArg) {
+  return /[*?[\]{}]/.test(planArg) || planArg.includes(',');
+}
+
+function resolvePlanPath(planArg) {
+  const planInput = String(planArg || '').trim();
+  if (!planInput) {
+    throw new Error('Missing required --plan value.');
+  }
+  if (isAmbiguousPlanInput(planInput)) {
+    throw new Error(`Ambiguous --plan input is not allowed: ${planInput}`);
+  }
+  if (!planInput.endsWith('.plan.md')) {
+    throw new Error(`Invalid --plan file extension, expected *.plan.md: ${planInput}`);
+  }
+  const resolved = path.resolve(rootDir, planInput);
+  if (!resolved.startsWith(path.join(rootDir, 'plans') + path.sep)) {
+    throw new Error(`--plan must point to a file under plans/: ${planInput}`);
+  }
+  if (!fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) {
+    throw new Error(`Plan file does not exist: ${planInput}`);
+  }
+  return {
+    input: planInput,
+    resolved,
+    repoRelative: path.relative(rootDir, resolved)
+  };
+}
+
 function resolveOrchestratorSkillToken() {
   const candidates = [
     { token: '$aih-task-orchestrator', file: path.join(rootDir, 'skills', 'aih-task-orchestrator', 'SKILL.md') },
@@ -53,16 +82,32 @@ function main() {
     process.exit(args.help ? 0 : 1);
   }
 
+  let planInfo;
+  try {
+    planInfo = resolvePlanPath(args.plan);
+  } catch (err) {
+    console.error('[plan-orchestrate] invalid args:', err && err.message ? err.message : String(err));
+    process.exit(1);
+  }
+
   const skill = resolveOrchestratorSkillToken();
   const goal = args.goal || '请根据当前看板状态继续派发并行任务，并确保执行者闭环回写 done/blocked。';
-  const prompt = `使用 ${skill} skill。目标计划文件：${args.plan}。${goal}`;
+  const prompt = `使用 ${skill} skill。目标计划文件：${planInfo.repoRelative}。${goal}`;
 
   const cmd = [
     'node', 'bin/ai-home.js', 'codex', 'auto', 'exec',
-    '--plan', args.plan,
+    '--plan', planInfo.repoRelative,
     prompt
   ];
 
+  const context = {
+    ts: new Date().toISOString(),
+    plan_input: planInfo.input,
+    plan: planInfo.repoRelative,
+    skill,
+    dry_run: args.dryRun
+  };
+  console.log('[plan-orchestrate] context:', JSON.stringify(context));
   console.log('[plan-orchestrate] cmd:', cmd.map(quote).join(' '));
   if (args.dryRun) process.exit(0);
 

@@ -112,9 +112,17 @@ function taskNumFromId(taskId) {
   return String(Number(m[1])).padStart(3, '0');
 }
 
+function shortPlanTag(planName) {
+  const src = String(planName || '').toLowerCase();
+  let h = 0;
+  for (let i = 0; i < src.length; i++) {
+    h = (h * 31 + src.charCodeAt(i)) >>> 0;
+  }
+  return (h % 46656).toString(36).padStart(3, '0');
+}
+
 function buildOwner(planName, taskId, prefix) {
-  const m = String(planName || '').match(/(\d{3})-\d{4}-\d{2}-\d{2}\.plan\.md$/);
-  const batch = m ? m[1] : '000';
+  const batch = shortPlanTag(planName);
   const n = taskNumFromId(taskId);
   return `${prefix}${batch}${n}`.toLowerCase();
 }
@@ -171,7 +179,12 @@ function runOne(job, prompt, dryRun) {
       cwd: rootDir,
       detached: true,
       stdio: 'ignore',
-      env: process.env
+      env: {
+        ...process.env,
+        // Prevent each newly launched worker from triggering an immediate watchdog scan.
+        // The scan can race before session binding is written and cause false offline blocks.
+        AIH_DISABLE_PLAN_WATCHDOG: process.env.AIH_DISABLE_PLAN_WATCHDOG || '1'
+      }
     });
     child.unref();
     return { ok: true, pid: child.pid || 0 };
@@ -181,27 +194,37 @@ function runOne(job, prompt, dryRun) {
 }
 
 function dispatchOnce(args) {
-  const files = readPlanFiles(args);
-  const queue = buildTaskQueue(files, args.ownerPrefix);
-  const pick = queue.slice(0, args.launchMax);
-
   let ok = 0;
   let fail = 0;
+  let attempts = 0;
+  let filesSeen = 0;
+  let candidatesSeen = 0;
+  const launchedTaskKeys = new Set();
 
-  pick.forEach((job) => {
+  // Dispatch one-by-one and refresh queue every round to avoid concurrent claim overwrite.
+  while (attempts < args.launchMax) {
+    const files = readPlanFiles(args);
+    const queue = buildTaskQueue(files, args.ownerPrefix);
+    filesSeen = files.length;
+    candidatesSeen = queue.length;
+    if (queue.length === 0) break;
+    const job = queue.find((q) => !launchedTaskKeys.has(q.taskKey));
+    if (!job) break;
     const result = runOne(job, args.prompt, args.dryRun);
     if (result.ok) {
       ok += 1;
+      launchedTaskKeys.add(job.taskKey);
       const pidInfo = result.pid ? ` pid=${result.pid}` : '';
       console.log(`[dispatch] launched ${job.taskKey} (${job.taskId})${pidInfo}`);
     } else {
       fail += 1;
       console.log(`[dispatch] failed ${job.taskKey}: ${result.error}`);
     }
-  });
+    attempts += 1;
+  }
 
-  console.log(`[dispatch] plans=${files.length} candidates=${queue.length} launched=${ok} failed=${fail} limit=${args.launchMax}`);
-  return { files: files.length, candidates: queue.length, launched: ok, failed: fail };
+  console.log(`[dispatch] plans=${filesSeen} candidates=${candidatesSeen} launched=${ok} failed=${fail} limit=${args.launchMax}`);
+  return { files: filesSeen, candidates: candidatesSeen, launched: ok, failed: fail };
 }
 
 function main() {
