@@ -119,32 +119,33 @@ Notes:
 - If `age` is missing, `aih` prints platform install commands and can auto-install interactively
 - Without `-o`, existing account directories are skipped; with `-o`, they are overwritten
 
-### 10. Bulk import Codex accounts (refresh_token JSON)
+### 10. Bulk account import (auto-discover accounts/<provider>)
 ```bash
-# Recommended
-aih codex account import accounts --parallel 8 --limit 200
+# Recommended: auto-discover accounts/codex, accounts/gemini...
+aih account import accounts
 
 # Preview only (no writes)
-aih codex account import accounts --dry-run
+aih account import accounts --dry-run
 
+# Provider-scoped import is still supported
+aih codex account import accounts/codex --dry-run
 ```
 Notes:
-- Recursively scans `*.json` under the source directory
-- Accepts records containing `refresh_token` (`rt_`)
-- Automatically skips duplicate tokens
-- Supports parallel import and import limits
+- Top-level import auto-discovers provider directories under `accounts/<provider>`
+- Unsupported providers are skipped with a clear notice
+- Concurrency is auto-sized to local CPU parallelism (macOS / Windows / Linux)
 
-### 11. Local Account Proxy (OpenAI-compatible)
-`aih` now includes a built-in local proxy. Default backend is `codex-local`, and it can route to `codex/gemini` by model/provider rules.
+### 11. Local Account Server (OpenAI-compatible)
+`aih` now includes a built-in local server. Default backend is `codex-local`, and it can route to `codex/gemini` by model/provider rules.
 
 ```bash
-# Start background proxy (default 127.0.0.1:8317)
-aih proxy
+# Start background server (default 127.0.0.1:8317)
+aih serve
 
 # Check status / restart / stop
-aih proxy status
-aih proxy restart
-aih proxy stop
+aih server status
+aih server restart
+aih server stop
 ```
 
 In clients (e.g. Cherry Studio), use:
@@ -154,12 +155,12 @@ In clients (e.g. Cherry Studio), use:
 Advanced (optional):
 ```bash
 # Foreground debug mode
-aih proxy serve --port 8317 --provider auto
+aih server serve --port 8317 --provider auto
 
 # Auto-start on boot (macOS launchd)
-aih proxy autostart install
-aih proxy autostart status
-aih proxy autostart uninstall
+aih server autostart install
+aih server autostart status
+aih server autostart uninstall
 ```
 
 Management APIs:

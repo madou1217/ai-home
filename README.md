@@ -120,32 +120,33 @@ aih import -o backup.aes
 - 若系统未安装 `age`，CLI 会先给出平台安装命令，并支持交互式自动安装
 - `-o` 未指定时，若目标账号已存在则跳过该账号；指定 `-o` 时覆盖该账号目录
 
-### 10. 批量导入 Codex 账号（refresh_token JSON）
+### 10. 批量导入账号（自动扫描 accounts/<provider>）
 ```bash
-# 推荐用法
-aih codex account import accounts --parallel 8 --limit 200
+# 推荐：自动扫描 accounts/codex、accounts/gemini...
+aih account import accounts
 
 # 预览不落盘
-aih codex account import accounts --dry-run
+aih account import accounts --dry-run
 
+# 指定 provider 也支持
+aih codex account import accounts/codex --dry-run
 ```
 说明：
-- 输入目录下递归扫描 `*.json`
-- 识别包含 `refresh_token`（`rt_`）的记录
-- 自动跳过重复 token
-- 支持并行导入和限量导入
+- 顶层命令按 `accounts/<provider>` 自动发现并导入
+- 当前未实现的 provider 会跳过并提示
+- 并发默认按本机 CPU 线程自动设置（macOS / Windows / Linux）
 
 ### 11. 本地账号能力代理（OpenAI 兼容）
-`aih` 现在内置本地代理，不依赖额外上游。默认后端为 `codex-local`，可按模型路由到 `codex/gemini`。
+`aih` 现在内置本地 server，不依赖额外上游。默认后端为 `codex-local`，可按模型路由到 `codex/gemini`。
 
 ```bash
-# 启动后台代理（默认 127.0.0.1:8317）
-aih proxy
+# 启动后台 server（默认 127.0.0.1:8317）
+aih serve
 
 # 查看状态 / 重启 / 停止
-aih proxy status
-aih proxy restart
-aih proxy stop
+aih server status
+aih server restart
+aih server stop
 ```
 
 在调用方里填写：
@@ -155,12 +156,12 @@ aih proxy stop
 高级可选：
 ```bash
 # 前台调试运行
-aih proxy serve --port 8317 --provider auto
+aih server serve --port 8317 --provider auto
 
 # 开机自启（macOS launchd）
-aih proxy autostart install
-aih proxy autostart status
-aih proxy autostart uninstall
+aih server autostart install
+aih server autostart status
+aih server autostart uninstall
 ```
 
 管理接口：
