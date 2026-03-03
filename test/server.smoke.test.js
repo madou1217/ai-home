@@ -70,10 +70,18 @@ test('server serve exposes health/models/metrics', async (t) => {
   const ready = await waitForHealth(port, 12000);
   assert.equal(ready, true, `server did not become healthy: ${getStderr()}`);
 
+  const readyRes = await fetch(`http://127.0.0.1:${port}/readyz`);
+  assert.equal(readyRes.ok, true);
+  const readyPayload = await readyRes.json();
+  assert.equal(readyPayload.ok, true);
+  assert.equal(typeof readyPayload.ready, 'boolean');
+  assert.equal(typeof readyPayload.accounts, 'object');
+
   const modelsRes = await fetch(`http://127.0.0.1:${port}/v1/models`, {
     headers: { authorization: 'Bearer dummy' }
   });
   assert.equal(modelsRes.ok, true);
+  assert.equal(Boolean(modelsRes.headers.get('x-aih-request-id')), true);
   const models = await modelsRes.json();
   assert.equal(models.object, 'list');
   assert.equal(Array.isArray(models.data), true);

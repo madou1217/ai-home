@@ -54,3 +54,34 @@ test('v1 router enforces client key', async () => {
   const body = JSON.parse(res.body);
   assert.equal(body.error, 'unauthorized_client');
 });
+
+test('v1 router returns 413 when request body exceeds limit', async () => {
+  const res = createResCapture();
+  const handled = await handleV1Request({
+    req: { headers: {} },
+    res,
+    method: 'POST',
+    pathname: '/v1/chat/completions',
+    options: { backend: 'codex-local', provider: 'auto' },
+    state: {
+      modelRegistry: { providers: { codex: new Set(['gpt-4o-mini']), gemini: new Set() } },
+      metrics: { totalRequests: 0, routeCounts: {}, totalSuccess: 0 }
+    },
+    requiredClientKey: '',
+    cooldownMs: 1000,
+    localExecOpts: {},
+    maxRequestBodyBytes: 8,
+    deps: {
+      readRequestBody: async () => {
+        const err = new Error('request_body_too_large');
+        err.code = 'request_body_too_large';
+        throw err;
+      },
+      writeJson: (r, code, payload) => { r.statusCode = code; r.end(JSON.stringify(payload)); }
+    }
+  });
+  assert.equal(handled, true);
+  assert.equal(res.statusCode, 413);
+  const body = JSON.parse(res.body);
+  assert.equal(body.error, 'request_body_too_large');
+});
