@@ -65,10 +65,10 @@ async function startProxy(t, extraArgs = []) {
   return { child, port, getStderr: () => stderr };
 }
 
-test('proxy serve exposes health/models/metrics', async (t) => {
+test('server serve exposes health/models/metrics', async (t) => {
   const { port, getStderr } = await startProxy(t);
   const ready = await waitForHealth(port, 12000);
-  assert.equal(ready, true, `proxy did not become healthy: ${getStderr()}`);
+  assert.equal(ready, true, `server did not become healthy: ${getStderr()}`);
 
   const modelsRes = await fetch(`http://127.0.0.1:${port}/v1/models`, {
     headers: { authorization: 'Bearer dummy' }
@@ -86,13 +86,13 @@ test('proxy serve exposes health/models/metrics', async (t) => {
   assert.ok(Number(metrics.totalRequests) >= 1);
 });
 
-test('proxy serve enforces client and management keys when configured', async (t) => {
+test('server serve enforces client and management keys when configured', async (t) => {
   const { port, getStderr } = await startProxy(t, [
     '--client-key', 'client-secret',
     '--management-key', 'mgmt-secret'
   ]);
   const ready = await waitForHealth(port, 12000);
-  assert.equal(ready, true, `proxy did not become healthy: ${getStderr()}`);
+  assert.equal(ready, true, `server did not become healthy: ${getStderr()}`);
 
   const unauthorizedClientRes = await fetch(`http://127.0.0.1:${port}/v1/models`);
   assert.equal(unauthorizedClientRes.status, 401);
@@ -124,10 +124,10 @@ test('proxy serve enforces client and management keys when configured', async (t
   assert.ok(Number(metrics.totalRequests) >= 1);
 });
 
-test('proxy serve returns codex-local unsupported error and records failure metrics', async (t) => {
+test('server serve returns codex-local unsupported error and records failure metrics', async (t) => {
   const { port, getStderr } = await startProxy(t);
   const ready = await waitForHealth(port, 12000);
-  assert.equal(ready, true, `proxy did not become healthy: ${getStderr()}`);
+  assert.equal(ready, true, `server did not become healthy: ${getStderr()}`);
 
   const unsupportedRes = await fetch(`http://127.0.0.1:${port}/v1/edits`, {
     method: 'POST',
