@@ -11,6 +11,11 @@ const { execSync, spawnSync, spawn } = require('child_process');
 const http = require('http');
 const { resolveHostHomeDir } = require('../lib/runtime/host-home');
 const {
+  commandExists: runtimeCommandExists,
+  configureConsoleEncoding,
+  resolveCliPath
+} = require('../lib/runtime/platform-runtime');
+const {
   loadPermissionPolicy,
   savePermissionPolicy,
   shouldUseDangerFullAccess
@@ -31,6 +36,7 @@ const CLI_CONFIGS = {
   claude: { globalDir: '.claude', loginArgs: ['login'], pkg: '@anthropic-ai/claude-code', envKeys: ['ANTHROPIC_API_KEY', 'ANTHROPIC_BASE_URL'] },
   codex:  { globalDir: '.codex',  loginArgs: ['login'], pkg: '@openai/codex', envKeys: ['OPENAI_API_KEY', 'OPENAI_BASE_URL'] }
 };
+configureConsoleEncoding();
 
 function ensureDir(dir) {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -406,12 +412,7 @@ function refreshGeminiUsageSnapshot(cliName, id) {
   const sandboxDir = getProfileDir(cliName, id);
   if (!fs.existsSync(sandboxDir)) return null;
 
-  let geminiBin = '';
-  try {
-    geminiBin = execSync('which gemini', { encoding: 'utf8' }).trim();
-  } catch (e) {
-    return null;
-  }
+  const geminiBin = resolveCliPath('gemini');
   if (!geminiBin) return null;
 
   const probeScript = `
@@ -571,12 +572,7 @@ function refreshCodexUsageSnapshotFromAppServer(cliName, id) {
   const sandboxDir = getProfileDir(cliName, id);
   if (!fs.existsSync(sandboxDir)) return null;
 
-  let codexBin = '';
-  try {
-    codexBin = execSync('which codex', { encoding: 'utf8' }).trim();
-  } catch (e) {
-    return null;
-  }
+  const codexBin = resolveCliPath('codex');
   if (!codexBin) return null;
 
   const probeScript = `
@@ -3060,9 +3056,8 @@ function spawnPty(cliName, id, forwardArgs, isLogin) {
 }
 
 function runCliPty(cliName, initialId, forwardArgs, isLogin = false) {
-  try {
-    execSync(`which ${cliName}`, { stdio: 'ignore' });
-  } catch (e) {
+  const cliPath = resolveCliPath(cliName);
+  if (!cliPath) {
     console.log(`\x1b[33m[aih] Native CLI '${cliName}' not found.\x1b[0m`);
     const ans = askYesNo(`Do you want to automatically install it via npm?`);
     if (ans) {
@@ -3251,19 +3246,9 @@ function hasAgeBinary() {
   return probe.status === 0;
 }
 
-function commandExists(commandName) {
-  if (!commandName) return false;
-  if (process.platform === 'win32') {
-    const probe = spawnSync('where', [commandName], { stdio: 'ignore' });
-    return probe.status === 0;
-  }
-  const probe = spawnSync('sh', ['-lc', `command -v "${commandName}"`], { stdio: 'ignore' });
-  return probe.status === 0;
-}
-
 function getAgeInstallHints() {
   if (process.platform === 'darwin') {
-    if (commandExists('brew')) {
+    if (runtimeCommandExists('brew')) {
       return {
         platform: 'macOS',
         command: 'brew install age',
@@ -3278,21 +3263,21 @@ function getAgeInstallHints() {
   }
 
   if (process.platform === 'win32') {
-    if (commandExists('winget')) {
+    if (runtimeCommandExists('winget')) {
       return {
         platform: 'Windows',
         command: 'winget install --id FiloSottile.age -e --accept-source-agreements --accept-package-agreements',
         hint: 'If winget is unavailable, try: choco install age -y'
       };
     }
-    if (commandExists('choco')) {
+    if (runtimeCommandExists('choco')) {
       return {
         platform: 'Windows',
         command: 'choco install age -y',
         hint: 'If choco is unavailable, try winget or scoop.'
       };
     }
-    if (commandExists('scoop')) {
+    if (runtimeCommandExists('scoop')) {
       return {
         platform: 'Windows',
         command: 'scoop install age',
@@ -3306,35 +3291,35 @@ function getAgeInstallHints() {
     };
   }
 
-  if (commandExists('apt-get')) {
+  if (runtimeCommandExists('apt-get')) {
     return {
       platform: 'Linux',
       command: 'sudo apt-get update && sudo apt-get install -y age',
       hint: ''
     };
   }
-  if (commandExists('dnf')) {
+  if (runtimeCommandExists('dnf')) {
     return {
       platform: 'Linux',
       command: 'sudo dnf install -y age',
       hint: ''
     };
   }
-  if (commandExists('yum')) {
+  if (runtimeCommandExists('yum')) {
     return {
       platform: 'Linux',
       command: 'sudo yum install -y age',
       hint: ''
     };
   }
-  if (commandExists('pacman')) {
+  if (runtimeCommandExists('pacman')) {
     return {
       platform: 'Linux',
       command: 'sudo pacman -Sy --noconfirm age',
       hint: ''
     };
   }
-  if (commandExists('zypper')) {
+  if (runtimeCommandExists('zypper')) {
     return {
       platform: 'Linux',
       command: 'sudo zypper install -y age',
