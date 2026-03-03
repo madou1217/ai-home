@@ -71,6 +71,30 @@ test('chooseServerAccount keeps sticky session when session key is provided', ()
   }
 });
 
+test('chooseServerAccount honors excludeIds to avoid duplicate picks in one request', () => {
+  const now = Date.now();
+  const accounts = [
+    { id: '1', cooldownUntil: 0, remainingPct: 90 },
+    { id: '2', cooldownUntil: 0, remainingPct: 10 },
+    { id: '3', cooldownUntil: now + 60_000, remainingPct: 100 }
+  ];
+  const state = { strategy: 'random' };
+  const originalRandom = Math.random;
+  try {
+    Math.random = () => 0.01;
+    const first = chooseServerAccount(accounts, state, 'codex', { provider: 'codex' });
+    assert.equal(first.id, '1');
+
+    const second = chooseServerAccount(accounts, state, 'codex', {
+      provider: 'codex',
+      excludeIds: new Set(['1'])
+    });
+    assert.equal(second.id, '2');
+  } finally {
+    Math.random = originalRandom;
+  }
+});
+
 test('mark success/failure updates account runtime fields', () => {
   const acc = { consecutiveFailures: 1, successCount: 0, failCount: 0, lastError: 'x', cooldownUntil: 0 };
   markProxyAccountSuccess(acc);
