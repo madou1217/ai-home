@@ -6,6 +6,7 @@
   "scripts": {
     "test": "node --test test/*.test.js",
     "plan:board": "node scripts/plan-board.js",
+    "plan:board:live": "node scripts/plan-board-live.js",
     "plan:run": "node scripts/plan-run.js",
     "plan:orchestrate": "node scripts/plan-orchestrate.js",
     "plan:guard": "node scripts/plan-commit-guard.js",
