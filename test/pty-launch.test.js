@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { buildPtyLaunch } = require('../lib/runtime/pty-launch');
+const { buildPtyLaunch, resolveWindowsBatchLaunch } = require('../lib/runtime/pty-launch');
 
 test('buildPtyLaunch keeps direct launch on linux', () => {
   const launch = buildPtyLaunch('/usr/local/bin/codex', ['--help'], { platform: 'linux' });
@@ -37,4 +37,16 @@ test('buildPtyLaunch keeps native exe direct on windows', () => {
   );
   assert.equal(launch.command, 'C:\\Program Files\\OpenAI\\codex.exe');
   assert.deepEqual(launch.args, ['--version']);
+});
+
+test('resolveWindowsBatchLaunch injects cmd directory into PATH and uses basename', () => {
+  const resolved = resolveWindowsBatchLaunch(
+    'codex',
+    'D:\\nvm4w\\nodejs\\codex.cmd',
+    { Path: 'C:\\Windows\\System32' },
+    'win32'
+  );
+  assert.equal(resolved.launchBin, 'codex.cmd');
+  assert.match(resolved.envPatch.Path, /D:\\nvm4w\\nodejs/i);
+  assert.equal(resolved.envPatch.Path, resolved.envPatch.PATH);
 });

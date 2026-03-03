@@ -15,7 +15,7 @@ const {
   configureConsoleEncoding,
   resolveCliPath
 } = require('../lib/runtime/platform-runtime');
-const { buildPtyLaunch } = require('../lib/runtime/pty-launch');
+const { buildPtyLaunch, resolveWindowsBatchLaunch } = require('../lib/runtime/pty-launch');
 const {
   loadPermissionPolicy,
   savePermissionPolicy,
@@ -3046,15 +3046,9 @@ function spawnPty(cliName, cliBin, id, forwardArgs, isLogin) {
   };
 
   const argsToRun = isLogin ? (CLI_CONFIGS[cliName]?.loginArgs || []) : forwardArgs;
-  let launchBin = cliBin || cliName;
-  if (process.platform === 'win32') {
-    const ext = path.extname(String(launchBin || '')).toLowerCase();
-    // On Windows, absolute .cmd/.bat paths from PATH probing can be unstable
-    // across nvm/npm shim layouts. Let cmd resolve by command name.
-    if (ext === '.cmd' || ext === '.bat') {
-      launchBin = cliName;
-    }
-  }
+  const batchLaunch = resolveWindowsBatchLaunch(cliName, cliBin || cliName, envOverrides, process.platform);
+  const launchBin = batchLaunch.launchBin || cliName;
+  Object.assign(envOverrides, batchLaunch.envPatch || {});
   const launch = buildPtyLaunch(launchBin, argsToRun, { platform: process.platform });
   return pty.spawn(launch.command, launch.args, {
     name: 'xterm-color',
