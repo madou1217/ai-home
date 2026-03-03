@@ -53,3 +53,22 @@ test('account state index exposes usage/configured/stale selectors', () => {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('account state index stores and returns display name', () => {
+  const root = mkTmpDir();
+  try {
+    const index = createAccountStateIndex({ aiHomeDir: root, fs });
+    index.upsertAccountState('codex', '1', {
+      configured: true,
+      apiKeyMode: false,
+      exhausted: false,
+      remainingPct: 90,
+      displayName: 'user@example.com'
+    });
+    const rows = index.listStates('codex');
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].displayName, 'user@example.com');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
