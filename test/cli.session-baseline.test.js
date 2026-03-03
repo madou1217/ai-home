@@ -76,3 +76,19 @@ test('`set-default` updates default pointer, syncs host config, and preserves se
     'set-default should sync selected account config into native global tool directory'
   );
 });
+
+test('`aih ls` ignores lock-like non-numeric entries under tool profile dir', (t) => {
+  const homeDir = mkTmpDir();
+  t.after(() => fs.rmSync(homeDir, { recursive: true, force: true }));
+
+  const codexToolDir = path.join(homeDir, '.ai_home', 'profiles', 'codex');
+  const lockLikeDir = path.join(codexToolDir, '.aih_auto_pool.lock');
+  const numericAccountDir = path.join(codexToolDir, '1', '.codex');
+  fs.mkdirSync(lockLikeDir, { recursive: true });
+  fs.mkdirSync(numericAccountDir, { recursive: true });
+
+  const result = runCli(['ls'], homeDir);
+  assert.equal(result.status, 0, `stdout=${result.stdout}\nstderr=${result.stderr}`);
+  assert.equal(result.stdout.includes('Account ID: .aih_auto_pool.lock'), false);
+  assert.equal(result.stdout.includes('Account ID: \x1b[36m1\x1b[0m'), true);
+});
