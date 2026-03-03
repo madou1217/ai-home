@@ -3046,7 +3046,16 @@ function spawnPty(cliName, cliBin, id, forwardArgs, isLogin) {
   };
 
   const argsToRun = isLogin ? (CLI_CONFIGS[cliName]?.loginArgs || []) : forwardArgs;
-  const launch = buildPtyLaunch(cliBin || cliName, argsToRun, { platform: process.platform });
+  let launchBin = cliBin || cliName;
+  if (process.platform === 'win32') {
+    const ext = path.extname(String(launchBin || '')).toLowerCase();
+    // On Windows, absolute .cmd/.bat paths from PATH probing can be unstable
+    // across nvm/npm shim layouts. Let cmd resolve by command name.
+    if (ext === '.cmd' || ext === '.bat') {
+      launchBin = cliName;
+    }
+  }
+  const launch = buildPtyLaunch(launchBin, argsToRun, { platform: process.platform });
   return pty.spawn(launch.command, launch.args, {
     name: 'xterm-color',
     cols: process.stdout.columns || 80,

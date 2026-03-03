@@ -25,7 +25,7 @@ test('resolveCommandPath uses where on win32 and returns first match', () => {
 
   assert.equal(out, 'C:\\\\Users\\\\me\\\\AppData\\\\Roaming\\\\npm\\\\codex.cmd');
   assert.equal(calls.length, 1);
-  assert.equal(calls[0].cmd, 'where');
+  assert.equal(calls[0].cmd, 'where.exe');
   assert.deepEqual(calls[0].args, ['codex']);
 });
 
