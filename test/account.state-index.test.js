@@ -38,3 +38,18 @@ test('account state index chooses next candidate by remaining usage then id', ()
   }
 });
 
+test('account state index exposes usage/configured/stale selectors', () => {
+  const root = mkTmpDir();
+  try {
+    const index = createAccountStateIndex({ aiHomeDir: root, fs });
+    index.upsertAccountState('gemini', '1', { configured: true, apiKeyMode: true, exhausted: false, remainingPct: 90 });
+    index.upsertAccountState('gemini', '2', { configured: true, apiKeyMode: false, exhausted: false, remainingPct: 50 });
+    index.upsertAccountState('gemini', '3', { configured: false, apiKeyMode: false, exhausted: false, remainingPct: 100 });
+
+    assert.deepEqual(index.listConfiguredIds('gemini'), ['1', '2']);
+    assert.deepEqual(index.listUsageCandidateIds('gemini'), ['2']);
+    assert.ok(index.listStaleIds('gemini', Date.now() + 60 * 1000, 10).length >= 3);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
