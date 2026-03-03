@@ -1,0 +1,258 @@
+syntax = "proto3";
+
+package aihome.remote.control.v1;
+
+option java_multiple_files = true;
+option java_package = "com.aihome.remote.control.v1";
+option go_package = "github.com/aih/remote/control/v1;controlv1";
+
+// Backward-compatibility strategy:
+// 1) Never reuse field numbers.
+// 2) Add new fields with new numbers; keep existing semantics unchanged.
+// 3) If a field is removed, reserve its number/name before release.
+// 4) New RPCs are additive and must not change existing request/response wire shape.
+// 5) Time values use unix milliseconds unless a field comment states otherwise.
+service ControlPlane {
+  rpc Hello(HelloRequest) returns (HelloResponse);
+  rpc Authenticate(AuthenticateRequest) returns (AuthenticateResponse);
+  rpc OpenSession(OpenSessionRequest) returns (OpenSessionResponse);
+  rpc ResumeSession(ResumeSessionRequest) returns (ResumeSessionResponse);
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+  rpc CloseSession(CloseSessionRequest) returns (CloseSessionResponse);
+  rpc StreamSessionStatus(StreamSessionStatusRequest) returns (stream StreamSessionStatusEvent);
+  rpc OpenProjectSession(OpenProjectSessionRequest) returns (OpenProjectSessionResponse);
+  rpc RunProjectCommand(RunProjectCommandRequest) returns (RunProjectCommandResponse);
+  rpc StreamProjectCommand(StreamProjectCommandRequest) returns (stream StreamProjectCommandEvent);
+  rpc ReadProjectFile(ReadProjectFileRequest) returns (ReadProjectFileResponse);
+  rpc WriteProjectFile(WriteProjectFileRequest) returns (WriteProjectFileResponse);
+  rpc CloseProjectSession(CloseProjectSessionRequest) returns (CloseProjectSessionResponse);
+}
+
+enum ConnectionState {
+  CONNECTION_STATE_UNSPECIFIED = 0;
+  CONNECTION_STATE_READY = 1;
+  CONNECTION_STATE_RECONNECT_WAIT = 2;
+  CONNECTION_STATE_CLOSED = 3;
+}
+
+enum SessionStatusEventType {
+  SESSION_STATUS_EVENT_TYPE_UNSPECIFIED = 0;
+  SESSION_STATUS_EVENT_TYPE_HEARTBEAT = 1;
+  SESSION_STATUS_EVENT_TYPE_STATE_CHANGED = 2;
+  SESSION_STATUS_EVENT_TYPE_CONTROL_SESSION_RESUMED = 3;
+  SESSION_STATUS_EVENT_TYPE_REMOTE_SESSION_CLOSED = 4;
+}
+
+enum ProjectCommandEventType {
+  PROJECT_COMMAND_EVENT_TYPE_UNSPECIFIED = 0;
+  PROJECT_COMMAND_EVENT_TYPE_STARTED = 1;
+  PROJECT_COMMAND_EVENT_TYPE_STDOUT = 2;
+  PROJECT_COMMAND_EVENT_TYPE_STDERR = 3;
+  PROJECT_COMMAND_EVENT_TYPE_FINISHED = 4;
+}
+
+message HelloRequest {
+  string client_id = 1;
+  string client_version = 2;
+  string protocol_version = 3;
+  map<string, string> metadata = 10;
+}
+
+message HelloResponse {
+  string connection_id = 1;
+  string server_version = 2;
+  string protocol_version = 3;
+  uint64 server_time_unix_ms = 4;
+}
+
+message AuthenticateRequest {
+  string connection_id = 1;
+  string bearer_token = 2;
+  string requested_resume_session_id = 3;
+  string requested_resume_control_session_id = 4;
+}
+
+message AuthenticateResponse {
+  string control_session_id = 1;
+  bool resumed = 2;
+  string resumed_session_id = 3;
+  uint64 expires_at_unix_ms = 4;
+  bool control_session_resumed = 5;
+}
+
+message OpenSessionRequest {
+  string control_session_id = 1;
+  string target = 2;
+  string tty_size = 3;
+  map<string, string> metadata = 10;
+}
+
+message OpenSessionResponse {
+  string remote_session_id = 1;
+  string target = 2;
+  uint64 created_at_unix_ms = 3;
+  map<string, string> metadata = 10;
+}
+
+message ResumeSessionRequest {
+  string control_session_id = 1;
+  string remote_session_id = 2;
+}
+
+message ResumeSessionResponse {
+  string remote_session_id = 1;
+  bool accepted = 2;
+}
+
+message HeartbeatRequest {
+  string control_session_id = 1;
+  uint64 client_time_unix_ms = 2;
+  uint32 reconnect_attempt = 3;
+}
+
+message HeartbeatResponse {
+  uint64 server_time_unix_ms = 1;
+  ConnectionState connection_state = 2;
+  bool control_session_resumed = 3;
+}
+
+message CloseSessionRequest {
+  string control_session_id = 1;
+  string remote_session_id = 2;
+  string reason = 3;
+}
+
+message CloseSessionResponse {
+  bool accepted = 1;
+}
+
+// Stream contract:
+// 1) Events are ordered by seq and delivered at-least-once.
+// 2) Clients deduplicate by (stream_id, seq).
+// 3) New event_type values are additive and clients must ignore unknown values.
+message StreamSessionStatusRequest {
+  string control_session_id = 1;
+  string remote_session_id = 2;
+  uint64 since_unix_ms = 3;
+  bool include_heartbeat = 4;
+}
+
+message StreamSessionStatusEvent {
+  string stream_id = 1;
+  uint64 seq = 2;
+  uint64 event_unix_ms = 3;
+  string control_session_id = 4;
+  string remote_session_id = 5;
+  SessionStatusEventType event_type = 6;
+  ConnectionState connection_state = 7;
+  bool control_session_resumed = 8;
+  string reason = 9;
+  map<string, string> metadata = 10;
+}
+
+message OpenProjectSessionRequest {
+  string control_session_id = 1;
+  string remote_session_id = 2;
+  string workspace_root = 3;
+  string project_dir = 4;
+  string runtime_profile = 5;
+  map<string, string> metadata = 10;
+}
+
+message OpenProjectSessionResponse {
+  string project_session_id = 1;
+  string workspace_dir = 2;
+  string runtime_profile = 3;
+  uint64 created_at_unix_ms = 4;
+}
+
+message RunProjectCommandRequest {
+  string control_session_id = 1;
+  string project_session_id = 2;
+  string command = 3;
+  repeated string args = 4;
+  string cwd = 5;
+  map<string, string> env = 6;
+  uint64 timeout_ms = 7;
+  string input = 8;
+  bool shell = 9;
+}
+
+message RunProjectCommandResponse {
+  string project_session_id = 1;
+  string command = 2;
+  repeated string args = 3;
+  string cwd = 4;
+  int32 exit_code = 5;
+  string signal = 6;
+  bool timed_out = 7;
+  bool ok = 8;
+  string stdout = 9;
+  string stderr = 10;
+  uint64 duration_ms = 11;
+  // RFC3339 UTC timestamp.
+  string started_at = 12;
+  // RFC3339 UTC timestamp.
+  string finished_at = 13;
+}
+
+message StreamProjectCommandRequest {
+  string control_session_id = 1;
+  string project_session_id = 2;
+  string command_id = 3;
+  uint64 since_seq = 4;
+}
+
+message StreamProjectCommandEvent {
+  string stream_id = 1;
+  uint64 seq = 2;
+  uint64 event_unix_ms = 3;
+  string project_session_id = 4;
+  string command_id = 5;
+  ProjectCommandEventType event_type = 6;
+  string chunk = 7;
+  int32 exit_code = 8;
+  string signal = 9;
+  bool timed_out = 10;
+  map<string, string> metadata = 11;
+}
+
+message ReadProjectFileRequest {
+  string control_session_id = 1;
+  string project_session_id = 2;
+  string path = 3;
+  string encoding = 4;
+}
+
+message ReadProjectFileResponse {
+  string project_session_id = 1;
+  string path = 2;
+  string encoding = 3;
+  string content = 4;
+  uint64 bytes = 5;
+}
+
+message WriteProjectFileRequest {
+  string control_session_id = 1;
+  string project_session_id = 2;
+  string path = 3;
+  string encoding = 4;
+  string content = 5;
+}
+
+message WriteProjectFileResponse {
+  string project_session_id = 1;
+  string path = 2;
+  string encoding = 3;
+  uint64 bytes = 4;
+}
+
+message CloseProjectSessionRequest {
+  string control_session_id = 1;
+  string project_session_id = 2;
+  string reason = 3;
+}
+
+message CloseProjectSessionResponse {
+  bool accepted = 1;
+}

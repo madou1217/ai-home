@@ -1,0 +1,43 @@
+{
+  "name": "ai_home",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "package:desktop:macos-arm64": "bash scripts/release/build-macos-arm64.sh",
+    "plan:board": "node scripts/plan-board.js",
+    "plan:board:live": "node scripts/plan-board-live.js",
+    "plan:run": "node scripts/plan-run.js",
+    "plan:dispatch": "node scripts/plan-dispatch.js",
+    "plan:orchestrate": "node scripts/plan-orchestrate.js",
+    "plan:guard": "node scripts/plan-commit-guard.js",
+    "plan:watchdog": "node scripts/plan-foreman.js --interval-sec 20 --relaunch-max 6",
+    "plan:watchdog:daemon": "node scripts/plan-foreman.js --interval-sec 20 --relaunch-max 6",
+    "plan:foreman": "node scripts/plan-foreman.js --interval-sec 20 --relaunch-max 6",
+    "plan:foreman:install": "bash scripts/ops/foreman-launchd.sh install",
+    "plan:foreman:status": "bash scripts/ops/foreman-launchd.sh status",
+    "plan:foreman:uninstall": "bash scripts/ops/foreman-launchd.sh uninstall",
+    "plan:heal": "node scripts/plan-watchdog.js --repair --once",
+    "plan:heal:force": "AIH_WATCHDOG_MAX_RELAUNCH_PER_SCAN=20 node scripts/plan-watchdog.js --repair --once --force-revive",
+    "plan:hook:install": "node scripts/install-plan-hook.js",
+    "pr:batch": "bash scripts/ops/pr-batch.sh",
+    "postinstall": "node scripts/postinstall.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "cli-spinners": "^3.4.0",
+    "commander": "^14.0.3",
+    "cross-spawn": "^7.0.6",
+    "fs-extra": "^11.3.3",
+    "node-pty": "^1.1.0",
+    "open": "^11.0.0",
+    "readline-sync": "^1.4.10"
+  },
+  "bin": {
+    "aih": "./bin/ai-home.js"
+  }
+}
