@@ -8,14 +8,14 @@ const {
   runGlobalAccountImport
 } = require('../lib/cli/services/ai-cli/account-import-orchestrator');
 
-test('parseGlobalAccountImportArgs supports default root and passthrough flags', () => {
-  const parsedDefault = parseGlobalAccountImportArgs(['--dry-run', '--parallel', '4']);
+test('parseGlobalAccountImportArgs supports compact options', () => {
+  const parsedDefault = parseGlobalAccountImportArgs(['--dry-run']);
   assert.equal(parsedDefault.sourceRoot, 'accounts');
-  assert.deepEqual(parsedDefault.passthroughArgs, ['--dry-run', '--parallel', '4']);
+  assert.equal(parsedDefault.dryRun, true);
 
-  const parsedCustom = parseGlobalAccountImportArgs(['/tmp/accounts', '--limit', '8']);
+  const parsedCustom = parseGlobalAccountImportArgs(['/tmp/accounts']);
   assert.equal(parsedCustom.sourceRoot, '/tmp/accounts');
-  assert.deepEqual(parsedCustom.passthroughArgs, ['--limit', '8']);
+  assert.equal(parsedCustom.dryRun, false);
 });
 
 test('runGlobalAccountImport scans accounts/<provider> and invokes supported importers', async () => {
