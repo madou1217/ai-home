@@ -137,7 +137,7 @@ aih codex account import accounts/codex --dry-run
 - 并发默认按本机 CPU 线程自动设置（macOS / Windows / Linux）
 
 ### 11. 本地账号能力代理（OpenAI 兼容）
-`aih` 现在内置本地 server，不依赖额外上游。默认后端为 `codex-local`，可按模型路由到 `codex/gemini`。
+`aih` 现在内置本地 server。默认后端为 `openai-upstream`（直连上游网关，不再依赖本地 `codex exec`），可按模型路由到 `codex/gemini`。
 
 ```bash
 # 启动后台 server（默认 127.0.0.1:8317）

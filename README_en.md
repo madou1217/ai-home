@@ -136,7 +136,7 @@ Notes:
 - Concurrency is auto-sized to local CPU parallelism (macOS / Windows / Linux)
 
 ### 11. Local Account Server (OpenAI-compatible)
-`aih` now includes a built-in local server. Default backend is `codex-local`, and it can route to `codex/gemini` by model/provider rules.
+`aih` now includes a built-in local server. Default backend is `openai-upstream` (direct upstream gateway, no local `codex exec`), and it can route to `codex/gemini` by model/provider rules.
 
 ```bash
 # Start background server (default 127.0.0.1:8317)
