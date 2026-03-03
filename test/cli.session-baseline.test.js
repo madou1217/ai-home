@@ -34,7 +34,7 @@ test('`aih ls` is read-only and does not create profile directories', (t) => {
   assert.equal(fs.existsSync(aiHomeDir), false, 'read-only list command should not create ~/.ai_home');
 });
 
-test('`set-default` updates default pointer without mutating session topology', (t) => {
+test('`set-default` updates default pointer, syncs host config, and preserves session topology', (t) => {
   const homeDir = mkTmpDir();
   t.after(() => fs.rmSync(homeDir, { recursive: true, force: true }));
 
@@ -42,8 +42,10 @@ test('`set-default` updates default pointer without mutating session topology', 
   const accountDir = path.join(toolDir, '1');
   const sandboxConfigDir = path.join(accountDir, '.codex');
   const sandboxSessionsDir = path.join(sandboxConfigDir, 'sessions');
+  const sandboxAuthPath = path.join(sandboxConfigDir, 'auth.json');
   fs.mkdirSync(sandboxSessionsDir, { recursive: true });
   fs.writeFileSync(path.join(sandboxSessionsDir, 'local-session.json'), '{"local":true}\n');
+  fs.writeFileSync(sandboxAuthPath, '{"sandbox":"auth"}\n');
 
   const globalCodexDir = path.join(homeDir, '.codex');
   fs.mkdirSync(globalCodexDir, { recursive: true });
@@ -67,5 +69,10 @@ test('`set-default` updates default pointer without mutating session topology', 
     fs.existsSync(path.join(globalCodexDir, 'history.jsonl')),
     true,
     'native global codex topology should remain untouched'
+  );
+  assert.equal(
+    fs.readFileSync(path.join(globalCodexDir, 'auth.json'), 'utf8'),
+    '{"sandbox":"auth"}\n',
+    'set-default should sync selected account config into native global tool directory'
   );
 });
