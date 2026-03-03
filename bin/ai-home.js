@@ -15,6 +15,7 @@ const {
   configureConsoleEncoding,
   resolveCliPath
 } = require('../lib/runtime/platform-runtime');
+const { buildPtyLaunch } = require('../lib/runtime/pty-launch');
 const {
   loadPermissionPolicy,
   savePermissionPolicy,
@@ -3023,7 +3024,7 @@ let currentPtyProcess = null;
 let currentCliName = null;
 let currentId = null;
 
-function spawnPty(cliName, id, forwardArgs, isLogin) {
+function spawnPty(cliName, cliBin, id, forwardArgs, isLogin) {
   currentCliName = cliName;
   currentId = id;
   const sandboxDir = getProfileDir(cliName, id);
@@ -3045,8 +3046,8 @@ function spawnPty(cliName, id, forwardArgs, isLogin) {
   };
 
   const argsToRun = isLogin ? (CLI_CONFIGS[cliName]?.loginArgs || []) : forwardArgs;
-  
-  return pty.spawn(cliName, argsToRun, {
+  const launch = buildPtyLaunch(cliBin || cliName, argsToRun, { platform: process.platform });
+  return pty.spawn(launch.command, launch.args, {
     name: 'xterm-color',
     cols: process.stdout.columns || 80,
     rows: process.stdout.rows || 24,
@@ -3056,7 +3057,7 @@ function spawnPty(cliName, id, forwardArgs, isLogin) {
 }
 
 function runCliPty(cliName, initialId, forwardArgs, isLogin = false) {
-  const cliPath = resolveCliPath(cliName);
+  let cliPath = resolveCliPath(cliName);
   if (!cliPath) {
     console.log(`\x1b[33m[aih] Native CLI '${cliName}' not found.\x1b[0m`);
     const ans = askYesNo(`Do you want to automatically install it via npm?`);
@@ -3068,6 +3069,11 @@ function runCliPty(cliName, initialId, forwardArgs, isLogin = false) {
     } else {
       process.exit(1);
     }
+    cliPath = resolveCliPath(cliName);
+    if (!cliPath) {
+      console.error(`\x1b[31m[aih] ${cliName} is still not in PATH after install.\x1b[0m`);
+      process.exit(1);
+    }
   }
 
   console.log(`\n\x1b[36m[aih]\x1b[0m 🚀 Running \x1b[33m${cliName}\x1b[0m (Account ID: \x1b[32m${initialId}\x1b[0m) via PTY Sandbox`);
@@ -3076,7 +3082,7 @@ function runCliPty(cliName, initialId, forwardArgs, isLogin = false) {
     console.log(`\x1b[36m[aih]\x1b[0m Session links ready (${cliName}): migrated ${initialSessionSync.migrated}, linked ${initialSessionSync.linked}.`);
   }
 
-  let ptyProc = spawnPty(cliName, initialId, forwardArgs, isLogin);
+  let ptyProc = spawnPty(cliName, cliPath, initialId, forwardArgs, isLogin);
 
   let waveFrames = ['.', '..', '...', ' ..', '  .', '   '];
   let waveIdx = 0;
@@ -3135,7 +3141,7 @@ function runCliPty(cliName, initialId, forwardArgs, isLogin = false) {
         proc.kill();
         setTimeout(() => {
           isSwapping = false;
-          ptyProc = spawnPty(cliName, initialId, [], true);
+          ptyProc = spawnPty(cliName, cliPath, initialId, [], true);
           attachOnData(ptyProc);
         }, 1500);
       }

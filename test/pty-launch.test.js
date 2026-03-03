@@ -26,7 +26,7 @@ test('buildPtyLaunch wraps extensionless command with cmd.exe on windows', () =>
   const launch = buildPtyLaunch('codex', ['login'], { platform: 'win32' });
   assert.equal(launch.command, 'cmd.exe');
   assert.deepEqual(launch.args.slice(0, 3), ['/d', '/s', '/c']);
-  assert.equal(launch.args[3], '"codex" "login"');
+  assert.equal(launch.args[3], 'chcp 65001>nul & "codex" "login"');
 });
 
 test('buildPtyLaunch keeps native exe direct on windows', () => {
