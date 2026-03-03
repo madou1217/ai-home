@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const {
   resolveRequestProvider,
   chooseServerAccount,
+  pickWeightedRandomAccount,
   markProxyAccountSuccess,
   markProxyAccountFailure
 } = require('../lib/server/router');
@@ -31,6 +32,43 @@ test('chooseServerAccount does round-robin and skips cooldown', () => {
   assert.equal(a1.id, '2');
   assert.equal(a2.id, '3');
   assert.equal(a3.id, '2');
+});
+
+test('pickWeightedRandomAccount favors higher remainingPct weights', () => {
+  const accounts = [
+    { id: '1', remainingPct: 1 },
+    { id: '2', remainingPct: 100 }
+  ];
+  const originalRandom = Math.random;
+  Math.random = () => 0.9999;
+  try {
+    const picked = pickWeightedRandomAccount(accounts);
+    assert.equal(picked.id, '2');
+  } finally {
+    Math.random = originalRandom;
+  }
+});
+
+test('chooseServerAccount keeps sticky session when session key is provided', () => {
+  const now = Date.now();
+  const accounts = [
+    { id: '1', cooldownUntil: now + 60_000, remainingPct: 10 },
+    { id: '2', cooldownUntil: 0, remainingPct: 90 },
+    { id: '3', cooldownUntil: 0, remainingPct: 30 }
+  ];
+  const state = { strategy: 'random' };
+  const originalRandom = Math.random;
+  try {
+    Math.random = () => 0.1;
+    const first = chooseServerAccount(accounts, state, 'codex', { provider: 'codex', sessionKey: 'sess-1' });
+    assert.equal(first.id, '2');
+
+    Math.random = () => 0.99;
+    const second = chooseServerAccount(accounts, state, 'codex', { provider: 'codex', sessionKey: 'sess-1' });
+    assert.equal(second.id, '2');
+  } finally {
+    Math.random = originalRandom;
+  }
 });
 
 test('mark success/failure updates account runtime fields', () => {
