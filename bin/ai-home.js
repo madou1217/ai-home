@@ -9,17 +9,15 @@ const readline = require('readline-sync');
 const pty = require('node-pty');
 const { execSync, spawnSync, spawn } = require('child_process');
 const http = require('http');
+const { resolveHostHomeDir } = require('../lib/runtime/host-home');
+const {
+  loadPermissionPolicy,
+  savePermissionPolicy,
+  shouldUseDangerFullAccess
+} = require('../lib/runtime/permission-policy');
 
 // Configurations
-const HOST_HOME_DIR = (() => {
-  try {
-    const userInfo = os.userInfo();
-    if (userInfo && userInfo.homedir) return userInfo.homedir;
-  } catch (e) {
-    // fallback below
-  }
-  return os.homedir();
-})();
+const HOST_HOME_DIR = resolveHostHomeDir({ env: process.env, platform: process.platform, os });
 
 const AI_HOME_DIR = path.join(HOST_HOME_DIR, '.ai_home');
 const PROFILES_DIR = path.join(AI_HOME_DIR, 'profiles');
@@ -37,8 +35,6 @@ const CLI_CONFIGS = {
 function ensureDir(dir) {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 }
-
-ensureDir(PROFILES_DIR);
 
 function getProfileDir(cliName, id) {
   return path.join(PROFILES_DIR, cliName, String(id));
@@ -1358,6 +1354,7 @@ function showCliUsage(cliName) {
   aih ${cliName} auto            \x1b[90mAuto-select next non-exhausted account\x1b[0m
   aih ${cliName} usage <id>      \x1b[90mShow trusted usage-remaining snapshot (OAuth)\x1b[0m
   aih ${cliName} usages          \x1b[90mShow trusted usage snapshots for all OAuth accounts\x1b[0m
+  ${cliName === 'codex' ? 'aih codex policy [set <workspace-write|read-only|danger-full-access>]  \x1b[90mShow or update exec sandbox policy\x1b[0m' : ''}
   ${cliName === 'codex' ? 'aih codex import-output [dir] [--parallel N] [--limit N] [--dry-run]  \x1b[90mBulk import codex refresh tokens\x1b[0m' : ''}
   aih ${cliName} unlock <id>     \x1b[90mClear exhausted flag manually\x1b[0m
   aih ${cliName} <id> usage      \x1b[90mID-first style usage query\x1b[0m
@@ -1365,6 +1362,42 @@ function showCliUsage(cliName) {
   aih ${cliName} <id> [args]     \x1b[90mRun ${cliName} under a specific account\x1b[0m
   aih ${cliName}                 \x1b[90mRun with default account\x1b[0m
 `);
+}
+
+function getEffectiveExecSandbox(policy) {
+  if (shouldUseDangerFullAccess(policy)) return 'danger-full-access';
+  return policy.exec.defaultSandbox;
+}
+
+function showCodexPolicy() {
+  const policy = loadPermissionPolicy({ aiHomeDir: AI_HOME_DIR });
+  console.log(`default_sandbox: ${policy.exec.defaultSandbox}`);
+  console.log(`allow_danger_full_access: ${policy.exec.allowDangerFullAccess}`);
+  console.log(`effective_exec_sandbox: ${getEffectiveExecSandbox(policy)}`);
+}
+
+function setCodexPolicy(rawSandbox) {
+  const sandbox = String(rawSandbox || '').trim().toLowerCase();
+  if (!sandbox) {
+    throw new Error('Missing sandbox value. Use: policy set <workspace-write|read-only|danger-full-access>');
+  }
+  if (!['workspace-write', 'read-only', 'danger-full-access'].includes(sandbox)) {
+    throw new Error(`Invalid sandbox value '${rawSandbox}'. Expected workspace-write, read-only, or danger-full-access.`);
+  }
+
+  const current = loadPermissionPolicy({ aiHomeDir: AI_HOME_DIR });
+  const next = {
+    ...current,
+    exec: {
+      ...current.exec,
+      defaultSandbox: sandbox,
+      allowDangerFullAccess: sandbox === 'danger-full-access'
+    }
+  };
+  const saved = savePermissionPolicy(next, { aiHomeDir: AI_HOME_DIR });
+  console.log(`default_sandbox: ${saved.exec.defaultSandbox}`);
+  console.log(`allow_danger_full_access: ${saved.exec.allowDangerFullAccess}`);
+  console.log(`effective_exec_sandbox: ${getEffectiveExecSandbox(saved)}`);
 }
 
 function showProxyUsage() {
@@ -4415,7 +4448,8 @@ const UNLOCK_ACTIONS = new Set(['unlock', '--unlock', 'unexhaust', 'unban', 'rel
 const USAGE_ACTIONS = new Set(['usage', '--usage', 'stats']);
 const USAGES_ACTIONS = new Set(['usages', 'usage-all', 'all-usage', 'all-usages']);
 const IMPORT_OUTPUT_ACTIONS = new Set(['import-output', 'import_output', 'bulk-import', 'bulk_import']);
-const KNOWN_ACTIONS = new Set(['ls', 'set-default', 'add', 'login', 'auto', ...UNLOCK_ACTIONS, ...USAGE_ACTIONS, ...USAGES_ACTIONS, ...IMPORT_OUTPUT_ACTIONS]);
+const POLICY_ACTIONS = new Set(['policy']);
+const KNOWN_ACTIONS = new Set(['ls', 'set-default', 'add', 'login', 'auto', ...POLICY_ACTIONS, ...UNLOCK_ACTIONS, ...USAGE_ACTIONS, ...USAGES_ACTIONS, ...IMPORT_OUTPUT_ACTIONS]);
 
 if (idOrAction === 'help') {
   showCliUsage(cliName);
@@ -4435,6 +4469,31 @@ if (idOrAction === 'ls') {
 if (idOrAction === '--help' || idOrAction === '-h') {
   showCliUsage(cliName);
   process.exit(0);
+}
+
+if (idOrAction && POLICY_ACTIONS.has(idOrAction)) {
+  if (cliName !== 'codex') {
+    console.error(`\x1b[31m[aih] ${cliName} policy is unsupported. Only codex policy is available.\x1b[0m`);
+    process.exit(1);
+  }
+  const policyAction = String(args[2] || '').trim().toLowerCase();
+  if (!policyAction || policyAction === 'show') {
+    showCodexPolicy();
+    process.exit(0);
+  }
+  if (policyAction === 'set') {
+    try {
+      setCodexPolicy(args[3]);
+      process.exit(0);
+    } catch (e) {
+      console.error(`\x1b[31m[aih] ${e.message}\x1b[0m`);
+      console.log('\x1b[90mUsage:\x1b[0m aih codex policy [set <workspace-write|read-only|danger-full-access>]');
+      process.exit(1);
+    }
+  }
+  console.error(`\x1b[31m[aih] Unknown policy action '${policyAction}'.\x1b[0m`);
+  console.log('\x1b[90mUsage:\x1b[0m aih codex policy [set <workspace-write|read-only|danger-full-access>]');
+  process.exit(1);
 }
 
 if (idOrAction && UNLOCK_ACTIONS.has(idOrAction)) {
@@ -4537,10 +4596,6 @@ if (idOrAction === 'set-default') {
   }
   fs.writeFileSync(path.join(toolDir, '.aih_default'), targetId);
   console.log(`\x1b[32m[Success]\x1b[0m Set Account ID ${targetId} as default for ${cliName} in ai-home.`);
-  const sessionSync = ensureSessionStoreLinks(cliName, targetId);
-  if (sessionSync.migrated > 0 || sessionSync.linked > 0) {
-    console.log(`\x1b[36m[aih]\x1b[0m Session links refreshed (${cliName}): migrated ${sessionSync.migrated}, linked ${sessionSync.linked}.`);
-  }
   process.exit(0);
 }
 
