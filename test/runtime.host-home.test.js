@@ -37,3 +37,24 @@ test('resolveHostHomeDir falls back to HOME on non-win32', () => {
   assert.equal(out, '/home/alice');
 });
 
+test('resolveHostHomeDir normalizes nested .ai_home profile HOME to host HOME', () => {
+  const out = resolveHostHomeDir({
+    env: {
+      HOME: '/Users/model/.ai_home/profiles/codex/1888'
+    },
+    platform: 'darwin',
+    os: { userInfo: () => ({ homedir: '/Users/fallback' }), homedir: () => '/Users/os-home' }
+  });
+  assert.equal(out, '/Users/model');
+});
+
+test('resolveHostHomeDir normalizes nested .ai_home profile USERPROFILE on win32', () => {
+  const out = resolveHostHomeDir({
+    env: {
+      USERPROFILE: 'C:\\Users\\alice\\.ai_home\\profiles\\codex\\2'
+    },
+    platform: 'win32',
+    os: { userInfo: () => ({ homedir: 'C:\\Users\\fallback' }), homedir: () => 'C:\\Users\\os-home' }
+  });
+  assert.equal(out, 'C:/Users/alice');
+});
