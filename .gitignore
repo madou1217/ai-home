@@ -10,7 +10,6 @@ tmp/
 **/*.pdb
 **/*.dSYM/
 desktop/src-tauri/gen/
-mobile/src-tauri/gen/
 **/dist/
 **/build/
 **/coverage/
