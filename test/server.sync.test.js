@@ -3,13 +3,13 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { syncCodexAccountsToProxy } = require('../lib/server/sync');
+const { syncCodexAccountsToServer } = require('../lib/server/sync');
 
 function mkTmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'aih-sync-test-'));
 }
 
-test('syncCodexAccountsToProxy dry-run counts eligible/invalid', async (t) => {
+test('syncCodexAccountsToServer dry-run counts eligible/invalid', async (t) => {
   const root = mkTmpDir();
   t.after(() => { fs.rmSync(root, { recursive: true, force: true }); });
 
@@ -32,7 +32,7 @@ test('syncCodexAccountsToProxy dry-run counts eligible/invalid', async (t) => {
     }
   }));
 
-  const result = await syncCodexAccountsToProxy({
+  const result = await syncCodexAccountsToServer({
     managementUrl: 'http://127.0.0.1:9999/v0/management',
     key: 'dummy',
     parallel: 4,

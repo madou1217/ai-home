@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
   resolveRequestProvider,
-  chooseProxyAccount,
+  chooseServerAccount,
   markProxyAccountSuccess,
   markProxyAccountFailure
 } = require('../lib/server/router');
@@ -15,7 +15,7 @@ test('resolveRequestProvider respects explicit mode and model hint', () => {
   assert.equal(resolveRequestProvider({ provider: 'auto' }, {}), 'codex');
 });
 
-test('chooseProxyAccount does round-robin and skips cooldown', () => {
+test('chooseServerAccount does round-robin and skips cooldown', () => {
   const now = Date.now();
   const accounts = [
     { id: '1', cooldownUntil: now + 60_000 },
@@ -24,9 +24,9 @@ test('chooseProxyAccount does round-robin and skips cooldown', () => {
   ];
   const state = { strategy: 'round-robin', cursor: 0 };
 
-  const a1 = chooseProxyAccount(accounts, state, 'cursor');
-  const a2 = chooseProxyAccount(accounts, state, 'cursor');
-  const a3 = chooseProxyAccount(accounts, state, 'cursor');
+  const a1 = chooseServerAccount(accounts, state, 'cursor');
+  const a2 = chooseServerAccount(accounts, state, 'cursor');
+  const a3 = chooseServerAccount(accounts, state, 'cursor');
 
   assert.equal(a1.id, '2');
   assert.equal(a2.id, '3');

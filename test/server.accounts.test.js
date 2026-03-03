@@ -3,15 +3,15 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { loadCodexProxyAccounts } = require('../lib/server/accounts');
+const { loadCodexServerAccounts } = require('../lib/server/accounts');
 
 function writeJson(filePath, payload) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, JSON.stringify(payload, null, 2));
 }
 
-test('loadCodexProxyAccounts skips low-remaining usage accounts by threshold config', (t) => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aih-proxy-accounts-'));
+test('loadCodexServerAccounts skips low-remaining usage accounts by threshold config', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aih-server-accounts-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
 
   const aiHomeDir = path.join(root, '.ai_home');
@@ -49,7 +49,7 @@ test('loadCodexProxyAccounts skips low-remaining usage accounts by threshold con
     entries: [{ window: '5h', remainingPct: 50 }]
   });
 
-  const accounts = loadCodexProxyAccounts({
+  const accounts = loadCodexServerAccounts({
     fs,
     aiHomeDir,
     getToolAccountIds: () => ids,

@@ -1,26 +1,26 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { runProxyEntry } = require('../lib/server/entry');
+const { runServerEntry } = require('../lib/server/entry');
 
-test('runProxyEntry wires start/sync delegates into runProxyCommand', async () => {
+test('runServerEntry wires start/sync delegates into runServerCommand', async () => {
   let seenStart = false;
   let seenSync = false;
   const fakeRunProxyCommand = async (_args, deps) => {
-    assert.equal(typeof deps.startLocalProxyServer, 'function');
-    assert.equal(typeof deps.syncCodexAccountsToProxy, 'function');
+    assert.equal(typeof deps.startLocalServer, 'function');
+    assert.equal(typeof deps.syncCodexAccountsToServer, 'function');
 
-    const syncResult = await deps.syncCodexAccountsToProxy({ dryRun: true });
+    const syncResult = await deps.syncCodexAccountsToServer({ dryRun: true });
     assert.equal(syncResult.ok, true);
     seenSync = true;
 
-    const startResult = await deps.startLocalProxyServer({ port: 1 });
+    const startResult = await deps.startLocalServer({ port: 1 });
     assert.equal(startResult.ok, true);
     seenStart = true;
 
     return 0;
   };
 
-  const code = await runProxyEntry(['proxy'], {
+  const code = await runServerEntry(['server'], {
     fs: {},
     fetchImpl: async () => ({ ok: true }),
     http: {},
@@ -30,14 +30,14 @@ test('runProxyEntry wires start/sync delegates into runProxyCommand', async () =
     getToolConfigDir: () => '',
     getProfileDir: () => '',
     checkStatus: () => ({ configured: false }),
-    syncCodexAccountsToProxy: async () => ({ ok: true }),
-    startLocalProxyServerModule: async () => ({ ok: true }),
-    runProxyCommand: fakeRunProxyCommand,
-    showProxyUsage: () => {},
-    proxyDaemon: {},
-    parseProxySyncArgs: () => ({}),
-    parseProxyServeArgs: () => ({}),
-    parseProxyEnvArgs: () => ({})
+    syncCodexAccountsToServer: async () => ({ ok: true }),
+    startLocalServerModule: async () => ({ ok: true }),
+    runServerCommand: fakeRunProxyCommand,
+    showServerUsage: () => {},
+    serverDaemon: {},
+    parseServerSyncArgs: () => ({}),
+    parseServerServeArgs: () => ({}),
+    parseServerEnvArgs: () => ({})
   });
 
   assert.equal(code, 0);
@@ -45,17 +45,17 @@ test('runProxyEntry wires start/sync delegates into runProxyCommand', async () =
   assert.equal(seenStart, true);
 });
 
-test('runProxyEntry forwards daemon and parser contracts for serve control actions', async () => {
+test('runServerEntry forwards daemon and parser contracts for serve control actions', async () => {
   const fakeDaemon = { restart: async () => ({ running: true }) };
   const fakeRunProxyCommand = async (_args, deps) => {
-    assert.equal(deps.proxyDaemon, fakeDaemon);
-    assert.equal(typeof deps.parseProxySyncArgs, 'function');
-    assert.equal(typeof deps.parseProxyServeArgs, 'function');
-    assert.equal(typeof deps.parseProxyEnvArgs, 'function');
+    assert.equal(deps.serverDaemon, fakeDaemon);
+    assert.equal(typeof deps.parseServerSyncArgs, 'function');
+    assert.equal(typeof deps.parseServerServeArgs, 'function');
+    assert.equal(typeof deps.parseServerEnvArgs, 'function');
     return 0;
   };
 
-  const code = await runProxyEntry(['proxy', 'restart'], {
+  const code = await runServerEntry(['server', 'restart'], {
     fs: {},
     fetchImpl: async () => ({ ok: true }),
     http: {},
@@ -65,31 +65,31 @@ test('runProxyEntry forwards daemon and parser contracts for serve control actio
     getToolConfigDir: () => '',
     getProfileDir: () => '',
     checkStatus: () => ({ configured: false }),
-    syncCodexAccountsToProxy: async () => ({ ok: true }),
-    startLocalProxyServerModule: async () => ({ ok: true }),
-    runProxyCommand: fakeRunProxyCommand,
-    showProxyUsage: () => {},
-    proxyDaemon: fakeDaemon,
-    parseProxySyncArgs: () => ({}),
-    parseProxyServeArgs: () => ({}),
-    parseProxyEnvArgs: () => ({})
+    syncCodexAccountsToServer: async () => ({ ok: true }),
+    startLocalServerModule: async () => ({ ok: true }),
+    runServerCommand: fakeRunProxyCommand,
+    showServerUsage: () => {},
+    serverDaemon: fakeDaemon,
+    parseServerSyncArgs: () => ({}),
+    parseServerServeArgs: () => ({}),
+    parseServerEnvArgs: () => ({})
   });
 
   assert.equal(code, 0);
 });
 
-test('runProxyEntry forwards parse helpers and daemon controller for serve-control flows', async () => {
+test('runServerEntry forwards parse helpers and daemon controller for serve-control flows', async () => {
   const parsed = [];
   const fakeRunProxyCommand = async (_args, deps) => {
-    parsed.push(deps.parseProxySyncArgs(['--dry-run']));
-    parsed.push(deps.parseProxyServeArgs(['--port', '8321']));
-    parsed.push(deps.parseProxyEnvArgs(['--api-key', 'x']));
-    assert.equal(typeof deps.proxyDaemon, 'object');
-    assert.equal(typeof deps.showProxyUsage, 'function');
+    parsed.push(deps.parseServerSyncArgs(['--dry-run']));
+    parsed.push(deps.parseServerServeArgs(['--port', '8321']));
+    parsed.push(deps.parseServerEnvArgs(['--api-key', 'x']));
+    assert.equal(typeof deps.serverDaemon, 'object');
+    assert.equal(typeof deps.showServerUsage, 'function');
     return 0;
   };
 
-  const code = await runProxyEntry(['proxy', 'serve'], {
+  const code = await runServerEntry(['server', 'serve'], {
     fs: {},
     fetchImpl: async () => ({ ok: true }),
     http: {},
@@ -99,14 +99,14 @@ test('runProxyEntry forwards parse helpers and daemon controller for serve-contr
     getToolConfigDir: () => '',
     getProfileDir: () => '',
     checkStatus: () => ({ configured: false }),
-    syncCodexAccountsToProxy: async () => ({ ok: true }),
-    startLocalProxyServerModule: async () => ({ ok: true }),
-    runProxyCommand: fakeRunProxyCommand,
-    showProxyUsage: () => {},
-    proxyDaemon: { restart: () => ({ ok: true }) },
-    parseProxySyncArgs: (args) => ({ kind: 'sync', args }),
-    parseProxyServeArgs: (args) => ({ kind: 'serve', args }),
-    parseProxyEnvArgs: (args) => ({ kind: 'env', args })
+    syncCodexAccountsToServer: async () => ({ ok: true }),
+    startLocalServerModule: async () => ({ ok: true }),
+    runServerCommand: fakeRunProxyCommand,
+    showServerUsage: () => {},
+    serverDaemon: { restart: () => ({ ok: true }) },
+    parseServerSyncArgs: (args) => ({ kind: 'sync', args }),
+    parseServerServeArgs: (args) => ({ kind: 'serve', args }),
+    parseServerEnvArgs: (args) => ({ kind: 'env', args })
   });
 
   assert.equal(code, 0);

@@ -50,7 +50,7 @@ test('upstream passthrough strips hop-by-hop headers before fetch', async () => 
     requestStartedAt: Date.now(),
     cooldownMs: 1000,
     deps: {
-      chooseProxyAccount: (pool) => pool[0],
+      chooseServerAccount: (pool) => pool[0],
       pushMetricError: () => {},
       writeJson: (r, code, payload) => {
         r.statusCode = code;

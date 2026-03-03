@@ -70,7 +70,7 @@ test('management router reload endpoint returns deterministic payload', async ()
     deps: {
       parseAuthorizationBearer: () => '',
       writeJson: (r, code, payload) => { r.statusCode = code; r.end(JSON.stringify(payload)); },
-      loadProxyRuntimeAccounts: () => ({
+      loadServerRuntimeAccounts: () => ({
         codex: [{ id: '11' }, { id: '12' }],
         gemini: [{ id: '21' }]
       }),
@@ -144,7 +144,7 @@ test('management router supports reload and cooldown clear contracts', async () 
     deps: {
       parseAuthorizationBearer: () => '',
       writeJson: jsonWriter,
-      loadProxyRuntimeAccounts: () => ({
+      loadServerRuntimeAccounts: () => ({
         codex: [{ id: 'c1' }],
         gemini: [{ id: 'g1' }, { id: 'g2' }]
       }),
