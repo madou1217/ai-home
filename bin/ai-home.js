@@ -9,35 +9,9 @@ const readline = require('readline-sync');
 const pty = require('node-pty');
 const { execSync, spawnSync, spawn } = require('child_process');
 const http = require('http');
-const {
-  parseProxySyncArgs,
-  parseProxyServeArgs,
-  parseProxyEnvArgs
-} = require('../lib/proxy/args');
-const { createProxyDaemonController } = require('../lib/proxy/daemon');
-const { runProxyCommand } = require('../lib/proxy/command-handler');
-const { syncCodexAccountsToProxy } = require('../lib/proxy/sync');
-const { startLocalProxyServer: startLocalProxyServerModule } = require('../lib/proxy/server');
-const { runProxyEntry } = require('../lib/proxy/entry');
-const { resolveCommandPath: resolveCommandPathPortable } = require('../lib/runtime/command-path');
-const { buildPtyLaunch } = require('../lib/runtime/pty-launch');
-const {
-  loadPermissionPolicy,
-  savePermissionPolicy,
-  shouldUseDangerFullAccess
-} = require('../lib/runtime/permission-policy');
-const { createCodexSessionStreamTools } = require('../lib/session/codex-session-stream');
-const { resolveGlobalToolConfigRoot, resolveSessionStoreRoot } = require('../lib/session/global-source');
-const { runDoctorChecks } = require('../lib/doctor/checks');
-const { createAuditLogger } = require('../lib/audit/logger');
-const { createHostConfigSyncer } = require('../lib/account/host-sync');
-const { buildGhEnv, ensureGhAuthForReview } = require('../lib/review/gh-auth');
 
 // Configurations
 const HOST_HOME_DIR = (() => {
-  if (process.env.AIH_HOST_HOME && process.env.AIH_HOST_HOME.trim()) {
-    return path.resolve(process.env.AIH_HOST_HOME.trim());
-  }
   try {
     const userInfo = os.userInfo();
     if (userInfo && userInfo.homedir) return userInfo.homedir;
@@ -51,7 +25,6 @@ const AI_HOME_DIR = path.join(HOST_HOME_DIR, '.ai_home');
 const PROFILES_DIR = path.join(AI_HOME_DIR, 'profiles');
 const AIH_PROXY_PID_FILE = path.join(AI_HOME_DIR, 'proxy.pid');
 const AIH_PROXY_LOG_FILE = path.join(AI_HOME_DIR, 'proxy.log');
-const AIH_AUDIT_LOG_FILE = path.join(AI_HOME_DIR, 'audit', 'cli-actions.jsonl');
 const AIH_PROXY_LAUNCHD_LABEL = 'com.aih.proxy';
 const AIH_PROXY_LAUNCHD_PLIST = path.join(HOST_HOME_DIR, 'Library', 'LaunchAgents', `${AIH_PROXY_LAUNCHD_LABEL}.plist`);
 
@@ -65,48 +38,17 @@ function ensureDir(dir) {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 }
 
-const auditLogger = createAuditLogger({
-  logPath: AIH_AUDIT_LOG_FILE
-});
-
-function logAuditEvent(action, context) {
-  auditLogger.log(action, context);
-}
-
-const proxyDaemon = createProxyDaemonController({
-  ensureDir,
-  parseProxyServeArgs,
-  aiHomeDir: AI_HOME_DIR,
-  pidFile: AIH_PROXY_PID_FILE,
-  logFile: AIH_PROXY_LOG_FILE,
-  launchdLabel: AIH_PROXY_LAUNCHD_LABEL,
-  launchdPlist: AIH_PROXY_LAUNCHD_PLIST,
-  entryScriptPath: __filename,
-  nodeExecPath: process.execPath
-});
+ensureDir(PROFILES_DIR);
 
 function getProfileDir(cliName, id) {
   return path.join(PROFILES_DIR, cliName, String(id));
 }
-
-const syncGlobalConfigToHost = createHostConfigSyncer({
-  fs,
-  fse,
-  ensureDir,
-  getProfileDir,
-  hostHomeDir: HOST_HOME_DIR,
-  cliConfigs: CLI_CONFIGS
-});
 
 function askYesNo(query, defaultYes = true) {
   const promptStr = defaultYes ? `${query} [Y/n]: ` : `${query} [y/N]: `;
   const ans = readline.question(promptStr).trim().toLowerCase();
   if (ans === '') return defaultYes;
   return ans === 'y' || ans === 'yes';
-}
-
-function ensurePlanWatchdogDaemon() {
-  // plan subsystem removed
 }
 
 function stripAnsi(string) {
@@ -132,17 +74,11 @@ const USAGE_SOURCE_GEMINI = 'gemini_refresh_user_quota';
 const USAGE_SOURCE_CODEX = 'codex_app_server';
 const USAGE_SOURCE_CLAUDE_OAUTH = 'claude_oauth_usage_api';
 const USAGE_SOURCE_CLAUDE_AUTH_TOKEN = 'claude_auth_token_usage_api';
-const USAGE_THRESHOLD_DEFAULT_PCT = 95;
 const TRUSTED_CLAUDE_USAGE_SOURCES = new Set([
   USAGE_SOURCE_CLAUDE_OAUTH,
   USAGE_SOURCE_CLAUDE_AUTH_TOKEN
 ]);
 const LIST_PAGE_SIZE = 10;
-const AUTO_POOL_LEASE_MS_DEFAULT = 20 * 60 * 1000;
-const AUTO_POOL_LOCK_TIMEOUT_MS = 2500;
-const AUTO_POOL_LOCK_RETRY_MS = 40;
-const TASK_SESSION_REGISTRY_FILE = path.join(AI_HOME_DIR, 'codex_task_sessions.json');
-const DEFAULT_RESUME_PROMPT = '继续上一次任务，先汇报当前进度，再继续执行。';
 const EXPORT_MAGIC = 'AIH_EXPORT_V2:';
 const EXPORT_VERSION = 2;
 const AGE_SSH_KEY_TYPES = new Set(['ssh-ed25519', 'ssh-rsa']);
@@ -158,43 +94,6 @@ const SESSION_STORE_METADATA_PATTERNS = {
     /^state_\d+\.sqlite(?:-(?:shm|wal))?$/i
   ]
 };
-const CODEX_SANDBOX_VALUES = new Set(['workspace-write', 'read-only', 'danger-full-access']);
-
-function loadExecPermissionPolicy() {
-  return loadPermissionPolicy({ aiHomeDir: AI_HOME_DIR });
-}
-
-function resolveCodexSandboxFromPolicy(policy) {
-  const loaded = policy || loadExecPermissionPolicy();
-  if (shouldUseDangerFullAccess(loaded)) return 'danger-full-access';
-  const sandbox = String((loaded && loaded.exec && loaded.exec.defaultSandbox) || '').trim().toLowerCase();
-  if (sandbox === 'read-only') return 'read-only';
-  if (sandbox === 'workspace-write') return 'workspace-write';
-  return 'workspace-write';
-}
-
-function stripCodexExecSandboxArgs(args) {
-  const src = Array.isArray(args) ? [...args] : [];
-  if (String(src[0] || '') !== 'exec') return src;
-  const cleaned = ['exec'];
-  for (let i = 1; i < src.length; i++) {
-    const cur = String(src[i] || '');
-    if (cur === '--sandbox') {
-      if (i + 1 < src.length) i += 1;
-      continue;
-    }
-    if (cur.startsWith('--sandbox=')) continue;
-    cleaned.push(src[i]);
-  }
-  return cleaned;
-}
-
-function applyCodexExecSandboxPolicy(args, policy) {
-  const withoutSandbox = stripCodexExecSandboxArgs(args);
-  if (String(withoutSandbox[0] || '') !== 'exec') return withoutSandbox;
-  const sandbox = resolveCodexSandboxFromPolicy(policy);
-  return ['exec', '--sandbox', sandbox, ...withoutSandbox.slice(1)];
-}
 
 function getToolConfigDir(cliName, id) {
   const globalFolder = CLI_CONFIGS[cliName] ? CLI_CONFIGS[cliName].globalDir : `.${cliName}`;
@@ -217,11 +116,14 @@ function isSessionMetadataName(cliName, name) {
 }
 
 function getGlobalToolConfigRoot(cliName) {
-  return resolveGlobalToolConfigRoot(cliName, HOST_HOME_DIR, CLI_CONFIGS);
+  const globalFolder = CLI_CONFIGS[cliName] ? CLI_CONFIGS[cliName].globalDir : `.${cliName}`;
+  return path.join(HOST_HOME_DIR, globalFolder);
 }
 
 function getSessionStoreRoot(cliName) {
-  return resolveSessionStoreRoot(cliName, HOST_HOME_DIR, CLI_CONFIGS);
+  // Keep a single native session source per CLI so direct native runs and
+  // aih sandbox runs always point to the same resume/session store.
+  return getGlobalToolConfigRoot(cliName);
 }
 
 function getDirEntriesSafe(dirPath) {
@@ -401,27 +303,6 @@ function readUsageCache(cliName, id) {
   }
 }
 
-function clampUsageThresholdPct(value) {
-  const num = Number(value);
-  if (!Number.isFinite(num)) return USAGE_THRESHOLD_DEFAULT_PCT;
-  if (num < 1) return 1;
-  if (num > 100) return 100;
-  return Math.round(num);
-}
-
-function readUsageThresholdPct() {
-  const configPath = path.join(AI_HOME_DIR, 'usage-config.json');
-  if (!fs.existsSync(configPath)) return USAGE_THRESHOLD_DEFAULT_PCT;
-  try {
-    const parsed = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    if (!parsed || typeof parsed !== 'object') return USAGE_THRESHOLD_DEFAULT_PCT;
-    const raw = parsed.threshold_pct ?? parsed.thresholdPct;
-    return clampUsageThresholdPct(raw);
-  } catch (e) {
-    return USAGE_THRESHOLD_DEFAULT_PCT;
-  }
-}
-
 function isTrustedUsageSnapshot(cliName, snapshot) {
   if (!snapshot || typeof snapshot !== 'object') return false;
   if (snapshot.schemaVersion !== USAGE_SNAPSHOT_SCHEMA_VERSION) return false;
@@ -471,18 +352,6 @@ function formatResetInFromUnixSeconds(resetAtSeconds) {
   if (hours > 0) return `${hours}h`;
   if (minutes > 0) return `${minutes}m`;
   return 'soon';
-}
-
-function toUnixSecondsNumber(value) {
-  const num = Number(value);
-  if (!Number.isFinite(num) || num <= 0) return 0;
-  return Math.floor(num);
-}
-
-function toEpochMsFromIso(value) {
-  const ms = Date.parse(String(value || '').trim());
-  if (!Number.isFinite(ms) || ms <= 0) return 0;
-  return Math.floor(ms);
 }
 
 function parseGeminiQuotaBuckets(buckets) {
@@ -541,7 +410,12 @@ function refreshGeminiUsageSnapshot(cliName, id) {
   const sandboxDir = getProfileDir(cliName, id);
   if (!fs.existsSync(sandboxDir)) return null;
 
-  const geminiBin = resolveCommandPath('gemini');
+  let geminiBin = '';
+  try {
+    geminiBin = execSync('which gemini', { encoding: 'utf8' }).trim();
+  } catch (e) {
+    return null;
+  }
   if (!geminiBin) return null;
 
   const probeScript = `
@@ -673,7 +547,6 @@ function parseCodexRateLimits(rateLimits, capturedAt, source) {
     const normalizedBucket = normalizeCodexRateLimitWindow(rateLimits[bucketName]);
     if (!normalizedBucket) return;
     const { windowMinutes, usedPct, resetsAt } = normalizedBucket;
-    const resetAt = toUnixSecondsNumber(resetsAt) > 0 ? toUnixSecondsNumber(resetsAt) * 1000 : 0;
     const remainingPct = typeof usedPct === 'number'
       ? Math.max(0, Math.min(100, 100 - usedPct))
       : null;
@@ -683,7 +556,6 @@ function parseCodexRateLimits(rateLimits, capturedAt, source) {
       windowMinutes,
       window: formatCodexWindow(windowMinutes),
       remainingPct,
-      resetAt,
       resetIn: formatResetInFromUnixSeconds(resetsAt)
     });
   });
@@ -703,7 +575,12 @@ function refreshCodexUsageSnapshotFromAppServer(cliName, id) {
   const sandboxDir = getProfileDir(cliName, id);
   if (!fs.existsSync(sandboxDir)) return null;
 
-  const codexBin = resolveCommandPath('codex');
+  let codexBin = '';
+  try {
+    codexBin = execSync('which codex', { encoding: 'utf8' }).trim();
+  } catch (e) {
+    return null;
+  }
   if (!codexBin) return null;
 
   const probeScript = `
@@ -867,26 +744,22 @@ function parseClaudeUsagePayload(payload, capturedAt, source) {
 
   const fiveHourUtil = fiveHourRaw ? toPercentNumber(fiveHourRaw.utilization) : null;
   if (typeof fiveHourUtil === 'number') {
-    const fiveHourResetAt = toEpochMsFromIso(fiveHourRaw.resets_at || fiveHourRaw.resetsAt || null);
     entries.push({
       bucket: 'five_hour',
       windowMinutes: 300,
       window: '5h',
       remainingPct: Math.max(0, Math.min(100, 100 - fiveHourUtil)),
-      resetAt: fiveHourResetAt,
       resetIn: formatResetInFromIso(fiveHourRaw.resets_at || fiveHourRaw.resetsAt || null)
     });
   }
 
   const sevenDayUtil = sevenDayRaw ? toPercentNumber(sevenDayRaw.utilization) : null;
   if (typeof sevenDayUtil === 'number') {
-    const sevenDayResetAt = toEpochMsFromIso(sevenDayRaw.resets_at || sevenDayRaw.resetsAt || null);
     entries.push({
       bucket: 'seven_day',
       windowMinutes: 10080,
       window: '7days',
       remainingPct: Math.max(0, Math.min(100, 100 - sevenDayUtil)),
-      resetAt: sevenDayResetAt,
       resetIn: formatResetInFromIso(sevenDayRaw.resets_at || sevenDayRaw.resetsAt || null)
     });
   }
@@ -1109,37 +982,23 @@ function findEnvSandbox(cliName, targetEnv) {
 
 function isExhausted(cliName, id) {
   const p = path.join(getProfileDir(cliName, id), '.aih_exhausted');
-  const now = Date.now();
   if (fs.existsSync(p)) {
-    let raw = '';
+    let time = NaN;
     try {
-      raw = String(fs.readFileSync(p, 'utf8') || '').trim();
+      time = parseInt(fs.readFileSync(p, 'utf8'), 10);
     } catch (e) {
-      raw = '';
+      return false;
     }
-    let expireAt = 0;
-    if (raw.startsWith('{')) {
-      try {
-        const parsed = JSON.parse(raw);
-        const candidate = Number(parsed && parsed.expireAt);
-        if (Number.isFinite(candidate) && candidate > 0) expireAt = candidate;
-      } catch (e) {}
+    // Cooldown 1 hour (3600000 ms)
+    if (Number.isFinite(time) && Date.now() - time < 3600000) {
+      return true;
     } else {
-      const legacyMarkedAt = parseInt(raw, 10);
-      if (Number.isFinite(legacyMarkedAt) && legacyMarkedAt > 0) {
-        expireAt = legacyMarkedAt + 3600000;
+      try {
+        fs.unlinkSync(p); // Remove exhausted flag if expired
+      } catch (e) {
+        // Ignore cleanup failures (permission/sandbox). Treat as non-exhausted now.
       }
     }
-
-    if (expireAt > now) return true;
-    try {
-      fs.unlinkSync(p);
-    } catch (e) {}
-  }
-
-  if (isUsageManagedCli(cliName)) {
-    const cache = readUsageCache(cliName, id);
-    if (applyExhaustedStateFromUsageCache(cliName, id, cache) === true) return true;
   }
   return false;
 }
@@ -1155,34 +1014,10 @@ function clearExhausted(cliName, id) {
   }
 }
 
-function resolveUsageExhaustedExpireAt(cache, thresholdPct = readUsageThresholdPct()) {
-  const now = Date.now();
-  const minRemainingPct = Math.max(0, 100 - clampUsageThresholdPct(thresholdPct));
-  if (!cache || typeof cache !== 'object' || !Array.isArray(cache.entries)) {
-    return now + 3600000;
-  }
-  const exhaustedResets = cache.entries
-    .filter((x) => Number(x && x.remainingPct) <= minRemainingPct)
-    .map((x) => Number(x && x.resetAt))
-    .filter((n) => Number.isFinite(n) && n > now);
-  if (exhaustedResets.length === 0) {
-    return now + 3600000;
-  }
-  return Math.max(...exhaustedResets) + 60 * 1000;
-}
-
-function markExhaustedFromUsage(cliName, id, cache = null, thresholdPct = readUsageThresholdPct()) {
+function markExhaustedFromUsage(cliName, id) {
   const p = path.join(getProfileDir(cliName, id), '.aih_exhausted');
   try {
-    const payload = {
-      schemaVersion: 2,
-      reason: 'usage_exhausted',
-      markedAt: Date.now(),
-      expireAt: resolveUsageExhaustedExpireAt(cache, thresholdPct),
-      thresholdPct: clampUsageThresholdPct(thresholdPct),
-      source: cache && cache.source ? cache.source : 'unknown'
-    };
-    fs.writeFileSync(p, JSON.stringify(payload, null, 2));
+    fs.writeFileSync(p, Date.now().toString());
     return true;
   } catch (e) {
     return false;
@@ -1206,26 +1041,14 @@ function getUsageRemainingPercentValues(cache) {
   return [];
 }
 
-function isUsageSnapshotExhausted(cache, thresholdPct = readUsageThresholdPct()) {
+function isUsageSnapshotExhausted(cache) {
   const values = getUsageRemainingPercentValues(cache);
   if (values.length === 0) return false;
   const minRemaining = Math.min(...values);
-  const minRemainingPct = Math.max(0, 100 - clampUsageThresholdPct(thresholdPct));
-  return minRemaining <= minRemainingPct;
+  return minRemaining <= 0;
 }
 
-function applyExhaustedStateFromUsageCache(cliName, id, cache, thresholdPct = readUsageThresholdPct()) {
-  if (!isUsageManagedCli(cliName)) return null;
-  if (!cache) return null;
-  if (isUsageSnapshotExhausted(cache, thresholdPct)) {
-    markExhaustedFromUsage(cliName, id, cache, thresholdPct);
-    return true;
-  }
-  clearExhausted(cliName, id);
-  return false;
-}
-
-function syncExhaustedStateFromUsage(cliName, id, options = {}) {
+function syncExhaustedStateFromUsage(cliName, id) {
   if (!isUsageManagedCli(cliName)) return null;
   const profileDir = getProfileDir(cliName, id);
   if (!fs.existsSync(profileDir)) return null;
@@ -1233,13 +1056,16 @@ function syncExhaustedStateFromUsage(cliName, id, options = {}) {
   if (!configured) return null;
   if (accountName && accountName.startsWith('API Key')) return null;
 
-  const mode = options && options.mode === 'cached' ? 'cached' : 'refresh';
   let cache = readUsageCache(cliName, id);
-  if (mode !== 'cached') {
-    cache = ensureUsageSnapshot(cliName, id, cache);
-  }
+  cache = ensureUsageSnapshot(cliName, id, cache);
   if (!cache) return null;
-  return applyExhaustedStateFromUsageCache(cliName, id, cache);
+
+  if (isUsageSnapshotExhausted(cache)) {
+    markExhaustedFromUsage(cliName, id);
+    return true;
+  }
+  clearExhausted(cliName, id);
+  return false;
 }
 
 function getUsageNoSnapshotHint(cliName, id = null) {
@@ -1320,7 +1146,6 @@ function printUsageSnapshot(cliName, id) {
     }
     return;
   }
-  applyExhaustedStateFromUsageCache(cliName, id, cache);
 
   const ageLabel = cache.capturedAt
     ? `${Math.max(0, Math.floor((Date.now() - cache.capturedAt) / 1000))}s`
@@ -1371,7 +1196,6 @@ function printAllUsageSnapshots(cliName) {
       }
       return;
     }
-    applyExhaustedStateFromUsageCache(cliName, id, cache);
 
     withSnapshot += 1;
     const ageLabel = cache.capturedAt
@@ -1386,812 +1210,29 @@ function printAllUsageSnapshots(cliName) {
   console.log(`\x1b[90m[aih]\x1b[0m Summary: oauth=${oauthCount}, with_snapshot=${withSnapshot}, api_key_skipped=${skippedApiKey}, pending_skipped=${skippedPending}`);
 }
 
-function getAutoPoolPaths(cliName) {
+function getNextAvailableId(cliName, currentId) {
   const toolDir = path.join(PROFILES_DIR, cliName);
-  return {
-    toolDir,
-    statePath: path.join(toolDir, '.aih_auto_pool.json'),
-    lockPath: path.join(toolDir, '.aih_auto_pool.lock')
-  };
-}
-
-function isPidAlive(pid) {
-  const n = Number(pid);
-  if (!Number.isFinite(n) || n <= 0) return false;
-  try {
-    process.kill(n, 0);
-    return true;
-  } catch (e) {
-    return false;
-  }
-}
-
-function sleepMs(ms) {
-  const n = Math.max(1, Number(ms) || 1);
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, n);
-}
-
-function withAutoPoolLock(cliName, fn) {
-  const { lockPath, toolDir } = getAutoPoolPaths(cliName);
-  if (!fs.existsSync(toolDir)) return fn();
-  const deadline = Date.now() + AUTO_POOL_LOCK_TIMEOUT_MS;
-  const staleMs = AUTO_POOL_LOCK_TIMEOUT_MS * 2;
-  while (Date.now() < deadline) {
-    try {
-      fs.mkdirSync(lockPath);
-      try {
-        return fn();
-      } finally {
-        try { fs.rmdirSync(lockPath); } catch (e) {}
+  const ids = fs.readdirSync(toolDir)
+                .filter(f => /^\d+$/.test(f) && fs.statSync(path.join(toolDir, f)).isDirectory());
+  
+  let validIds = [];
+  ids.forEach(id => {
+    if (id !== currentId && checkStatus(cliName, path.join(toolDir, id)).configured) {
+      const usageExhausted = syncExhaustedStateFromUsage(cliName, id);
+      if (usageExhausted === true) {
+        return;
       }
-    } catch (e) {
-      if (e && e.code === 'EEXIST') {
-        try {
-          const st = fs.statSync(lockPath);
-          if (Date.now() - st.mtimeMs > staleMs) {
-            fs.rmSync(lockPath, { recursive: true, force: true });
-            continue;
-          }
-        } catch (ignoreErr) {}
+      if (!isExhausted(cliName, id)) {
+        validIds.push(id);
       }
-      sleepMs(AUTO_POOL_LOCK_RETRY_MS);
     }
-  }
-  throw new Error(`auto_pool_lock_timeout:${cliName}`);
-}
-
-function readAutoPoolState(cliName) {
-  const { statePath } = getAutoPoolPaths(cliName);
-  if (!fs.existsSync(statePath)) return { version: 1, leases: {}, stats: {} };
-  try {
-    const parsed = JSON.parse(fs.readFileSync(statePath, 'utf8'));
-    if (!parsed || typeof parsed !== 'object') return { version: 1, leases: {}, stats: {} };
-    return {
-      version: 1,
-      leases: parsed.leases && typeof parsed.leases === 'object' ? parsed.leases : {},
-      stats: parsed.stats && typeof parsed.stats === 'object' ? parsed.stats : {}
-    };
-  } catch (e) {
-    return { version: 1, leases: {}, stats: {} };
-  }
-}
-
-function writeAutoPoolState(cliName, state) {
-  const { statePath } = getAutoPoolPaths(cliName);
-  try {
-    fs.writeFileSync(statePath, JSON.stringify(state, null, 2));
-  } catch (e) {}
-}
-
-function cleanupAutoPoolLeases(state) {
-  const now = Date.now();
-  const out = state && typeof state === 'object' ? state : { version: 1, leases: {}, stats: {} };
-  if (!out.leases || typeof out.leases !== 'object') out.leases = {};
-  if (!out.stats || typeof out.stats !== 'object') out.stats = {};
-  Object.keys(out.leases).forEach((id) => {
-    const lease = out.leases[id];
-    const expired = !lease || (lease.expireAt && Number(lease.expireAt) <= now);
-    const deadPid = !lease || !isPidAlive(lease.pid);
-    if (expired || deadPid) delete out.leases[id];
   });
-  return out;
-}
-
-function allocateAutoAccount(cliName, currentId, options = {}) {
-  return withAutoPoolLock(cliName, () => {
-    const { toolDir } = getAutoPoolPaths(cliName);
-    if (!fs.existsSync(toolDir)) return null;
-    const runDeepUsageCheck = isUsageManagedCli(cliName) || process.env.AIH_DEEP_USAGE_CHECK === '1';
-    const leaseMsRaw = Number(process.env.AIH_AUTO_LEASE_MS || options.leaseMs);
-    const leaseMs = Number.isFinite(leaseMsRaw) && leaseMsRaw > 1000 ? leaseMsRaw : AUTO_POOL_LEASE_MS_DEFAULT;
-    const exclude = new Set([String(currentId || ''), ...((options.excludeIds || []).map((x) => String(x)))].filter(Boolean));
-    const ids = fs.readdirSync(toolDir, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory() && /^\d+$/.test(entry.name))
-      .map((entry) => entry.name)
-      .sort((a, b) => parseInt(a, 10) - parseInt(b, 10));
-
-    let state = cleanupAutoPoolLeases(readAutoPoolState(cliName));
-    const now = Date.now();
-    const candidates = [];
-    ids.forEach((id) => {
-      if (exclude.has(id)) return;
-      if (!checkStatus(cliName, path.join(toolDir, id)).configured) return;
-      if (runDeepUsageCheck && syncExhaustedStateFromUsage(cliName, id) === true) return;
-      if (isExhausted(cliName, id)) return;
-      if (state.leases[id]) return;
-      const stat = state.stats[id] || {};
-      candidates.push({
-        id,
-        assignedCount: Number(stat.assignedCount || 0),
-        lastAssignedAt: Number(stat.lastAssignedAt || 0)
-      });
-    });
-    if (candidates.length === 0) {
-      writeAutoPoolState(cliName, state);
-      return null;
-    }
-
-    candidates.sort((a, b) => {
-      if (a.assignedCount !== b.assignedCount) return a.assignedCount - b.assignedCount;
-      if (a.lastAssignedAt !== b.lastAssignedAt) return a.lastAssignedAt - b.lastAssignedAt;
-      return parseInt(a.id, 10) - parseInt(b.id, 10);
-    });
-    const selected = candidates[0];
-    const leaseToken = `${process.pid}-${crypto.randomBytes(6).toString('hex')}`;
-    state.leases[selected.id] = {
-      token: leaseToken,
-      pid: process.pid,
-      assignedAt: now,
-      expireAt: now + leaseMs
-    };
-    state.stats[selected.id] = {
-      assignedCount: selected.assignedCount + 1,
-      lastAssignedAt: now
-    };
-    writeAutoPoolState(cliName, state);
-    return { id: selected.id, leaseToken };
-  });
-}
-
-function releaseAutoAccount(cliName, id, leaseToken) {
-  if (!id || !leaseToken) return;
-  try {
-    withAutoPoolLock(cliName, () => {
-      const state = cleanupAutoPoolLeases(readAutoPoolState(cliName));
-      const cur = state.leases[String(id)];
-      if (cur && cur.token === leaseToken) {
-        delete state.leases[String(id)];
-        writeAutoPoolState(cliName, state);
-      }
-    });
-  } catch (e) {}
-}
-
-function sanitizeTaskKey(raw) {
-  const v = String(raw || '').trim();
-  if (!v) return '';
-  return v.replace(/[^a-zA-Z0-9._:-]/g, '_').slice(0, 120);
-}
-
-function nowIsoUtcPlus8() {
-  const d = new Date(Date.now() + (8 * 60 * 60 * 1000));
-  const yyyy = d.getUTCFullYear();
-  const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
-  const dd = String(d.getUTCDate()).padStart(2, '0');
-  const hh = String(d.getUTCHours()).padStart(2, '0');
-  const mi = String(d.getUTCMinutes()).padStart(2, '0');
-  const ss = String(d.getUTCSeconds()).padStart(2, '0');
-  return `${yyyy}-${mm}-${dd}T${hh}:${mi}:${ss}+08:00`;
-}
-
-function parseTaskKeyParts(taskKeyRaw) {
-  const key = sanitizeTaskKey(taskKeyRaw).toLowerCase();
-  const m = key.match(/^m(\d+)-t(\d+)-([a-z0-9._-]+)$/);
-  if (!m) return null;
-  const milestoneNum = String(Number(m[1]));
-  const taskNum = String(Number(m[2]));
-  if (!milestoneNum || !taskNum) return null;
-  const taskId = `T${taskNum.padStart(3, '0')}`;
-  const owner = String(m[3] || '').trim();
-  if (!owner) return null;
-  return {
-    milestone: `m${milestoneNum}`,
-    taskNum,
-    taskId,
-    owner,
-    branch: `feat/${owner}-m${milestoneNum}-t${taskNum.padStart(3, '0')}`
-  };
-}
-
-function replaceLineValueInRange(lines, start, end, field, nextValue) {
-  const re = new RegExp(`^\\s{2}${field}:\\s*(.*)$`);
-  for (let i = start + 1; i < end; i++) {
-    if (re.test(lines[i])) {
-      const oldVal = String(lines[i].match(re)[1] || '').trim();
-      lines[i] = `  ${field}: ${nextValue}`;
-      return oldVal;
-    }
+  
+  if (validIds.length > 0) {
+    // Return the lowest ID available (or random, or round robin)
+    return validIds.sort((a, b) => parseInt(a) - parseInt(b))[0];
   }
-  lines.splice(end, 0, `  ${field}: ${nextValue}`);
-  return '';
-}
-
-function getLineValueInRange(lines, start, end, field) {
-  const re = new RegExp(`^\\s{2}${field}:\\s*(.*)$`);
-  for (let i = start + 1; i < end; i++) {
-    const m = lines[i].match(re);
-    if (m) return String(m[1] || '').trim();
-  }
-  return '';
-}
-
-function claimPlanTask(planPath, taskKeyRaw, actor = 'aih-auto') {
-  const planPathAbs = normalizePlanPath(planPath);
-  if (!planPathAbs || !fs.existsSync(planPathAbs)) {
-    return { ok: false, error: `Plan file not found: ${planPath || ''}` };
-  }
-  const parts = parseTaskKeyParts(taskKeyRaw);
-  if (!parts) {
-    return { ok: false, error: `Invalid --task-key format. Expected mN-tNNN-owner, got: ${taskKeyRaw || ''}` };
-  }
-
-  const raw = fs.readFileSync(planPathAbs, 'utf8');
-  const lines = raw.split(/\r?\n/);
-  const taskStart = lines.findIndex((line) => line.trim() === `- id: ${parts.taskId}`);
-  if (taskStart < 0) {
-    return { ok: false, error: `Task ${parts.taskId} not found in ${path.basename(planPathAbs)}` };
-  }
-  let taskEnd = lines.length;
-  for (let i = taskStart + 1; i < lines.length; i++) {
-    if (/^- id:\s+\S+/.test(lines[i].trim())) {
-      taskEnd = i;
-      break;
-    }
-  }
-
-  const existingOwner = getLineValueInRange(lines, taskStart, taskEnd, 'owner');
-  if (existingOwner && existingOwner !== 'unassigned' && existingOwner !== parts.owner) {
-    return {
-      ok: false,
-      error: `Task ${parts.taskId} already owned by ${existingOwner}; refusing to override with ${parts.owner}`
-    };
-  }
-
-  const existingStatus = getLineValueInRange(lines, taskStart, taskEnd, 'status');
-  if (existingStatus === 'done') {
-    return { ok: false, error: `Task ${parts.taskId} is already done; refusing to claim.` };
-  }
-
-  const existingBranch = getLineValueInRange(lines, taskStart, taskEnd, 'branch');
-  const existingClaimedAt = getLineValueInRange(lines, taskStart, taskEnd, 'claimed_at');
-  const claimAt = existingClaimedAt || nowIsoUtcPlus8();
-  const branch = existingBranch || parts.branch;
-
-  replaceLineValueInRange(lines, taskStart, taskEnd, 'status', 'doing');
-  replaceLineValueInRange(lines, taskStart, taskEnd, 'owner', parts.owner);
-  replaceLineValueInRange(lines, taskStart, taskEnd, 'claimed_at', claimAt);
-  replaceLineValueInRange(lines, taskStart, taskEnd, 'done_at', '');
-  replaceLineValueInRange(lines, taskStart, taskEnd, 'branch', branch);
-
-  const now = nowIsoUtcPlus8();
-  const updatedIdx = lines.findIndex((line) => /^- updated_at:\s*/.test(line));
-  if (updatedIdx >= 0) {
-    lines[updatedIdx] = `- updated_at: ${now}`;
-  }
-
-  const activityIdx = lines.findIndex((line) => line.trim() === '## Activity Log');
-  if (activityIdx >= 0) {
-    const msg = `- ${now} [${actor}] Claimed ${parts.taskId} (${sanitizeTaskKey(taskKeyRaw)}) owner=${parts.owner} branch=${branch}.`;
-    lines.splice(lines.length, 0, msg);
-  }
-
-  fs.writeFileSync(planPathAbs, `${lines.join('\n')}\n`);
-  return {
-    ok: true,
-    taskId: parts.taskId,
-    owner: parts.owner,
-    branch,
-    claimedAt: claimAt,
-    updatedAt: now,
-    planPath: planPathAbs
-  };
-}
-
-function looksLikeSessionId(v) {
-  return /^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(String(v || '').trim());
-}
-
-const {
-  parseSessionHistoryOptions,
-  showCodexSessionStream
-} = createCodexSessionStreamTools({
-  fs,
-  path,
-  getSessionStoreRoot,
-  looksLikeSessionId
-});
-
-function readTaskSessionRegistry() {
-  const empty = { tasks: {}, plans: {}, sessions: [] };
-  if (!fs.existsSync(TASK_SESSION_REGISTRY_FILE)) return empty;
-  try {
-    const parsed = JSON.parse(fs.readFileSync(TASK_SESSION_REGISTRY_FILE, 'utf8'));
-    if (!parsed || typeof parsed !== 'object') return empty;
-    if (parsed.tasks || parsed.sessions || parsed.plans) {
-      return {
-        tasks: parsed.tasks && typeof parsed.tasks === 'object' ? parsed.tasks : {},
-        plans: parsed.plans && typeof parsed.plans === 'object' ? parsed.plans : {},
-        sessions: Array.isArray(parsed.sessions) ? parsed.sessions : []
-      };
-    }
-    // Backward compatibility: legacy map { taskKey: { sessionId... } }
-    const tasks = {};
-    Object.entries(parsed).forEach(([k, v]) => {
-      if (!v || typeof v !== 'object' || !v.sessionId) return;
-      tasks[sanitizeTaskKey(k)] = v;
-    });
-    return { tasks, plans: {}, sessions: [] };
-  } catch (e) {
-    return empty;
-  }
-}
-
-function writeTaskSessionRegistry(data) {
-  try {
-    ensureDir(path.dirname(TASK_SESSION_REGISTRY_FILE));
-    fs.writeFileSync(TASK_SESSION_REGISTRY_FILE, JSON.stringify({
-      tasks: data.tasks || {},
-      plans: data.plans || {},
-      sessions: Array.isArray(data.sessions) ? data.sessions : []
-    }, null, 2));
-  } catch (e) {}
-}
-
-function getTaskSession(taskKey) {
-  const key = sanitizeTaskKey(taskKey);
-  if (!key) return null;
-  const all = readTaskSessionRegistry();
-  const entry = all.tasks[key];
-  if (!entry || typeof entry !== 'object') return null;
-  if (!entry.sessionId) return null;
-  return entry;
-}
-
-function findBoundAccountIdBySessionId(sessionId) {
-  const sid = String(sessionId || '').trim();
-  if (!looksLikeSessionId(sid)) return '';
-  const all = readTaskSessionRegistry();
-  if (all.tasks && typeof all.tasks === 'object') {
-    for (const entry of Object.values(all.tasks)) {
-      if (!entry || typeof entry !== 'object') continue;
-      if (String(entry.sessionId || '').trim() !== sid) continue;
-      const accountId = String(entry.accountId || '').trim();
-      if (accountId) return accountId;
-    }
-  }
-  if (all.plans && typeof all.plans === 'object') {
-    for (const entry of Object.values(all.plans)) {
-      if (!entry || typeof entry !== 'object') continue;
-      if (String(entry.sessionId || '').trim() !== sid) continue;
-      const accountId = String(entry.accountId || '').trim();
-      if (accountId) return accountId;
-    }
-  }
-  return '';
-}
-
-function setTaskSession(taskKey, sessionId, metadata = {}) {
-  const key = sanitizeTaskKey(taskKey);
-  if (!key || !sessionId) return;
-  const all = readTaskSessionRegistry();
-  all.tasks[key] = {
-    taskKey: key,
-    sessionId: String(sessionId),
-    updatedAt: new Date().toISOString(),
-    ...metadata
-  };
-  writeTaskSessionRegistry(all);
-}
-
-function appendRecentSession(sessionId, metadata = {}) {
-  if (!looksLikeSessionId(sessionId)) return;
-  const all = readTaskSessionRegistry();
-  const nowIso = new Date().toISOString();
-  const sid = String(sessionId);
-  const next = (all.sessions || []).filter((x) => x && x.sessionId && x.sessionId !== sid);
-  next.unshift({
-    sessionId: sid,
-    updatedAt: nowIso,
-    ...metadata
-  });
-  all.sessions = next.slice(0, 200);
-  writeTaskSessionRegistry(all);
-}
-
-function normalizePlanPath(planPathRaw) {
-  const v = String(planPathRaw || '').trim();
-  if (!v) return '';
-  const abs = path.resolve(process.cwd(), v);
-  if (!abs.endsWith('.plan.md')) return '';
-  return abs;
-}
-
-function getPlanSession(planPathRaw) {
-  const abs = normalizePlanPath(planPathRaw);
-  if (!abs) return null;
-  const all = readTaskSessionRegistry();
-  const entry = all.plans && all.plans[abs];
-  if (!entry || !entry.sessionId) return null;
-  return entry;
-}
-
-function setPlanSession(planPathRaw, sessionId, metadata = {}) {
-  const abs = normalizePlanPath(planPathRaw);
-  if (!abs || !sessionId) return;
-  const all = readTaskSessionRegistry();
-  if (!all.plans || typeof all.plans !== 'object') all.plans = {};
-  all.plans[abs] = {
-    planPath: abs,
-    sessionId: String(sessionId),
-    updatedAt: new Date().toISOString(),
-    ...metadata
-  };
-  writeTaskSessionRegistry(all);
-}
-
-function refreshSessionBindingsBySessionId(sessionId, metadata = {}) {
-  const sid = String(sessionId || '').trim();
-  if (!looksLikeSessionId(sid)) return { tasks: 0, plans: 0 };
-  const all = readTaskSessionRegistry();
-  const nowIso = new Date().toISOString();
-  let taskHits = 0;
-  let planHits = 0;
-
-  if (all.tasks && typeof all.tasks === 'object') {
-    Object.keys(all.tasks).forEach((key) => {
-      const entry = all.tasks[key];
-      if (!entry || typeof entry !== 'object') return;
-      if (String(entry.sessionId || '').trim() !== sid) return;
-      all.tasks[key] = {
-        ...entry,
-        ...metadata,
-        sessionId: sid,
-        updatedAt: nowIso
-      };
-      taskHits += 1;
-    });
-  }
-
-  if (all.plans && typeof all.plans === 'object') {
-    Object.keys(all.plans).forEach((absPath) => {
-      const entry = all.plans[absPath];
-      if (!entry || typeof entry !== 'object') return;
-      if (String(entry.sessionId || '').trim() !== sid) return;
-      all.plans[absPath] = {
-        ...entry,
-        ...metadata,
-        sessionId: sid,
-        updatedAt: nowIso
-      };
-      planHits += 1;
-    });
-  }
-
-  if (taskHits > 0 || planHits > 0) {
-    writeTaskSessionRegistry(all);
-  }
-  return { tasks: taskHits, plans: planHits };
-}
-
-function parseCodexExecPlanArg(forwardArgs) {
-  const arr = Array.isArray(forwardArgs) ? [...forwardArgs] : [];
-  if (arr.length === 0) return { planPath: '', args: arr };
-  if (String(arr[0]) !== 'exec') return { planPath: '', args: arr };
-
-  let planPath = '';
-  const next = [];
-  next.push(arr[0]);
-  for (let i = 1; i < arr.length; i++) {
-    const cur = String(arr[i] || '');
-    if (cur === '--plan' && i + 1 < arr.length) {
-      planPath = normalizePlanPath(arr[i + 1]);
-      i += 1;
-      continue;
-    }
-    if (cur.startsWith('--plan=')) {
-      planPath = normalizePlanPath(cur.slice('--plan='.length));
-      continue;
-    }
-    next.push(arr[i]);
-  }
-  return { planPath, args: next };
-}
-
-function detectSinglePlanFromPrompt(args) {
-  if (!Array.isArray(args) || String(args[0] || '') !== 'exec') return '';
-  const prompt = String(args.slice(1).join(' ') || '');
-  if (!prompt) return '';
-  const matches = [...prompt.matchAll(/plans\/[^\s"'`]+\.plan\.md/g)].map((m) => m[0]);
-  const uniq = Array.from(new Set(matches.map((x) => normalizePlanPath(x)).filter(Boolean)));
-  if (uniq.length === 1) return uniq[0];
-  return '';
-}
-
-function showCodexPlanSessions(planPath = '') {
-  const all = readTaskSessionRegistry();
-  const target = normalizePlanPath(planPath);
-  const entries = Object.values(all.plans || {})
-    .filter((x) => !!x && !!x.sessionId && !!x.planPath)
-    .filter((x) => !target || x.planPath === target)
-    .sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
-  if (entries.length === 0) {
-    console.log('\x1b[90m[aih]\x1b[0m No recorded plan-session bindings.');
-    return;
-  }
-  console.log('\n\x1b[36m[aih]\x1b[0m Plan-session bindings');
-  entries.forEach((v) => {
-    console.log(`  - plan: ${v.planPath}`);
-    console.log(`    session_id: \x1b[36m${v.sessionId}\x1b[0m`);
-    if (v.accountId) console.log(`    account_id: ${v.accountId}`);
-    if (v.updatedAt) console.log(`    updated_at: ${v.updatedAt}`);
-  });
-  console.log('');
-}
-
-function getLatestSessionForCwd(cwd = process.cwd()) {
-  const all = readTaskSessionRegistry();
-  const list = Array.isArray(all.sessions) ? all.sessions : [];
-  const target = String(cwd || '');
-  const firstMatch = list.find((x) => x && x.sessionId && String(x.cwd || '') === target);
-  if (firstMatch && firstMatch.sessionId) return firstMatch;
-  const any = list.find((x) => x && x.sessionId);
-  return any || null;
-}
-
-function parseCodexExecTaskKey(forwardArgs) {
-  const arr = Array.isArray(forwardArgs) ? [...forwardArgs] : [];
-  if (arr.length === 0) return { taskKey: '', args: arr };
-  if (String(arr[0]) !== 'exec') return { taskKey: '', args: arr };
-
-  let taskKey = '';
-  const next = [];
-  next.push(arr[0]);
-  for (let i = 1; i < arr.length; i++) {
-    const cur = String(arr[i] || '');
-    if (cur === '--task-key' && i + 1 < arr.length) {
-      taskKey = sanitizeTaskKey(arr[i + 1]);
-      i += 1;
-      continue;
-    }
-    if (cur.startsWith('--task-key=')) {
-      taskKey = sanitizeTaskKey(cur.slice('--task-key='.length));
-      continue;
-    }
-    next.push(arr[i]);
-  }
-  return { taskKey, args: next };
-}
-
-function showCodexSessions(limit = 20) {
-  const all = readTaskSessionRegistry();
-  let list = Array.isArray(all.sessions) ? [...all.sessions] : [];
-  if (list.length === 0) {
-    Object.values(all.tasks || {}).forEach((v) => {
-      if (!v || !v.sessionId) return;
-      list.push({
-        sessionId: v.sessionId,
-        updatedAt: v.updatedAt || '',
-        accountId: v.accountId || '',
-        cwd: v.cwd || '',
-        taskKey: v.taskKey || ''
-      });
-    });
-    Object.values(all.plans || {}).forEach((v) => {
-      if (!v || !v.sessionId) return;
-      list.push({
-        sessionId: v.sessionId,
-        updatedAt: v.updatedAt || '',
-        accountId: v.accountId || '',
-        cwd: v.cwd || '',
-        planPath: v.planPath || ''
-      });
-    });
-  }
-  list = list
-    .filter((x) => !!x && !!x.sessionId)
-    .sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
-  if (list.length === 0) {
-    console.log('\x1b[90m[aih]\x1b[0m No recorded codex sessions.');
-    return;
-  }
-  console.log('\n\x1b[36m[aih]\x1b[0m Recent codex sessions');
-  list.slice(0, Math.max(1, Number(limit) || 20)).forEach((v, idx) => {
-    console.log(`  - #${idx + 1} session_id: \x1b[36m${v.sessionId}\x1b[0m`);
-    if (v.accountId) console.log(`    account_id: ${v.accountId}`);
-    if (v.cwd) console.log(`    cwd: ${v.cwd}`);
-    if (v.taskKey) console.log(`    task_key: ${v.taskKey}`);
-    if (v.planPath) console.log(`    plan: ${v.planPath}`);
-    if (v.updatedAt) console.log(`    updated_at: ${v.updatedAt}`);
-  });
-  console.log('');
-}
-
-function deleteCodexSession(sessionId) {
-  const sid = String(sessionId || '').trim();
-  if (!looksLikeSessionId(sid)) {
-    return { ok: false, reason: 'invalid_session_id' };
-  }
-
-  const all = readTaskSessionRegistry();
-  let removedTasks = 0;
-  let removedPlans = 0;
-
-  if (all.tasks && typeof all.tasks === 'object') {
-    Object.keys(all.tasks).forEach((taskKey) => {
-      const entry = all.tasks[taskKey];
-      if (!entry || typeof entry !== 'object') return;
-      if (String(entry.sessionId || '').trim() !== sid) return;
-      delete all.tasks[taskKey];
-      removedTasks += 1;
-    });
-  }
-
-  if (all.plans && typeof all.plans === 'object') {
-    Object.keys(all.plans).forEach((planPath) => {
-      const entry = all.plans[planPath];
-      if (!entry || typeof entry !== 'object') return;
-      if (String(entry.sessionId || '').trim() !== sid) return;
-      delete all.plans[planPath];
-      removedPlans += 1;
-    });
-  }
-
-  const before = Array.isArray(all.sessions) ? all.sessions.length : 0;
-  all.sessions = (Array.isArray(all.sessions) ? all.sessions : [])
-    .filter((entry) => String((entry && entry.sessionId) || '').trim() !== sid);
-  const removedRecent = Math.max(0, before - all.sessions.length);
-
-  writeTaskSessionRegistry(all);
-  return {
-    ok: true,
-    changed: removedTasks + removedPlans + removedRecent > 0,
-    removed: {
-      tasks: removedTasks,
-      plans: removedPlans,
-      recentSessions: removedRecent
-    }
-  };
-}
-
-function showCodexLastSession() {
-  const latest = getLatestSessionForCwd(process.cwd());
-  if (!latest || !latest.sessionId) {
-    console.log('\x1b[90m[aih]\x1b[0m No recent session for current project.');
-    console.log('\x1b[90mHint:\x1b[0m run `aih codex sessions` first.');
-    return;
-  }
-  console.log(`\x1b[36m[aih]\x1b[0m last_session_id: \x1b[36m${latest.sessionId}\x1b[0m`);
-  if (latest.accountId) console.log(`\x1b[90m[aih]\x1b[0m account_id: ${latest.accountId}`);
-  if (latest.updatedAt) console.log(`\x1b[90m[aih]\x1b[0m updated_at: ${latest.updatedAt}`);
-  console.log(`\x1b[90m[aih]\x1b[0m resume: aih codex auto exec resume ${latest.sessionId} "你写到哪里了"`);
-}
-
-function resolveCodexAutoExecArgs(rawForwardArgs) {
-  const policy = loadExecPermissionPolicy();
-  const parsedTask = parseCodexExecTaskKey(rawForwardArgs);
-  const parsedPlan = parseCodexExecPlanArg(parsedTask.args);
-  let args = parsedPlan.args;
-  const taskKey = parsedTask.taskKey;
-  let planPath = parsedPlan.planPath;
-  if (String(args[0] || '') !== 'exec') {
-    return { args, taskKey, planPath, error: '' };
-  }
-
-  const sub = String(args[1] || '');
-  if (!planPath && sub !== 'resume') {
-    planPath = detectSinglePlanFromPrompt(args);
-  }
-  const ensureWritableExecArgs = (arr) => {
-    return applyCodexExecSandboxPolicy(arr, policy);
-  };
-  if (sub !== 'resume') {
-    args = ensureWritableExecArgs(args);
-    // Task-key should have higher priority than plan-level auto-resume.
-    // This prevents multiple workers touching the same plan file from being
-    // collapsed into a single shared session.
-    if (taskKey) {
-      const bound = getTaskSession(taskKey);
-      if (bound && bound.sessionId) {
-        const execPrompt = args.slice(1);
-        const resumePrompt = stripCodexExecSandboxArgs(['exec', ...execPrompt]).slice(1);
-        const resumeArgs = applyCodexExecSandboxPolicy(['exec', 'resume', bound.sessionId, ...resumePrompt], policy);
-        return {
-          args: resumeArgs,
-          taskKey,
-          planPath,
-          error: '',
-          note: `Resuming task-key '${taskKey}' with session ${bound.sessionId}`
-        };
-      }
-      return { args, taskKey, planPath, error: '' };
-    }
-
-    if (planPath) {
-      const planBound = getPlanSession(planPath);
-      if (planBound && planBound.sessionId) {
-        const execPrompt = args.slice(1);
-        const resumePrompt = stripCodexExecSandboxArgs(['exec', ...execPrompt]).slice(1);
-        const resumeArgs = applyCodexExecSandboxPolicy(['exec', 'resume', planBound.sessionId, ...resumePrompt], policy);
-        return {
-          args: resumeArgs,
-          taskKey,
-          planPath,
-          error: '',
-          note: `Resuming plan '${path.basename(planPath)}' with session ${planBound.sessionId}`
-        };
-      }
-    }
-    return { args, taskKey, planPath, error: '' };
-  }
-
-  const tokens = args.slice(2);
-  let explicitSessionId = '';
-  let overrideAccountId = '';
-  let prompt = '';
-  const rest = [];
-
-  for (let i = 0; i < tokens.length; i++) {
-    const cur = String(tokens[i] || '');
-    if (!explicitSessionId && looksLikeSessionId(cur)) {
-      explicitSessionId = cur;
-      continue;
-    }
-    if (cur === '--prompt' || (cur === '--' && i + 1 < tokens.length && String(tokens[i + 1]) === '--prompt')) {
-      return { args, taskKey, planPath, error: 'Unsupported --prompt syntax. Use positional prompt: aih codex auto exec resume <session_id> "你写到哪里了"' };
-    }
-    if (cur === '--account' || cur === '--id') {
-      const next = String(tokens[i + 1] || '').trim();
-      if (!/^\d+$/.test(next)) {
-        return { args, taskKey, planPath, error: 'Invalid account override. Use: aih codex auto exec resume <session_id> --account <id> [prompt]' };
-      }
-      overrideAccountId = next;
-      i += 1;
-      continue;
-    }
-    if (cur.startsWith('--account=')) {
-      const val = String(cur.slice('--account='.length) || '').trim();
-      if (!/^\d+$/.test(val)) {
-        return { args, taskKey, planPath, error: 'Invalid account override. Use: aih codex auto exec resume <session_id> --account <id> [prompt]' };
-      }
-      overrideAccountId = val;
-      continue;
-    }
-    if (cur.startsWith('--id=')) {
-      const val = String(cur.slice('--id='.length) || '').trim();
-      if (!/^\d+$/.test(val)) {
-        return { args, taskKey, planPath, error: 'Invalid account override. Use: aih codex auto exec resume <session_id> --account <id> [prompt]' };
-      }
-      overrideAccountId = val;
-      continue;
-    }
-    rest.push(cur);
-  }
-
-  if (!prompt) {
-    const positionalPrompt = rest.find((x) => x && !x.startsWith('-'));
-    if (positionalPrompt) prompt = positionalPrompt;
-  }
-
-  let resolvedSessionId = explicitSessionId;
-  if (!resolvedSessionId && taskKey) {
-    const bound = getTaskSession(taskKey);
-    if (bound && bound.sessionId) resolvedSessionId = bound.sessionId;
-  }
-  if (!resolvedSessionId && planPath) {
-    const planBound = getPlanSession(planPath);
-    if (planBound && planBound.sessionId) resolvedSessionId = planBound.sessionId;
-  }
-  if (!resolvedSessionId) {
-    const latest = getLatestSessionForCwd(process.cwd());
-    if (latest && latest.sessionId) resolvedSessionId = latest.sessionId;
-  }
-  if (!resolvedSessionId) {
-    return { args, taskKey, planPath, error: 'No session_id found. Use `aih codex sessions` first, then run: aih codex auto exec resume <session_id> [prompt]' };
-  }
-  if (!prompt) prompt = DEFAULT_RESUME_PROMPT;
-
-  const resumeArgs = applyCodexExecSandboxPolicy(['exec', 'resume', resolvedSessionId, prompt], policy);
-
-  return {
-    args: resumeArgs,
-    taskKey,
-    planPath,
-    overrideAccountId,
-    error: '',
-    note: explicitSessionId
-      ? `Resuming explicit session ${resolvedSessionId}`
-      : `Resuming session ${resolvedSessionId}`
-  };
+  return null;
 }
 
 // Check if an account is configured and try to extract account info
@@ -2282,7 +1323,6 @@ function showHelp() {
 \x1b[36mAI Home (aih)\x1b[0m - Multi-account sandbox manager for AI CLIs
 
 \x1b[33mUsage:\x1b[0m
-  aih doctor                \x1b[90mRun quick environment and account health checks\x1b[0m
   aih ls                    \x1b[90mList all tools, accounts, and their status\x1b[0m
   aih ls --help             \x1b[90mShow list mode help (paging behavior)\x1b[0m
   aih <cli> ls              \x1b[90mList accounts for a specific tool\x1b[0m
@@ -2290,15 +1330,9 @@ function showHelp() {
   aih <cli> add [or login]  \x1b[90mCreate a new account and run the login flow\x1b[0m
   aih <cli>                 \x1b[90mRun a tool with the default account (ID: 1)\x1b[0m
   aih <cli> auto            \x1b[90mRun the next non-exhausted account automatically\x1b[0m
-  aih codex auto exec resume <session_id> [--account <id>] [prompt] \x1b[90mResume a specific exec session precisely\x1b[0m
-  aih codex sessions [--limit N] \x1b[90mShow recent codex session_id list\x1b[0m
-  aih codex session <session_id> [--once] [--limit N] [--raw] [--self-only] [--timeout N] \x1b[90mShow/follow one session history stream\x1b[0m
-  aih codex sessions delete <session_id> \x1b[90mDelete one session binding/history entry\x1b[0m
-  aih codex last-session     \x1b[90mShow current project's latest session_id\x1b[0m
-  aih codex policy [set <sandbox>] \x1b[90mShow/update persistent exec sandbox policy\x1b[0m
   aih <cli> usage <id>      \x1b[90mShow trusted usage-remaining snapshot (OAuth only)\x1b[0m
   aih <cli> usages          \x1b[90mShow trusted usage-remaining snapshots for all OAuth accounts\x1b[0m
-  aih codex account import [dir] [--parallel N] [--limit N] [--dry-run]\x1b[90mImport Codex accounts from output refresh-token files\x1b[0m
+  aih codex import-output [dir] [--parallel N] [--limit N] [--dry-run]\x1b[90mBulk import codex refresh tokens from output files\x1b[0m
   aih <cli> <id> usage      \x1b[90mSame as above, ID-first style\x1b[0m
   aih <cli> unlock <id>     \x1b[90mManually clear [Exhausted Limit] for an account\x1b[0m
   aih <cli> <id> unlock     \x1b[90mSame as above, ID-first style\x1b[0m
@@ -2306,177 +1340,10 @@ function showHelp() {
   aih proxy                 \x1b[90mStart local OpenAI-compatible proxy (auto uses local codex accounts)\x1b[0m
   
 \x1b[33mAdvanced:\x1b[0m
-  aih <cli> set-default <id>\x1b[90mSet default account and sync host ~/.<cli> config\x1b[0m
+  aih <cli> set-default <id>\x1b[90mSet default account for aih only\x1b[0m
   aih export [file.aes] [selectors...] \x1b[90mSecurely export profiles. Selectors e.g. codex:1,2 gemini\x1b[0m
   aih import [-o] <file.aes>\x1b[90mRestore profiles; default skips same account, -o overwrites\x1b[0m
 `);
-}
-
-function printCodexPermissionPolicy(policy = null) {
-  const loaded = policy || loadExecPermissionPolicy();
-  const effectiveSandbox = resolveCodexSandboxFromPolicy(loaded);
-  console.log('\n\x1b[36m[aih]\x1b[0m Codex exec permission policy');
-  console.log(`  - default_sandbox: ${loaded.exec.defaultSandbox}`);
-  console.log(`  - allow_danger_full_access: ${loaded.exec.allowDangerFullAccess ? 'true' : 'false'}`);
-  console.log(`  - effective_exec_sandbox: ${effectiveSandbox}`);
-  if (loaded.updatedAt) {
-    console.log(`  - updated_at: ${loaded.updatedAt}`);
-  }
-  console.log('');
-}
-
-function resolveCommandPath(cmdName) {
-  return resolveCommandPathPortable(cmdName);
-}
-
-function readDefaultAccountId(cliName) {
-  try {
-    const defPath = path.join(PROFILES_DIR, cliName, '.aih_default');
-    if (!fs.existsSync(defPath)) return '';
-    return String(fs.readFileSync(defPath, 'utf8') || '').trim();
-  } catch (e) {
-    return '';
-  }
-}
-
-function collectToolDoctorStats(cliName) {
-  const ids = getToolAccountIds(cliName);
-  let configured = 0;
-  let pending = 0;
-  let exhausted = 0;
-
-  ids.forEach((id) => {
-    const profileDir = getProfileDir(cliName, id);
-    const state = checkStatus(cliName, profileDir);
-    if (state.configured) configured += 1;
-    else pending += 1;
-    if (isExhausted(cliName, id)) exhausted += 1;
-  });
-
-  const defaultId = readDefaultAccountId(cliName);
-  const defaultExists = defaultId ? ids.includes(defaultId) : false;
-  return {
-    cliName,
-    ids,
-    total: ids.length,
-    configured,
-    pending,
-    exhausted,
-    defaultId: defaultId || '',
-    defaultExists
-  };
-}
-
-async function runDoctor(commandArgs = []) {
-  const asJson = commandArgs.includes('--json');
-  const checks = [];
-
-  checks.push({
-    id: 'node',
-    ok: true,
-    detail: `Node ${process.version}`
-  });
-
-  checks.push({
-    id: 'profiles_dir',
-    ok: fs.existsSync(PROFILES_DIR),
-    detail: fs.existsSync(PROFILES_DIR) ? PROFILES_DIR : `${PROFILES_DIR} (missing)`
-  });
-
-  const toolStats = Object.keys(CLI_CONFIGS).map((name) => {
-    const binPath = resolveCommandPath(name);
-    const stats = collectToolDoctorStats(name);
-    return {
-      tool: name,
-      installed: !!binPath,
-      binaryPath: binPath || '',
-      ...stats
-    };
-  });
-
-  toolStats.forEach((item) => {
-    checks.push({
-      id: `tool_${item.tool}_installed`,
-      ok: item.installed,
-      detail: item.installed ? item.binaryPath : `${item.tool} not found in PATH`
-    });
-    checks.push({
-      id: `tool_${item.tool}_default`,
-      ok: !item.defaultId || item.defaultExists,
-      detail: item.defaultId
-        ? (item.defaultExists ? `default=${item.defaultId}` : `default=${item.defaultId} (missing account dir)`)
-        : 'default not set'
-    });
-  });
-
-  const proxy = proxyDaemon.status();
-  let proxyHealth = 'stopped';
-  if (proxy.running) {
-    const controller = new AbortController();
-    const t = setTimeout(() => controller.abort(), 1200);
-    try {
-      const res = await fetch('http://127.0.0.1:8317/healthz', { signal: controller.signal });
-      proxyHealth = res.ok ? 'ok' : `http_${res.status}`;
-    } catch (e) {
-      proxyHealth = 'unreachable';
-    } finally {
-      clearTimeout(t);
-    }
-  }
-
-  const payload = {
-    ok: checks.every((c) => c.ok),
-    checkedAt: new Date().toISOString(),
-    checks,
-    tools: toolStats.map((item) => ({
-      tool: item.tool,
-      installed: item.installed,
-      binaryPath: item.binaryPath || null,
-      totalAccounts: item.total,
-      configuredAccounts: item.configured,
-      pendingAccounts: item.pending,
-      exhaustedAccounts: item.exhausted,
-      defaultId: item.defaultId || null,
-      defaultExists: item.defaultExists
-    })),
-    proxy: {
-      running: proxy.running,
-      pid: proxy.pid || 0,
-      health: proxyHealth,
-      pidFile: proxy.pidFile,
-      logFile: proxy.logFile
-    }
-  };
-
-  if (asJson) {
-    console.log(JSON.stringify(payload, null, 2));
-    return;
-  }
-
-  const okLabel = payload.ok ? '\x1b[32mOK\x1b[0m' : '\x1b[31mISSUES\x1b[0m';
-  console.log(`\n\x1b[36mAI Home Doctor\x1b[0m  status: ${okLabel}`);
-  console.log(`checked_at: ${payload.checkedAt}`);
-
-  console.log(`\n\x1b[33mChecks\x1b[0m`);
-  checks.forEach((c) => {
-    const mark = c.ok ? '\x1b[32m[OK]\x1b[0m' : '\x1b[31m[FAIL]\x1b[0m';
-    console.log(`  ${mark} ${c.id}: ${c.detail}`);
-  });
-
-  console.log(`\n\x1b[33mAccounts\x1b[0m`);
-  payload.tools.forEach((t) => {
-    const installedMark = t.installed ? '\x1b[32minstalled\x1b[0m' : '\x1b[31mmissing\x1b[0m';
-    const defaultLabel = t.defaultId ? `default=${t.defaultId}${t.defaultExists ? '' : ' (invalid)'}` : 'default=unset';
-    console.log(`  - ${t.tool}: ${installedMark}, total=${t.totalAccounts}, configured=${t.configuredAccounts}, pending=${t.pendingAccounts}, exhausted=${t.exhaustedAccounts}, ${defaultLabel}`);
-  });
-
-  const proxyMark = payload.proxy.running ? '\x1b[32mrunning\x1b[0m' : '\x1b[90mstopped\x1b[0m';
-  console.log(`\n\x1b[33mProxy\x1b[0m`);
-  console.log(`  - daemon: ${proxyMark}${payload.proxy.running ? ` (pid=${payload.proxy.pid})` : ''}`);
-  console.log(`  - health: ${payload.proxy.health}`);
-  console.log(`  - pid_file: ${payload.proxy.pidFile}`);
-  console.log(`  - log_file: ${payload.proxy.logFile}`);
-  console.log('');
 }
 
 function showCliUsage(cliName) {
@@ -2489,25 +1356,15 @@ function showCliUsage(cliName) {
   aih ${cliName} add             \x1b[90mCreate a new account and login\x1b[0m
   aih ${cliName} login           \x1b[90mAlias of add\x1b[0m
   aih ${cliName} auto            \x1b[90mAuto-select next non-exhausted account\x1b[0m
-  ${cliName === 'codex' ? `aih codex auto exec resume <session_id> [--account <id>] [prompt]  \x1b[90mResume specific exec session\x1b[0m` : ''}
-  ${cliName === 'codex' ? `aih codex sessions [--limit N]  \x1b[90mShow recent codex session_id list\x1b[0m` : ''}
-  ${cliName === 'codex' ? `aih codex session <session_id> [--once] [--limit N] [--raw] [--self-only] [--timeout N]  \x1b[90mShow/follow one session history stream\x1b[0m` : ''}
-  ${cliName === 'codex' ? `aih codex sessions delete <session_id>  \x1b[90mDelete one session binding/history entry\x1b[0m` : ''}
-  ${cliName === 'codex' ? `aih codex last-session  \x1b[90mShow current project's latest session_id\x1b[0m` : ''}
-  ${cliName === 'codex' ? `aih codex policy [set <workspace-write|read-only|danger-full-access>]  \x1b[90mShow/update persistent exec sandbox policy\x1b[0m` : ''}
   aih ${cliName} usage <id>      \x1b[90mShow trusted usage-remaining snapshot (OAuth)\x1b[0m
   aih ${cliName} usages          \x1b[90mShow trusted usage snapshots for all OAuth accounts\x1b[0m
-  ${cliName === 'codex' ? 'aih codex account import [dir] [--parallel N] [--limit N] [--dry-run]  \x1b[90mImport Codex accounts from output refresh-token files\x1b[0m' : ''}
+  ${cliName === 'codex' ? 'aih codex import-output [dir] [--parallel N] [--limit N] [--dry-run]  \x1b[90mBulk import codex refresh tokens\x1b[0m' : ''}
   aih ${cliName} unlock <id>     \x1b[90mClear exhausted flag manually\x1b[0m
   aih ${cliName} <id> usage      \x1b[90mID-first style usage query\x1b[0m
   aih ${cliName} <id> unlock     \x1b[90mID-first style manual unlock\x1b[0m
   aih ${cliName} <id> [args]     \x1b[90mRun ${cliName} under a specific account\x1b[0m
   aih ${cliName}                 \x1b[90mRun with default account\x1b[0m
 `);
-}
-
-function showCodexAccountImportUsage() {
-  console.log('\x1b[90mUsage:\x1b[0m aih codex account import [sourceDir] [--parallel <1-32>] [--limit <n>] [--dry-run]');
 }
 
 function showProxyUsage() {
@@ -2536,7 +1393,7 @@ function showProxyUsage() {
   aih proxy serve [--host <ip>] [--port <n>] [--backend codex-local|openai-upstream] [--provider codex|gemini|auto] [--upstream <url>] [--strategy round-robin|random] [--client-key <key>] [--management-key <key>] [--cooldown-ms <ms>] [--max-attempts <n>] [--upstream-timeout-ms <ms>]
   aih proxy env [--base-url <url>] [--api-key <key>]
   aih proxy sync-codex [--management-url <url>] [--key <management-key>] [--parallel <1-32>] [--limit <n>] [--dry-run]
-  management APIs: /v0/management/status, /v0/management/metrics, /v0/management/accounts, /v0/management/models, /v0/management/reload, /v0/management/ui
+  management APIs: /v0/management/status, /v0/management/metrics, /v0/management/accounts, /v0/management/models, /v0/management/reload
 `);
 }
 
@@ -2559,44 +1416,6 @@ function showLsHelp(scope = null) {
   aih codex ls
   aih codex ls --help
 `);
-}
-
-function runDoctorCommand() {
-  const result = runDoctorChecks({
-    hostHomeDir: HOST_HOME_DIR,
-    aiHomeDir: AI_HOME_DIR,
-    profilesDir: PROFILES_DIR,
-    cliConfigs: CLI_CONFIGS
-  });
-
-  const { summary } = result;
-  console.log('\n\x1b[36mAI Home Doctor\x1b[0m\n');
-  console.log(`  - total issues: ${summary.total}`);
-  console.log(`  - errors: ${summary.bySeverity.error}`);
-  console.log(`  - warnings: ${summary.bySeverity.warn}`);
-  console.log(`  - permission anomalies: ${summary.byType.permission}`);
-  console.log(`  - link anomalies: ${summary.byType.link}`);
-  console.log(`  - required config anomalies: ${summary.byType['required-config']}`);
-
-  if (result.issues.length > 0) {
-    console.log('\n\x1b[33mDetected anomalies:\x1b[0m');
-    result.issues.forEach((issue, index) => {
-      const level = issue.severity === 'error' ? '\x1b[31mERROR\x1b[0m' : '\x1b[33mWARN\x1b[0m';
-      const details = issue.details && typeof issue.details === 'object'
-        ? Object.entries(issue.details).map(([k, v]) => `${k}=${v}`).join(', ')
-        : '';
-      console.log(`  ${index + 1}. [${level}] ${issue.type}: ${issue.message}${details ? ` (${details})` : ''}`);
-    });
-  } else {
-    console.log('\n\x1b[32mNo anomalies detected.\x1b[0m');
-  }
-
-  logAuditEvent('doctor.run', {
-    ok: result.ok,
-    summary
-  });
-
-  return result.ok ? 0 : 1;
 }
 
 function listProfiles(filterCliName = null) {
@@ -2624,7 +1443,7 @@ function listProfiles(filterCliName = null) {
     console.log(`\x1b[33m▶ ${tool}\x1b[0m`);
     const toolDir = path.join(PROFILES_DIR, tool);
     const ids = fs.readdirSync(toolDir)
-                  .filter(f => /^\d+$/.test(f) && fs.statSync(path.join(toolDir, f)).isDirectory())
+                  .filter(f => f !== '.aih_default' && fs.statSync(path.join(toolDir, f)).isDirectory())
                   .sort((a, b) => parseInt(a) - parseInt(b));
     
     if (ids.length === 0) {
@@ -2692,6 +1511,1470 @@ function listProfiles(filterCliName = null) {
   });
 }
 
+function parseProxySyncArgs(rawArgs) {
+  const out = {
+    managementUrl: 'http://127.0.0.1:8317/v0/management',
+    key: String(process.env.AIH_PROXY_MANAGEMENT_KEY || '').trim(),
+    parallel: 8,
+    limit: 0,
+    dryRun: false,
+    namePrefix: 'aih-codex-'
+  };
+  const tokens = Array.isArray(rawArgs) ? rawArgs.slice() : [];
+  for (let i = 0; i < tokens.length; i += 1) {
+    const arg = String(tokens[i] || '').trim();
+    if (!arg) continue;
+    if (arg === '--dry-run') {
+      out.dryRun = true;
+      continue;
+    }
+    if (arg === '--management-url') {
+      const val = String(tokens[i + 1] || '').trim();
+      if (!val) throw new Error('Invalid --management-url value');
+      out.managementUrl = val;
+      i += 1;
+      continue;
+    }
+    if (arg === '--key') {
+      const val = String(tokens[i + 1] || '').trim();
+      if (!val) throw new Error('Invalid --key value');
+      out.key = val;
+      i += 1;
+      continue;
+    }
+    if (arg === '--parallel' || arg === '-p') {
+      const val = String(tokens[i + 1] || '').trim();
+      if (!/^\d+$/.test(val)) throw new Error('Invalid --parallel value');
+      out.parallel = Math.max(1, Math.min(32, Number(val)));
+      i += 1;
+      continue;
+    }
+    if (arg === '--limit') {
+      const val = String(tokens[i + 1] || '').trim();
+      if (!/^\d+$/.test(val)) throw new Error('Invalid --limit value');
+      out.limit = Number(val);
+      i += 1;
+      continue;
+    }
+    if (arg === '--name-prefix') {
+      const val = String(tokens[i + 1] || '').trim();
+      if (!val) throw new Error('Invalid --name-prefix value');
+      out.namePrefix = val;
+      i += 1;
+      continue;
+    }
+    throw new Error(`Unknown option: ${arg}`);
+  }
+  return out;
+}
+
+function parseProxyServeArgs(rawArgs) {
+  const out = {
+    host: String(process.env.AIH_PROXY_HOST || '127.0.0.1').trim(),
+    port: Number(process.env.AIH_PROXY_PORT || 8317),
+    upstream: String(process.env.AIH_PROXY_UPSTREAM || 'https://api.openai.com').trim(),
+    strategy: String(process.env.AIH_PROXY_STRATEGY || 'round-robin').trim().toLowerCase(),
+    clientKey: String(process.env.AIH_PROXY_CLIENT_KEY || '').trim(),
+    managementKey: String(process.env.AIH_PROXY_MANAGEMENT_KEY || '').trim(),
+    cooldownMs: Number(process.env.AIH_PROXY_COOLDOWN_MS || 60000),
+    upstreamTimeoutMs: Number(process.env.AIH_PROXY_UPSTREAM_TIMEOUT_MS || 45000),
+    maxAttempts: Number(process.env.AIH_PROXY_MAX_ATTEMPTS || 3),
+    modelsCacheTtlMs: Number(process.env.AIH_PROXY_MODELS_CACHE_TTL_MS || 300000),
+    modelsProbeAccounts: Number(process.env.AIH_PROXY_MODELS_PROBE_ACCOUNTS || 2),
+    backend: String(process.env.AIH_PROXY_BACKEND || 'codex-local').trim().toLowerCase(),
+    provider: String(process.env.AIH_PROXY_PROVIDER || 'auto').trim().toLowerCase(),
+    failureThreshold: Number(process.env.AIH_PROXY_FAILURE_THRESHOLD || 2),
+    logRequests: String(process.env.AIH_PROXY_LOG_REQUESTS || '1').trim() !== '0'
+  };
+  const tokens = Array.isArray(rawArgs) ? rawArgs.slice() : [];
+  for (let i = 0; i < tokens.length; i += 1) {
+    const arg = String(tokens[i] || '').trim();
+    if (!arg) continue;
+    if (arg === '--host') {
+      const val = String(tokens[i + 1] || '').trim();
+      if (!val) throw new Error('Invalid --host value');
+      out.host = val;
+      i += 1;
+      continue;
+    }
+    if (arg === '--port') {
+      const val = String(tokens[i + 1] || '').trim();
+      if (!/^\d+$/.test(val)) throw new Error('Invalid --port value');
+      out.port = Number(val);
+      i += 1;
+      continue;
+    }
+    if (arg === '--upstream') {
+      const val = String(tokens[i + 1] || '').trim();
+      if (!val) throw new Error('Invalid --upstream value');
+      out.upstream = val;
+      i += 1;
+      continue;
+    }
+    if (arg === '--strategy') {
+      const val = String(tokens[i + 1] || '').trim().toLowerCase();
+      if (!['round-robin', 'random'].includes(val)) throw new Error('Invalid --strategy value');
+      out.strategy = val;
+      i += 1;
+      continue;
+    }
+    if (arg === '--client-key') {
+      const val = String(tokens[i + 1] || '').trim();
+      if (!val) throw new Error('Invalid --client-key value');
+      out.clientKey = val;
+      i += 1;
+      continue;
+    }
+    if (arg === '--management-key') {
+      const val = String(tokens[i + 1] || '').trim();
+      if (!val) throw new Error('Invalid --management-key value');
+      out.managementKey = val;
+      i += 1;
+      continue;
+    }
+    if (arg === '--cooldown-ms') {
+      const val = String(tokens[i + 1] || '').trim();
+      if (!/^\d+$/.test(val)) throw new Error('Invalid --cooldown-ms value');
+      out.cooldownMs = Number(val);
+      i += 1;
+      continue;
+    }
+    if (arg === '--upstream-timeout-ms') {
+      const val = String(tokens[i + 1] || '').trim();
+      if (!/^\d+$/.test(val)) throw new Error('Invalid --upstream-timeout-ms value');
+      out.upstreamTimeoutMs = Number(val);
+      i += 1;
+      continue;
+    }
+    if (arg === '--max-attempts') {
+      const val = String(tokens[i + 1] || '').trim();
+      if (!/^\d+$/.test(val)) throw new Error('Invalid --max-attempts value');
+      out.maxAttempts = Number(val);
+      i += 1;
+      continue;
+    }
+    if (arg === '--models-cache-ttl-ms') {
+      const val = String(tokens[i + 1] || '').trim();
+      if (!/^\d+$/.test(val)) throw new Error('Invalid --models-cache-ttl-ms value');
+      out.modelsCacheTtlMs = Number(val);
+      i += 1;
+      continue;
+    }
+    if (arg === '--models-probe-accounts') {
+      const val = String(tokens[i + 1] || '').trim();
+      if (!/^\d+$/.test(val)) throw new Error('Invalid --models-probe-accounts value');
+      out.modelsProbeAccounts = Number(val);
+      i += 1;
+      continue;
+    }
+    if (arg === '--backend') {
+      const val = String(tokens[i + 1] || '').trim().toLowerCase();
+      if (!['codex-local', 'openai-upstream'].includes(val)) throw new Error('Invalid --backend value');
+      out.backend = val;
+      i += 1;
+      continue;
+    }
+    if (arg === '--provider') {
+      const val = String(tokens[i + 1] || '').trim().toLowerCase();
+      if (!['codex', 'gemini', 'auto'].includes(val)) throw new Error('Invalid --provider value');
+      out.provider = val;
+      i += 1;
+      continue;
+    }
+    if (arg === '--failure-threshold') {
+      const val = String(tokens[i + 1] || '').trim();
+      if (!/^\d+$/.test(val)) throw new Error('Invalid --failure-threshold value');
+      out.failureThreshold = Number(val);
+      i += 1;
+      continue;
+    }
+    if (arg === '--no-request-log') {
+      out.logRequests = false;
+      continue;
+    }
+    throw new Error(`Unknown option: ${arg}`);
+  }
+  out.upstream = out.upstream.replace(/\/+$/, '');
+  out.upstreamTimeoutMs = Math.max(1000, out.upstreamTimeoutMs || 15000);
+  out.maxAttempts = Math.max(1, Math.min(32, out.maxAttempts || 3));
+  out.modelsCacheTtlMs = Math.max(1000, out.modelsCacheTtlMs || 300000);
+  out.modelsProbeAccounts = Math.max(1, Math.min(8, out.modelsProbeAccounts || 2));
+  if (!['codex-local', 'openai-upstream'].includes(out.backend)) out.backend = 'codex-local';
+  if (!['codex', 'gemini', 'auto'].includes(out.provider)) out.provider = 'auto';
+  out.failureThreshold = Math.max(1, Math.min(10, Number(out.failureThreshold) || 2));
+  return out;
+}
+
+function parseProxyEnvArgs(rawArgs) {
+  const out = {
+    baseUrl: 'http://127.0.0.1:8317/v1',
+    apiKey: 'dummy'
+  };
+  const tokens = Array.isArray(rawArgs) ? rawArgs.slice() : [];
+  for (let i = 0; i < tokens.length; i += 1) {
+    const arg = String(tokens[i] || '').trim();
+    if (!arg) continue;
+    if (arg === '--base-url') {
+      const val = String(tokens[i + 1] || '').trim();
+      if (!val) throw new Error('Invalid --base-url value');
+      out.baseUrl = val;
+      i += 1;
+      continue;
+    }
+    if (arg === '--api-key') {
+      const val = String(tokens[i + 1] || '').trim();
+      if (!val) throw new Error('Invalid --api-key value');
+      out.apiKey = val;
+      i += 1;
+      continue;
+    }
+    throw new Error(`Unknown option: ${arg}`);
+  }
+  return out;
+}
+
+function parseJsonFileSafe(filePath) {
+  try {
+    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  } catch (e) {
+    return null;
+  }
+}
+
+function normalizeManagementBase(url) {
+  const base = String(url || '').trim();
+  if (!base) throw new Error('Empty management URL');
+  return base.replace(/\/+$/, '');
+}
+
+function readProxyPid() {
+  if (!fs.existsSync(AIH_PROXY_PID_FILE)) return 0;
+  try {
+    const val = String(fs.readFileSync(AIH_PROXY_PID_FILE, 'utf8')).trim();
+    return /^\d+$/.test(val) ? Number(val) : 0;
+  } catch (e) {
+    return 0;
+  }
+}
+
+function isProcessAlive(pid) {
+  if (!Number.isFinite(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+function waitForProxyReady(port, timeoutMs = 5000) {
+  const deadline = Date.now() + timeoutMs;
+  return new Promise((resolve) => {
+    const tick = async () => {
+      if (Date.now() > deadline) {
+        resolve(false);
+        return;
+      }
+      try {
+        const res = await fetch(`http://127.0.0.1:${port}/healthz`);
+        if (res.ok) {
+          resolve(true);
+          return;
+        }
+      } catch (e) {}
+      setTimeout(tick, 150);
+    };
+    tick();
+  });
+}
+
+async function startProxyDaemon(rawServeArgs) {
+  ensureDir(AI_HOME_DIR);
+  const parsed = parseProxyServeArgs(rawServeArgs || []);
+  const existingPid = readProxyPid();
+  if (isProcessAlive(existingPid)) {
+    return { alreadyRunning: true, pid: existingPid };
+  }
+
+  const outFd = fs.openSync(AIH_PROXY_LOG_FILE, 'a');
+  const child = spawn(process.execPath, [__filename, 'proxy', 'serve', ...(rawServeArgs || [])], {
+    detached: true,
+    stdio: ['ignore', outFd, outFd],
+    env: process.env
+  });
+  child.unref();
+  fs.writeFileSync(AIH_PROXY_PID_FILE, String(child.pid));
+  const started = await waitForProxyReady(parsed.port, 7000);
+  return { alreadyRunning: false, pid: child.pid, started };
+}
+
+function stopProxyDaemon() {
+  const pid = readProxyPid();
+  if (!pid) return { stopped: false, reason: 'not_running' };
+  if (!isProcessAlive(pid)) {
+    try { fs.unlinkSync(AIH_PROXY_PID_FILE); } catch (e) {}
+    return { stopped: false, reason: 'stale_pid', pid };
+  }
+  try {
+    process.kill(pid, 'SIGTERM');
+  } catch (e) {
+    return { stopped: false, reason: 'kill_failed', pid };
+  }
+  const deadline = Date.now() + 3000;
+  while (Date.now() < deadline) {
+    if (!isProcessAlive(pid)) {
+      try { fs.unlinkSync(AIH_PROXY_PID_FILE); } catch (e) {}
+      return { stopped: true, pid };
+    }
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 80);
+  }
+  try {
+    process.kill(pid, 'SIGKILL');
+  } catch (e) {}
+  try { fs.unlinkSync(AIH_PROXY_PID_FILE); } catch (e) {}
+  return { stopped: true, pid, forced: true };
+}
+
+function getProxyDaemonStatus() {
+  const pid = readProxyPid();
+  const running = isProcessAlive(pid);
+  return {
+    running,
+    pid: running ? pid : 0,
+    pidFile: AIH_PROXY_PID_FILE,
+    logFile: AIH_PROXY_LOG_FILE
+  };
+}
+
+function getProxyAutostartStatus() {
+  if (process.platform !== 'darwin') {
+    return { supported: false, installed: false, loaded: false };
+  }
+  const installed = fs.existsSync(AIH_PROXY_LAUNCHD_PLIST);
+  let loaded = false;
+  try {
+    const out = spawnSync('launchctl', ['list', AIH_PROXY_LAUNCHD_LABEL], { encoding: 'utf8' });
+    loaded = out.status === 0;
+  } catch (e) {
+    loaded = false;
+  }
+  return { supported: true, installed, loaded, plist: AIH_PROXY_LAUNCHD_PLIST, label: AIH_PROXY_LAUNCHD_LABEL };
+}
+
+function installProxyAutostart() {
+  if (process.platform !== 'darwin') {
+    throw new Error('autostart is currently implemented for macOS launchd only');
+  }
+  ensureDir(path.dirname(AIH_PROXY_LAUNCHD_PLIST));
+  const plist = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>${AIH_PROXY_LAUNCHD_LABEL}</string>
+    <key>ProgramArguments</key>
+    <array>
+      <string>${process.execPath}</string>
+      <string>${__filename}</string>
+      <string>proxy</string>
+      <string>serve</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>${AIH_PROXY_LOG_FILE}</string>
+    <key>StandardErrorPath</key>
+    <string>${AIH_PROXY_LOG_FILE}</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+      <key>PATH</key>
+      <string>${process.env.PATH || ''}</string>
+    </dict>
+  </dict>
+</plist>
+`;
+  fs.writeFileSync(AIH_PROXY_LAUNCHD_PLIST, plist);
+  spawnSync('launchctl', ['unload', AIH_PROXY_LAUNCHD_PLIST], { stdio: 'ignore' });
+  const load = spawnSync('launchctl', ['load', AIH_PROXY_LAUNCHD_PLIST], { encoding: 'utf8' });
+  if (load.status !== 0) {
+    throw new Error(String(load.stderr || load.stdout || 'launchctl load failed').trim());
+  }
+}
+
+function uninstallProxyAutostart() {
+  if (process.platform !== 'darwin') {
+    throw new Error('autostart is currently implemented for macOS launchd only');
+  }
+  if (fs.existsSync(AIH_PROXY_LAUNCHD_PLIST)) {
+    spawnSync('launchctl', ['unload', AIH_PROXY_LAUNCHD_PLIST], { stdio: 'ignore' });
+    fs.unlinkSync(AIH_PROXY_LAUNCHD_PLIST);
+  }
+}
+
+function buildProxyCodexUploadPayload(authJson) {
+  if (!authJson || typeof authJson !== 'object') return null;
+  const tokens = authJson.tokens && typeof authJson.tokens === 'object' ? authJson.tokens : null;
+  if (!tokens) return null;
+  const refreshToken = String(tokens.refresh_token || '').trim();
+  if (!refreshToken.startsWith('rt_')) return null;
+  return {
+    auth_mode: 'chatgpt',
+    OPENAI_API_KEY: null,
+    tokens: {
+      id_token: String(tokens.id_token || ''),
+      access_token: String(tokens.access_token || ''),
+      refresh_token: refreshToken,
+      account_id: String(tokens.account_id || '')
+    },
+    last_refresh: String(authJson.last_refresh || new Date().toISOString())
+  };
+}
+
+function parseAuthorizationBearer(headerValue) {
+  const value = String(headerValue || '').trim();
+  if (!value) return '';
+  const m = value.match(/^Bearer\s+(.+)$/i);
+  return m ? String(m[1] || '').trim() : '';
+}
+
+function decodeJwtPayloadUnsafe(jwt) {
+  const text = String(jwt || '').trim();
+  const parts = text.split('.');
+  if (parts.length < 2) return null;
+  try {
+    return JSON.parse(Buffer.from(parts[1], 'base64').toString('utf8'));
+  } catch (e) {
+    return null;
+  }
+}
+
+function loadCodexProxyAccounts() {
+  const ids = getToolAccountIds('codex');
+  const out = [];
+  ids.forEach((id) => {
+    const authPath = path.join(getToolConfigDir('codex', id), 'auth.json');
+    const authJson = parseJsonFileSafe(authPath);
+    const payload = buildProxyCodexUploadPayload(authJson);
+    if (!payload) return;
+    const jwtPayload = decodeJwtPayloadUnsafe(payload.tokens.id_token);
+    const email = jwtPayload && typeof jwtPayload.email === 'string' ? jwtPayload.email : '';
+    out.push({
+      id: String(id),
+      email,
+      accountId: String(payload.tokens.account_id || ''),
+      accessToken: String(payload.tokens.access_token || ''),
+      refreshToken: String(payload.tokens.refresh_token || ''),
+      lastRefresh: String(payload.last_refresh || ''),
+      cooldownUntil: 0
+    });
+  });
+  return out;
+}
+
+function loadGeminiProxyAccounts() {
+  const ids = getToolAccountIds('gemini');
+  const out = [];
+  ids.forEach((id) => {
+    const pDir = getProfileDir('gemini', id);
+    const { configured, accountName } = checkStatus('gemini', pDir);
+    if (!configured) return;
+    out.push({
+      id: String(id),
+      email: accountName && accountName !== 'Unknown' ? accountName : '',
+      accountId: String(id),
+      provider: 'gemini',
+      cooldownUntil: 0,
+      consecutiveFailures: 0,
+      successCount: 0,
+      failCount: 0,
+      lastError: ''
+    });
+  });
+  return out;
+}
+
+function chooseProxyAccount(accounts, state, cursorKey = 'cursor') {
+  if (!Array.isArray(accounts) || accounts.length === 0) return null;
+  const now = Date.now();
+  const available = accounts.filter((a) => now >= (a.cooldownUntil || 0));
+  if (available.length === 0) return null;
+  if (state.strategy === 'random') {
+    return available[Math.floor(Math.random() * available.length)];
+  }
+  // round-robin over full list while skipping cooldown/empty token
+  const n = accounts.length;
+  const cursor = Number(state[cursorKey] || 0);
+  for (let i = 0; i < n; i += 1) {
+    const idx = (cursor + i) % n;
+    const item = accounts[idx];
+    if (now < (item.cooldownUntil || 0)) continue;
+    state[cursorKey] = (idx + 1) % n;
+    return item;
+  }
+  return null;
+}
+
+function normalizeModelId(modelRaw) {
+  return String(modelRaw || '').trim().toLowerCase();
+}
+
+function inferProviderFromModel(modelRaw) {
+  const m = normalizeModelId(modelRaw);
+  if (!m) return 'codex';
+  if (m.startsWith('gemini')) return 'gemini';
+  if (m.startsWith('gpt') || m.startsWith('o1') || m.startsWith('o3') || m.startsWith('o4')) return 'codex';
+  return 'codex';
+}
+
+function resolveRequestProvider(options, requestJson) {
+  const requested = normalizeModelId(requestJson && requestJson.model);
+  if (options.provider === 'codex' || options.provider === 'gemini') return options.provider;
+  return inferProviderFromModel(requested);
+}
+
+function markProxyAccountSuccess(account) {
+  if (!account) return;
+  account.consecutiveFailures = 0;
+  account.successCount = Number(account.successCount || 0) + 1;
+  account.lastError = '';
+}
+
+function markProxyAccountFailure(account, reason, cooldownMs, failureThreshold = 2) {
+  if (!account) return;
+  account.failCount = Number(account.failCount || 0) + 1;
+  account.consecutiveFailures = Number(account.consecutiveFailures || 0) + 1;
+  account.lastError = String(reason || '');
+  if (account.consecutiveFailures >= failureThreshold) {
+    account.cooldownUntil = Date.now() + cooldownMs;
+  }
+}
+
+function readRequestBody(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    req.on('data', (chunk) => chunks.push(chunk));
+    req.on('end', () => resolve(Buffer.concat(chunks)));
+    req.on('error', reject);
+  });
+}
+
+function writeJson(res, statusCode, payload) {
+  const body = JSON.stringify(payload, null, 2);
+  res.statusCode = statusCode;
+  res.setHeader('content-type', 'application/json; charset=utf-8');
+  res.setHeader('content-length', Buffer.byteLength(body));
+  res.end(body);
+}
+
+function withTimeout(promise, ms) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms))
+  ]);
+}
+
+async function fetchWithTimeout(url, init, timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...(init || {}), signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function fetchModelsForAccount(options, account, timeoutMs = 8000) {
+  const url = `${options.upstream}/v1/models`;
+  const headers = {
+    authorization: `Bearer ${account.accessToken}`
+  };
+  const res = await fetchWithTimeout(url, { method: 'GET', headers }, timeoutMs);
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`HTTP ${res.status} ${text.slice(0, 160)}`.trim());
+  }
+  const json = await res.json();
+  const arr = Array.isArray(json && json.data) ? json.data : [];
+  return arr
+    .map((x) => String((x && x.id) || '').trim())
+    .filter(Boolean);
+}
+
+function buildOpenAIModelsList(models) {
+  const now = Math.floor(Date.now() / 1000);
+  const safe = Array.isArray(models) ? models : [];
+  return {
+    object: 'list',
+    data: safe.map((id) => ({
+      id,
+      object: 'model',
+      created: now,
+      owned_by: 'aih-proxy'
+    }))
+  };
+}
+
+const FALLBACK_MODELS = [
+  'gpt-4o-mini',
+  'gpt-4.1-mini',
+  'gpt-4.1'
+];
+
+function extractTextFromContent(content) {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => {
+        if (!part) return '';
+        if (typeof part === 'string') return part;
+        if (part.type === 'text') return String(part.text || '');
+        return '';
+      })
+      .filter(Boolean)
+      .join('\n');
+  }
+  if (content && typeof content === 'object' && typeof content.text === 'string') {
+    return content.text;
+  }
+  return '';
+}
+
+function buildPromptFromChatRequest(body) {
+  const messages = Array.isArray(body && body.messages) ? body.messages : [];
+  if (messages.length === 0) return 'Please respond helpfully.';
+  return messages.map((m) => {
+    const role = String((m && m.role) || 'user');
+    const text = extractTextFromContent(m && m.content);
+    return `${role.toUpperCase()}:\n${text}`;
+  }).join('\n\n');
+}
+
+function buildPromptFromResponsesRequest(body) {
+  const input = body && body.input;
+  if (typeof input === 'string' && input.trim()) return input.trim();
+  if (Array.isArray(input)) {
+    return input.map((item) => {
+      if (typeof item === 'string') return item;
+      if (item && typeof item === 'object') {
+        return extractTextFromContent(item.content);
+      }
+      return '';
+    }).filter(Boolean).join('\n\n');
+  }
+  return 'Please respond helpfully.';
+}
+
+function spawnWithTimeout(command, args, opts, timeoutMs) {
+  return new Promise((resolve) => {
+    const child = spawn(command, args, opts);
+    let stdout = '';
+    let stderr = '';
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      try { child.kill('SIGTERM'); } catch (e) {}
+      setTimeout(() => {
+        try { child.kill('SIGKILL'); } catch (e) {}
+      }, 500);
+    }, timeoutMs);
+    child.stdout.on('data', (chunk) => { stdout += String(chunk || ''); });
+    child.stderr.on('data', (chunk) => { stderr += String(chunk || ''); });
+    child.on('error', (error) => {
+      clearTimeout(timer);
+      resolve({ code: 1, stdout, stderr: `${stderr}\n${String((error && error.message) || error)}`, timedOut });
+    });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      resolve({ code: Number(code) || 0, stdout, stderr, timedOut });
+    });
+  });
+}
+
+async function runCodexLocalCompletion(account, prompt, timeoutMs) {
+  const sandboxDir = getProfileDir('codex', account.id);
+  const outFile = path.join(os.tmpdir(), `aih-codex-out-${Date.now()}-${Math.random().toString(16).slice(2)}.txt`);
+  const args = [
+    'exec',
+    '--skip-git-repo-check',
+    '--sandbox', 'danger-full-access',
+    '--output-last-message', outFile,
+    prompt
+  ];
+  const env = {
+    ...process.env,
+    HOME: sandboxDir,
+    USERPROFILE: sandboxDir,
+    CODEX_HOME: path.join(sandboxDir, '.codex')
+  };
+  const run = await spawnWithTimeout('codex', args, { env, cwd: process.cwd() }, timeoutMs);
+  let text = '';
+  try {
+    if (fs.existsSync(outFile)) text = String(fs.readFileSync(outFile, 'utf8') || '').trim();
+  } catch (e) {}
+  try { if (fs.existsSync(outFile)) fs.unlinkSync(outFile); } catch (e) {}
+  if (run.timedOut) {
+    throw new Error('codex_exec_timeout');
+  }
+  if (run.code !== 0 && !text) {
+    const msg = String(run.stderr || run.stdout || '').trim();
+    throw new Error(msg || `codex_exec_exit_${run.code}`);
+  }
+  if (!text) {
+    throw new Error('codex_empty_response');
+  }
+  return text;
+}
+
+function parseGeminiJsonResponse(stdoutText) {
+  const text = String(stdoutText || '');
+  const first = text.indexOf('{');
+  const last = text.lastIndexOf('}');
+  if (first < 0 || last <= first) return null;
+  const candidate = text.slice(first, last + 1).trim();
+  try {
+    const parsed = JSON.parse(candidate);
+    if (parsed && typeof parsed.response === 'string') return parsed.response;
+  } catch (e) {}
+  return null;
+}
+
+function cleanGeminiTextOutput(stdoutText) {
+  const lines = String(stdoutText || '')
+    .split(/\r?\n/)
+    .map((x) => x.trim())
+    .filter(Boolean)
+    .filter((x) => !x.includes('YOLO mode is enabled'))
+    .filter((x) => !x.includes('Loaded cached credentials.'));
+  return lines.join('\n').trim();
+}
+
+async function runGeminiLocalCompletion(account, prompt, timeoutMs) {
+  const sandboxDir = getProfileDir('gemini', account.id);
+  const args = [
+    '-p',
+    prompt,
+    '--output-format',
+    'json',
+    '--approval-mode',
+    'yolo'
+  ];
+  const env = {
+    ...process.env,
+    HOME: sandboxDir,
+    USERPROFILE: sandboxDir,
+    GEMINI_CLI_SYSTEM_SETTINGS_PATH: path.join(sandboxDir, '.gemini', 'settings.json')
+  };
+  const run = await spawnWithTimeout('gemini', args, { env, cwd: process.cwd() }, timeoutMs);
+  if (run.timedOut) throw new Error('gemini_exec_timeout');
+  let text = parseGeminiJsonResponse(run.stdout);
+  if (!text) text = cleanGeminiTextOutput(run.stdout);
+  if (!text && run.code !== 0) {
+    const msg = String(run.stderr || run.stdout || '').trim();
+    throw new Error(msg || `gemini_exec_exit_${run.code}`);
+  }
+  if (!text) throw new Error('gemini_empty_response');
+  return text;
+}
+
+function initProxyMetrics() {
+  return {
+    startedAt: Date.now(),
+    totalRequests: 0,
+    totalSuccess: 0,
+    totalFailures: 0,
+    totalTimeouts: 0,
+    routeCounts: {},
+    providerCounts: { codex: 0, gemini: 0 },
+    providerSuccess: { codex: 0, gemini: 0 },
+    providerFailures: { codex: 0, gemini: 0 },
+    lastErrors: []
+  };
+}
+
+function pushMetricError(metrics, route, provider, message) {
+  const item = {
+    at: new Date().toISOString(),
+    route,
+    provider,
+    error: String(message || '').slice(0, 500)
+  };
+  metrics.lastErrors.push(item);
+  if (metrics.lastErrors.length > 20) {
+    metrics.lastErrors = metrics.lastErrors.slice(-20);
+  }
+}
+
+function appendProxyRequestLog(entry) {
+  const line = JSON.stringify(entry);
+  try {
+    fs.appendFileSync(AIH_PROXY_LOG_FILE, `${line}\n`);
+  } catch (e) {}
+}
+
+function buildChatCompletionPayload(model, text) {
+  return {
+    id: `chatcmpl-${Date.now()}`,
+    object: 'chat.completion',
+    created: Math.floor(Date.now() / 1000),
+    model: model || 'gpt-4o-mini',
+    choices: [
+      {
+        index: 0,
+        message: {
+          role: 'assistant',
+          content: text
+        },
+        finish_reason: 'stop'
+      }
+    ],
+    usage: {
+      prompt_tokens: 0,
+      completion_tokens: 0,
+      total_tokens: 0
+    }
+  };
+}
+
+function writeSseChatCompletion(res, model, text) {
+  res.statusCode = 200;
+  res.setHeader('content-type', 'text/event-stream; charset=utf-8');
+  res.setHeader('cache-control', 'no-cache');
+  res.setHeader('connection', 'keep-alive');
+  const id = `chatcmpl-${Date.now()}`;
+  const created = Math.floor(Date.now() / 1000);
+  const chunks = [
+    {
+      id,
+      object: 'chat.completion.chunk',
+      created,
+      model: model || 'gpt-4o-mini',
+      choices: [{ index: 0, delta: { role: 'assistant' }, finish_reason: null }]
+    },
+    {
+      id,
+      object: 'chat.completion.chunk',
+      created,
+      model: model || 'gpt-4o-mini',
+      choices: [{ index: 0, delta: { content: text }, finish_reason: null }]
+    },
+    {
+      id,
+      object: 'chat.completion.chunk',
+      created,
+      model: model || 'gpt-4o-mini',
+      choices: [{ index: 0, delta: {}, finish_reason: 'stop' }]
+    }
+  ];
+  chunks.forEach((c) => {
+    res.write(`data: ${JSON.stringify(c)}\n\n`);
+  });
+  res.write('data: [DONE]\n\n');
+  res.end();
+}
+
+async function startLocalProxyServer(options) {
+  const codexAccounts = loadCodexProxyAccounts().map((a) => ({ ...a, provider: 'codex', consecutiveFailures: 0, successCount: 0, failCount: 0, lastError: '' }));
+  const geminiAccounts = loadGeminiProxyAccounts();
+  const state = {
+    strategy: options.strategy,
+    cursors: { codex: 0, gemini: 0 },
+    accounts: {
+      codex: codexAccounts,
+      gemini: geminiAccounts
+    },
+    startedAt: Date.now(),
+    metrics: initProxyMetrics(),
+    modelsCache: {
+      updatedAt: 0,
+      ids: [],
+      byAccount: {},
+      sourceCount: 0
+    }
+  };
+  const requiredClientKey = String(options.clientKey || '').trim();
+  const requiredManagementKey = String(options.managementKey || '').trim();
+  const cooldownMs = Math.max(1000, Number(options.cooldownMs) || 60000);
+
+  const server = http.createServer(async (req, res) => {
+    const method = String(req.method || 'GET').toUpperCase();
+    const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+    const pathname = url.pathname || '/';
+
+    if (pathname === '/healthz') {
+      return writeJson(res, 200, { ok: true, service: 'aih-proxy' });
+    }
+
+    if (pathname.startsWith('/v0/management')) {
+      if (requiredManagementKey) {
+        const incoming = parseAuthorizationBearer(req.headers.authorization);
+        if (incoming !== requiredManagementKey) {
+          return writeJson(res, 401, { ok: false, error: 'unauthorized_management' });
+        }
+      }
+      if (method === 'GET' && pathname === '/v0/management/status') {
+        const now = Date.now();
+        const codex = state.accounts.codex || [];
+        const gemini = state.accounts.gemini || [];
+        const activeCodex = codex.filter((a) => now >= (a.cooldownUntil || 0)).length;
+        const activeGemini = gemini.filter((a) => now >= (a.cooldownUntil || 0)).length;
+        const total = codex.length + gemini.length;
+        const active = activeCodex + activeGemini;
+        const cooldown = total - active;
+        const requests = Math.max(1, state.metrics.totalRequests);
+        return writeJson(res, 200, {
+          ok: true,
+          backend: options.backend,
+          providerMode: options.provider,
+          strategy: state.strategy,
+          totalAccounts: total,
+          activeAccounts: active,
+          cooldownAccounts: cooldown,
+          providers: {
+            codex: { total: codex.length, active: activeCodex },
+            gemini: { total: gemini.length, active: activeGemini }
+          },
+          modelsCached: Array.isArray(state.modelsCache.ids) ? state.modelsCache.ids.length : 0,
+          modelsUpdatedAt: state.modelsCache.updatedAt || 0,
+          successRate: Number((state.metrics.totalSuccess / requests).toFixed(4)),
+          timeoutRate: Number((state.metrics.totalTimeouts / requests).toFixed(4)),
+          totalRequests: state.metrics.totalRequests,
+          uptimeSec: Math.floor((Date.now() - state.startedAt) / 1000)
+        });
+      }
+      if (method === 'GET' && pathname === '/v0/management/metrics') {
+        const requests = Math.max(1, state.metrics.totalRequests);
+        return writeJson(res, 200, {
+          ok: true,
+          totalRequests: state.metrics.totalRequests,
+          totalSuccess: state.metrics.totalSuccess,
+          totalFailures: state.metrics.totalFailures,
+          totalTimeouts: state.metrics.totalTimeouts,
+          successRate: Number((state.metrics.totalSuccess / requests).toFixed(4)),
+          timeoutRate: Number((state.metrics.totalTimeouts / requests).toFixed(4)),
+          routeCounts: state.metrics.routeCounts,
+          providerCounts: state.metrics.providerCounts,
+          providerSuccess: state.metrics.providerSuccess,
+          providerFailures: state.metrics.providerFailures,
+          lastErrors: state.metrics.lastErrors
+        });
+      }
+      if (method === 'GET' && pathname === '/v0/management/models') {
+        const forceRefresh = ['1', 'true', 'yes'].includes(String(url.searchParams.get('refresh') || '').toLowerCase());
+        const accountLimitRaw = String(url.searchParams.get('accounts') || '').trim();
+        const accountLimit = /^\d+$/.test(accountLimitRaw) ? Math.max(1, Number(accountLimitRaw)) : 3;
+        const cacheTtlRaw = String(url.searchParams.get('ttl_ms') || '').trim();
+        const cacheTtl = /^\d+$/.test(cacheTtlRaw) ? Math.max(1000, Number(cacheTtlRaw)) : 5 * 60 * 1000;
+        const now = Date.now();
+        if (!forceRefresh && state.modelsCache.updatedAt > 0 && now - state.modelsCache.updatedAt < cacheTtl) {
+          return writeJson(res, 200, {
+            ok: true,
+            cached: true,
+            updatedAt: state.modelsCache.updatedAt,
+            sources: state.modelsCache.sourceCount,
+            models: state.modelsCache.ids
+          });
+        }
+
+        const candidates = (state.accounts.codex || []).filter((a) => !!a.accessToken).slice(0, accountLimit);
+        const modelSet = new Set();
+        const byAccount = {};
+        let sourceCount = 0;
+        let firstError = '';
+        for (const acc of candidates) {
+          try {
+            const models = await fetchModelsForAccount(options, acc, 8000);
+            byAccount[acc.id] = models;
+            models.forEach((m) => modelSet.add(m));
+            sourceCount += 1;
+          } catch (e) {
+            byAccount[acc.id] = [];
+            if (!firstError) firstError = String((e && e.message) || e);
+          }
+        }
+
+        const ids = Array.from(modelSet).sort();
+        state.modelsCache = {
+          updatedAt: now,
+          ids,
+          byAccount,
+          sourceCount
+        };
+        return writeJson(res, 200, {
+          ok: true,
+          cached: false,
+          updatedAt: state.modelsCache.updatedAt,
+          scannedAccounts: candidates.length,
+          sources: sourceCount,
+          models: ids,
+          firstError
+        });
+      }
+      if (method === 'GET' && pathname === '/v0/management/accounts') {
+        const allAccounts = [...(state.accounts.codex || []), ...(state.accounts.gemini || [])];
+        return writeJson(res, 200, {
+          ok: true,
+          accounts: allAccounts.map((a) => ({
+            id: a.id,
+            provider: a.provider || 'codex',
+            email: a.email,
+            accountId: a.accountId,
+            hasAccessToken: !!a.accessToken,
+            hasRefreshToken: !!a.refreshToken,
+            cooldownUntil: a.cooldownUntil || 0,
+            lastRefresh: a.lastRefresh,
+            consecutiveFailures: a.consecutiveFailures || 0,
+            successCount: a.successCount || 0,
+            failCount: a.failCount || 0,
+            lastError: a.lastError || ''
+          }))
+        });
+      }
+      if (method === 'POST' && pathname === '/v0/management/reload') {
+        state.accounts = {
+          codex: loadCodexProxyAccounts().map((a) => ({ ...a, provider: 'codex', consecutiveFailures: 0, successCount: 0, failCount: 0, lastError: '' })),
+          gemini: loadGeminiProxyAccounts()
+        };
+        state.cursors = { codex: 0, gemini: 0 };
+        state.modelsCache = {
+          updatedAt: 0,
+          ids: [],
+          byAccount: {},
+          sourceCount: 0
+        };
+        const total = state.accounts.codex.length + state.accounts.gemini.length;
+        return writeJson(res, 200, { ok: true, reloaded: total, providers: { codex: state.accounts.codex.length, gemini: state.accounts.gemini.length } });
+      }
+      if (method === 'POST' && pathname === '/v0/management/cooldown/clear') {
+        [...(state.accounts.codex || []), ...(state.accounts.gemini || [])].forEach((a) => { a.cooldownUntil = 0; a.consecutiveFailures = 0; });
+        return writeJson(res, 200, { ok: true });
+      }
+      return writeJson(res, 404, { ok: false, error: 'management_not_found' });
+    }
+
+    if (!pathname.startsWith('/v1/')) {
+      return writeJson(res, 404, { ok: false, error: 'not_found' });
+    }
+    if (requiredClientKey) {
+      const incoming = parseAuthorizationBearer(req.headers.authorization);
+      if (incoming !== requiredClientKey) {
+        return writeJson(res, 401, { ok: false, error: 'unauthorized_client' });
+      }
+    }
+
+    const bodyBuffer = await readRequestBody(req).catch(() => null);
+    if (bodyBuffer === null) {
+      return writeJson(res, 400, { ok: false, error: 'invalid_request_body' });
+    }
+    let requestJson = null;
+    try {
+      requestJson = bodyBuffer.length > 0 ? JSON.parse(bodyBuffer.toString('utf8')) : {};
+    } catch (e) {
+      requestJson = {};
+    }
+    const requestStartedAt = Date.now();
+    const routeKey = `${method} ${pathname}`;
+    state.metrics.totalRequests += 1;
+    state.metrics.routeCounts[routeKey] = Number(state.metrics.routeCounts[routeKey] || 0) + 1;
+
+    if (options.backend === 'codex-local') {
+      if (method === 'GET' && pathname === '/v1/models') {
+        const modelList = [...new Set([
+          ...FALLBACK_MODELS,
+          'gemini-2.5-pro',
+          'gemini-2.5-flash',
+          'gemini-2.0-flash'
+        ])];
+        const payload = buildOpenAIModelsList(modelList);
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/json; charset=utf-8');
+        res.end(JSON.stringify(payload));
+        state.metrics.totalSuccess += 1;
+        return;
+      }
+      if (method === 'POST' && pathname === '/v1/chat/completions') {
+        const provider = resolveRequestProvider(options, requestJson || {});
+        const pool = provider === 'gemini' ? state.accounts.gemini : state.accounts.codex;
+        const cursorKey = provider === 'gemini' ? 'gemini' : 'codex';
+        const account = chooseProxyAccount(pool, state.cursors, cursorKey);
+        if (!account) {
+          state.metrics.totalFailures += 1;
+          state.metrics.providerFailures[provider] = Number(state.metrics.providerFailures[provider] || 0) + 1;
+          pushMetricError(state.metrics, routeKey, provider, 'no_available_account');
+          return writeJson(res, 503, { ok: false, error: 'no_available_account' });
+        }
+        state.metrics.providerCounts[provider] = Number(state.metrics.providerCounts[provider] || 0) + 1;
+        const prompt = buildPromptFromChatRequest(requestJson || {});
+        try {
+          const text = provider === 'gemini'
+            ? await runGeminiLocalCompletion(account, prompt, options.upstreamTimeoutMs)
+            : await runCodexLocalCompletion(account, prompt, options.upstreamTimeoutMs);
+          const isStream = !!(requestJson && requestJson.stream);
+          const model = String((requestJson && requestJson.model) || 'gpt-4o-mini');
+          if (isStream) {
+            writeSseChatCompletion(res, model, text);
+            state.metrics.totalSuccess += 1;
+            state.metrics.providerSuccess[provider] = Number(state.metrics.providerSuccess[provider] || 0) + 1;
+            markProxyAccountSuccess(account);
+            if (options.logRequests) {
+              appendProxyRequestLog({
+                at: new Date().toISOString(),
+                route: routeKey,
+                provider,
+                accountId: account.id,
+                status: 200,
+                stream: true,
+                durationMs: Date.now() - requestStartedAt
+              });
+            }
+            return;
+          }
+          res.statusCode = 200;
+          res.setHeader('content-type', 'application/json; charset=utf-8');
+          res.end(JSON.stringify(buildChatCompletionPayload(model, text)));
+          state.metrics.totalSuccess += 1;
+          state.metrics.providerSuccess[provider] = Number(state.metrics.providerSuccess[provider] || 0) + 1;
+          markProxyAccountSuccess(account);
+          if (options.logRequests) {
+            appendProxyRequestLog({
+              at: new Date().toISOString(),
+              route: routeKey,
+              provider,
+              accountId: account.id,
+              status: 200,
+              stream: false,
+              durationMs: Date.now() - requestStartedAt
+            });
+          }
+          return;
+        } catch (e) {
+          const detail = String((e && e.message) || e);
+          if (detail.includes('timeout')) state.metrics.totalTimeouts += 1;
+          state.metrics.totalFailures += 1;
+          state.metrics.providerFailures[provider] = Number(state.metrics.providerFailures[provider] || 0) + 1;
+          markProxyAccountFailure(account, detail, cooldownMs, options.failureThreshold);
+          pushMetricError(state.metrics, routeKey, provider, detail);
+          if (options.logRequests) {
+            appendProxyRequestLog({
+              at: new Date().toISOString(),
+              route: routeKey,
+              provider,
+              accountId: account.id,
+              status: 502,
+              error: detail,
+              durationMs: Date.now() - requestStartedAt
+            });
+          }
+          return writeJson(res, 502, { ok: false, error: 'local_backend_failed', detail });
+        }
+      }
+      if (method === 'POST' && pathname === '/v1/responses') {
+        const provider = resolveRequestProvider(options, requestJson || {});
+        const pool = provider === 'gemini' ? state.accounts.gemini : state.accounts.codex;
+        const cursorKey = provider === 'gemini' ? 'gemini' : 'codex';
+        const account = chooseProxyAccount(pool, state.cursors, cursorKey);
+        if (!account) {
+          state.metrics.totalFailures += 1;
+          state.metrics.providerFailures[provider] = Number(state.metrics.providerFailures[provider] || 0) + 1;
+          pushMetricError(state.metrics, routeKey, provider, 'no_available_account');
+          return writeJson(res, 503, { ok: false, error: 'no_available_account' });
+        }
+        state.metrics.providerCounts[provider] = Number(state.metrics.providerCounts[provider] || 0) + 1;
+        const prompt = buildPromptFromResponsesRequest(requestJson || {});
+        try {
+          const text = provider === 'gemini'
+            ? await runGeminiLocalCompletion(account, prompt, options.upstreamTimeoutMs)
+            : await runCodexLocalCompletion(account, prompt, options.upstreamTimeoutMs);
+          const model = String((requestJson && requestJson.model) || 'gpt-4o-mini');
+          const payload = {
+            id: `resp_${Date.now()}`,
+            object: 'response',
+            created_at: Math.floor(Date.now() / 1000),
+            status: 'completed',
+            model,
+            output: [{
+              type: 'message',
+              role: 'assistant',
+              content: [{ type: 'output_text', text }]
+            }]
+          };
+          state.metrics.totalSuccess += 1;
+          state.metrics.providerSuccess[provider] = Number(state.metrics.providerSuccess[provider] || 0) + 1;
+          markProxyAccountSuccess(account);
+          if (options.logRequests) {
+            appendProxyRequestLog({
+              at: new Date().toISOString(),
+              route: routeKey,
+              provider,
+              accountId: account.id,
+              status: 200,
+              durationMs: Date.now() - requestStartedAt
+            });
+          }
+          return writeJson(res, 200, payload);
+        } catch (e) {
+          const detail = String((e && e.message) || e);
+          if (detail.includes('timeout')) state.metrics.totalTimeouts += 1;
+          state.metrics.totalFailures += 1;
+          state.metrics.providerFailures[provider] = Number(state.metrics.providerFailures[provider] || 0) + 1;
+          markProxyAccountFailure(account, detail, cooldownMs, options.failureThreshold);
+          pushMetricError(state.metrics, routeKey, provider, detail);
+          if (options.logRequests) {
+            appendProxyRequestLog({
+              at: new Date().toISOString(),
+              route: routeKey,
+              provider,
+              accountId: account.id,
+              status: 502,
+              error: detail,
+              durationMs: Date.now() - requestStartedAt
+            });
+          }
+          return writeJson(res, 502, { ok: false, error: 'local_backend_failed', detail });
+        }
+      }
+      state.metrics.totalFailures += 1;
+      pushMetricError(state.metrics, routeKey, 'n/a', 'unsupported_in_codex_local_backend');
+      return writeJson(res, 404, { ok: false, error: 'unsupported_in_codex_local_backend' });
+    }
+
+    if (method === 'GET' && pathname === '/v1/models') {
+      const now = Date.now();
+      const ttl = Math.max(1000, Number(options.modelsCacheTtlMs) || 300000);
+      if (state.modelsCache.updatedAt > 0 && now - state.modelsCache.updatedAt < ttl && Array.isArray(state.modelsCache.ids)) {
+        const payload = buildOpenAIModelsList(state.modelsCache.ids.length > 0 ? state.modelsCache.ids : FALLBACK_MODELS);
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/json; charset=utf-8');
+        res.end(JSON.stringify(payload));
+        return;
+      }
+      const candidates = (state.accounts.codex || [])
+        .filter((a) => !!a.accessToken && Date.now() >= (a.cooldownUntil || 0))
+        .slice(0, Math.max(1, Number(options.modelsProbeAccounts) || 2));
+      const modelSet = new Set();
+      let firstError = '';
+      const probeTimeout = Math.min(4000, options.upstreamTimeoutMs);
+      const settled = await Promise.allSettled(
+        candidates.map((acc) => fetchModelsForAccount(options, acc, probeTimeout))
+      );
+      settled.forEach((result) => {
+        if (result.status === 'fulfilled') {
+          result.value.forEach((m) => modelSet.add(m));
+          return;
+        }
+        if (!firstError) firstError = String((result.reason && result.reason.message) || result.reason);
+      });
+      const ids = Array.from(modelSet).sort();
+      state.modelsCache = {
+        updatedAt: now,
+        ids,
+        byAccount: {},
+        sourceCount: ids.length > 0 ? candidates.length : 0
+      };
+      const payload = buildOpenAIModelsList(ids.length > 0 ? ids : FALLBACK_MODELS);
+      res.statusCode = 200;
+      res.setHeader('content-type', 'application/json; charset=utf-8');
+      if (ids.length === 0 && firstError) {
+        res.setHeader('x-aih-models-fallback', '1');
+      }
+      res.end(JSON.stringify(payload));
+      return;
+    }
+
+    let lastError = '';
+    const pool = state.accounts.codex || [];
+    const maxAttempts = Math.min(
+      Math.max(1, Number(options.maxAttempts) || 3),
+      Math.max(1, pool.length)
+    );
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      const account = chooseProxyAccount(pool, state.cursors, 'codex');
+      if (!account) {
+        state.metrics.totalFailures += 1;
+        pushMetricError(state.metrics, routeKey, 'codex', 'no_available_account');
+        return writeJson(res, 503, { ok: false, error: 'no_available_account' });
+      }
+      const upstreamUrl = `${options.upstream}${req.url || ''}`;
+      try {
+        const headers = {};
+        Object.entries(req.headers || {}).forEach(([k, v]) => {
+          const key = String(k || '').toLowerCase();
+          if (key === 'host' || key === 'authorization' || key === 'content-length') return;
+          headers[key] = v;
+        });
+        headers.authorization = `Bearer ${account.accessToken}`;
+        headers['x-aih-account-id'] = account.id;
+        headers['x-aih-account-email'] = account.email || '';
+
+        const upstreamRes = await fetchWithTimeout(upstreamUrl, {
+          method,
+          headers,
+          body: ['GET', 'HEAD'].includes(method) ? undefined : bodyBuffer
+        }, options.upstreamTimeoutMs);
+        if (upstreamRes.status === 401 || upstreamRes.status === 403) {
+          markProxyAccountFailure(account, `upstream_${upstreamRes.status}`, cooldownMs, options.failureThreshold);
+          lastError = `upstream_${upstreamRes.status}_account_${account.id}`;
+          continue;
+        }
+        const raw = Buffer.from(await upstreamRes.arrayBuffer());
+        res.statusCode = upstreamRes.status;
+        upstreamRes.headers.forEach((value, key) => {
+          const low = String(key || '').toLowerCase();
+          if (low === 'transfer-encoding') return;
+          if (low === 'content-length') return;
+          res.setHeader(key, value);
+        });
+        res.setHeader('x-aih-proxy-account-id', account.id);
+        if (account.email) res.setHeader('x-aih-proxy-account-email', account.email);
+        res.setHeader('content-length', raw.length);
+        res.end(raw);
+        markProxyAccountSuccess(account);
+        state.metrics.totalSuccess += 1;
+        if (options.logRequests) {
+          appendProxyRequestLog({
+            at: new Date().toISOString(),
+            route: routeKey,
+            provider: 'codex',
+            accountId: account.id,
+            status: upstreamRes.status,
+            durationMs: Date.now() - requestStartedAt
+          });
+        }
+        return;
+      } catch (e) {
+        const detail = String((e && e.message) || e);
+        if (detail.includes('timeout')) state.metrics.totalTimeouts += 1;
+        markProxyAccountFailure(account, detail, cooldownMs, options.failureThreshold);
+        lastError = detail;
+      }
+    }
+    state.metrics.totalFailures += 1;
+    pushMetricError(state.metrics, routeKey, 'codex', lastError);
+    if (options.logRequests) {
+      appendProxyRequestLog({
+        at: new Date().toISOString(),
+        route: routeKey,
+        provider: 'codex',
+        status: 502,
+        error: lastError,
+        durationMs: Date.now() - requestStartedAt
+      });
+    }
+    return writeJson(res, 502, { ok: false, error: 'upstream_failed', detail: lastError });
+  });
+
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(options.port, options.host, resolve);
+  });
+
+  console.log(`\x1b[36m[aih]\x1b[0m proxy serve started`);
+  console.log(`  listen: http://${options.host}:${options.port}`);
+  console.log(`  upstream: ${options.upstream}`);
+  console.log(`  backend: ${options.backend}`);
+  console.log(`  provider_mode: ${options.provider}`);
+  console.log(`  strategy: ${options.strategy}`);
+  console.log(`  accounts: codex=${state.accounts.codex.length}, gemini=${state.accounts.gemini.length}`);
+  if (requiredClientKey) {
+    console.log('  client_auth: enabled (Bearer key required)');
+  } else {
+    console.log('  client_auth: disabled');
+  }
+  if (requiredManagementKey) {
+    console.log('  management_auth: enabled (Bearer key required)');
+  } else {
+    console.log('  management_auth: disabled');
+  }
+  console.log('  management: /v0/management/status');
+  console.log('  metrics: /v0/management/metrics');
+  console.log('  gateway: /v1/*');
+  console.log('  openai_base_url: ' + `http://${options.host}:${options.port}/v1`);
+  console.log('  tip: export OPENAI_BASE_URL=' + `"http://${options.host}:${options.port}/v1"`);
+  console.log('  tip: export OPENAI_API_KEY="dummy"');
+}
+
+async function syncCodexAccountsToProxy(options) {
+  const base = normalizeManagementBase(options.managementUrl || '');
+  const key = String(options.key || '').trim();
+  if (!key) {
+    throw new Error('Missing management key. Use --key or env AIH_PROXY_MANAGEMENT_KEY.');
+  }
+  const ids = getToolAccountIds('codex');
+  const limit = Math.max(0, Number(options.limit) || 0);
+  const targetIds = limit > 0 ? ids.slice(0, limit) : ids.slice();
+  const maxConcurrency = Math.max(1, Number(options.parallel) || 8);
+  const prefix = String(options.namePrefix || 'aih-codex-');
+
+  let scanned = 0;
+  let eligible = 0;
+  let uploaded = 0;
+  let skippedInvalid = 0;
+  let failed = 0;
+  let firstError = '';
+
+  let cursor = 0;
+  const worker = async () => {
+    while (true) {
+      const idx = cursor;
+      cursor += 1;
+      if (idx >= targetIds.length) return;
+      const id = String(targetIds[idx]);
+      scanned += 1;
+      const authPath = path.join(getToolConfigDir('codex', id), 'auth.json');
+      const authJson = parseJsonFileSafe(authPath);
+      const payload = buildProxyCodexUploadPayload(authJson);
+      if (!payload) {
+        skippedInvalid += 1;
+        continue;
+      }
+      eligible += 1;
+      if (options.dryRun) continue;
+
+      const name = `${prefix}${id}.json`;
+      const url = `${base}/auth-files?name=${encodeURIComponent(name)}`;
+      try {
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${key}`
+          },
+          body: JSON.stringify(payload)
+        });
+        if (!res.ok) {
+          failed += 1;
+          const body = await res.text().catch(() => '');
+          if (!firstError) firstError = `HTTP ${res.status} ${body.slice(0, 200)}`.trim();
+          continue;
+        }
+        uploaded += 1;
+      } catch (e) {
+        failed += 1;
+        if (!firstError) firstError = String((e && e.message) || e);
+      }
+    }
+  };
+
+  const workerCount = Math.min(maxConcurrency, Math.max(1, targetIds.length));
+  const workers = [];
+  for (let i = 0; i < workerCount; i += 1) {
+    workers.push(worker());
+  }
+  await Promise.all(workers);
+
+  return {
+    managementUrl: base,
+    scanned,
+    eligible,
+    uploaded: options.dryRun ? eligible : uploaded,
+    skippedInvalid,
+    failed,
+    firstError,
+    dryRun: !!options.dryRun
+  };
+}
+
 function getNextId(cliName) {
   const toolDir = path.join(PROFILES_DIR, cliName);
   if (!fs.existsSync(toolDir)) return "1";
@@ -2711,28 +2994,9 @@ let currentPtyProcess = null;
 let currentCliName = null;
 let currentId = null;
 
-function spawnPty(cliBin, cliName, id, forwardArgs, isLogin) {
+function spawnPty(cliName, id, forwardArgs, isLogin) {
   currentCliName = cliName;
   currentId = id;
-  const envOverrides = getSandboxEnv(cliName, id);
-
-  let argsToRun = isLogin ? (CLI_CONFIGS[cliName]?.loginArgs || []) : forwardArgs;
-  if (cliName === 'codex' && !isLogin) {
-    argsToRun = applyCodexDefaultArgs(argsToRun);
-  }
-
-  const launch = buildPtyLaunch(cliBin, argsToRun);
-
-  return pty.spawn(launch.command, launch.args, {
-    name: 'xterm-color',
-    cols: process.stdout.columns || 80,
-    rows: process.stdout.rows || 24,
-    cwd: process.cwd(),
-    env: envOverrides
-  });
-}
-
-function getSandboxEnv(cliName, id) {
   const sandboxDir = getProfileDir(cliName, id);
   
   let loadedEnv = {};
@@ -2741,7 +3005,7 @@ function getSandboxEnv(cliName, id) {
     try { loadedEnv = JSON.parse(fs.readFileSync(envPath, 'utf8')); } catch(e){}
   }
 
-  return {
+  const envOverrides = {
     ...process.env,
     ...loadedEnv,
     HOME: sandboxDir,           
@@ -2750,41 +3014,22 @@ function getSandboxEnv(cliName, id) {
     CODEX_HOME: path.join(sandboxDir, '.codex'),
     GEMINI_CLI_SYSTEM_SETTINGS_PATH: path.join(sandboxDir, '.gemini', 'settings.json')
   };
+
+  const argsToRun = isLogin ? (CLI_CONFIGS[cliName]?.loginArgs || []) : forwardArgs;
+  
+  return pty.spawn(cliName, argsToRun, {
+    name: 'xterm-color',
+    cols: process.stdout.columns || 80,
+    rows: process.stdout.rows || 24,
+    cwd: process.cwd(),
+    env: envOverrides
+  });
 }
 
-function applyCodexDefaultArgs(args) {
-  const out = Array.isArray(args) ? [...args] : [];
-  const first = String(out[0] || '').trim().toLowerCase();
-  if (first === 'auth' || first === 'login') return out;
-  const hasSandbox = out.includes('--sandbox') || out.some((x) => String(x || '').startsWith('--sandbox='));
-  if (hasSandbox) return out;
-  const sandbox = resolveCodexSandboxFromPolicy();
-  out.unshift(sandbox);
-  out.unshift('--sandbox');
-  return out;
-}
-
-function extractCodexResumeSessionId(forwardArgs) {
-  const arr = Array.isArray(forwardArgs) ? forwardArgs : [];
-  if (String(arr[0] || '') !== 'exec') return '';
-  for (let i = 1; i < arr.length; i++) {
-    const cur = String(arr[i] || '');
-    if (cur === '--sandbox') {
-      if (i + 1 < arr.length) i += 1;
-      continue;
-    }
-    if (cur.startsWith('--sandbox=')) continue;
-    if (cur === 'resume') {
-      const sid = String(arr[i + 1] || '').trim();
-      return looksLikeSessionId(sid) ? sid : '';
-    }
-  }
-  return '';
-}
-
-function runCliPty(cliName, initialId, forwardArgs, isLogin = false, runtimeOptions = {}) {
-  let cliBin = resolveCommandPath(cliName);
-  if (!cliBin) {
+function runCliPty(cliName, initialId, forwardArgs, isLogin = false) {
+  try {
+    execSync(`which ${cliName}`, { stdio: 'ignore' });
+  } catch (e) {
     console.log(`\x1b[33m[aih] Native CLI '${cliName}' not found.\x1b[0m`);
     const ans = askYesNo(`Do you want to automatically install it via npm?`);
     if (ans) {
@@ -2792,65 +3037,18 @@ function runCliPty(cliName, initialId, forwardArgs, isLogin = false, runtimeOpti
       console.log(`\n\x1b[36m[aih]\x1b[0m Installing \x1b[33m${pkg}\x1b[0m...`);
       execSync(`npm install -g ${pkg}`, { stdio: 'inherit' });
       console.log(`\x1b[32m[aih] Successfully installed ${cliName}!\x1b[0m\n`);
-      cliBin = resolveCommandPath(cliName);
-      if (!cliBin) {
-        console.error(`\x1b[31m[aih] '${cliName}' is still not found in PATH after installation.\x1b[0m`);
-        process.exit(1);
-      }
     } else {
       process.exit(1);
     }
   }
 
-  const taskKey = sanitizeTaskKey(runtimeOptions.taskKey || '');
-  const planPath = normalizePlanPath(runtimeOptions.planPath || '');
-  let activeId = String(initialId);
-  let activeLeaseToken = String(runtimeOptions.leaseToken || '');
-  let lastCapturedSessionId = '';
-
-  console.log(`\n\x1b[36m[aih]\x1b[0m 🚀 Running \x1b[33m${cliName}\x1b[0m (Account ID: \x1b[32m${activeId}\x1b[0m) via PTY Sandbox`);
-  const initialSessionSync = ensureSessionStoreLinks(cliName, activeId);
+  console.log(`\n\x1b[36m[aih]\x1b[0m 🚀 Running \x1b[33m${cliName}\x1b[0m (Account ID: \x1b[32m${initialId}\x1b[0m) via PTY Sandbox`);
+  const initialSessionSync = ensureSessionStoreLinks(cliName, initialId);
   if (initialSessionSync.migrated > 0 || initialSessionSync.linked > 0) {
     console.log(`\x1b[36m[aih]\x1b[0m Session links ready (${cliName}): migrated ${initialSessionSync.migrated}, linked ${initialSessionSync.linked}.`);
   }
 
-  const resumeSessionId = cliName === 'codex' ? extractCodexResumeSessionId(forwardArgs) : '';
-  if (resumeSessionId) {
-    // Resume flows may switch auto accounts while keeping the same session_id.
-    // Refresh binding metadata immediately so board account_id reflects the
-    // currently selected account instead of the original one.
-    if (taskKey) {
-      setTaskSession(taskKey, resumeSessionId, {
-        cli: cliName,
-        accountId: String(activeId),
-        pid: process.pid,
-        cwd: process.cwd()
-      });
-    }
-    if (planPath) {
-      setPlanSession(planPath, resumeSessionId, {
-        cli: cliName,
-        accountId: String(activeId),
-        cwd: process.cwd()
-      });
-    }
-    appendRecentSession(resumeSessionId, {
-      cli: cliName,
-      accountId: String(activeId),
-      pid: process.pid,
-      cwd: process.cwd(),
-      taskKey: taskKey || '',
-      planPath: planPath || ''
-    });
-    refreshSessionBindingsBySessionId(resumeSessionId, {
-      cli: cliName,
-      accountId: String(activeId),
-      pid: process.pid,
-      cwd: process.cwd()
-    });
-  }
-
-  let ptyProc = spawnPty(cliBin, cliName, activeId, forwardArgs, isLogin);
+  let ptyProc = spawnPty(cliName, initialId, forwardArgs, isLogin);
 
   let waveFrames = ['.', '..', '...', ' ..', '  .', '   '];
   let waveIdx = 0;
@@ -2883,20 +3081,6 @@ function runCliPty(cliName, initialId, forwardArgs, isLogin = false, runtimeOpti
 
   let outputBuffer = "";
   let isSwapping = false;
-  let cleanedUp = false;
-
-  function cleanupRuntime() {
-    if (cleanedUp) return;
-    cleanedUp = true;
-    clearInterval(waveInterval);
-    if (canUseRawMode) {
-      try { process.stdin.setRawMode(false); } catch (e) {}
-    }
-    if (activeLeaseToken) {
-      releaseAutoAccount(cliName, activeId, activeLeaseToken);
-      activeLeaseToken = '';
-    }
-  }
 
   function attachOnData(proc) {
     proc.onData((data) => {
@@ -2914,39 +3098,6 @@ function runCliPty(cliName, initialId, forwardArgs, isLogin = false, runtimeOpti
       if (outputBuffer.length > 1000) outputBuffer = outputBuffer.slice(-1000);
 
       const lowerOut = outputBuffer.toLowerCase();
-      const sidMatch = cleanData.match(/session id:\s*([0-9a-f-]{36})/i);
-      if (!lastCapturedSessionId && sidMatch && sidMatch[1]) {
-        lastCapturedSessionId = sidMatch[1];
-        appendRecentSession(lastCapturedSessionId, {
-          cli: cliName,
-          accountId: String(activeId),
-          pid: process.pid,
-          cwd: process.cwd(),
-          taskKey: taskKey || '',
-          planPath: planPath || ''
-        });
-        if (cliName === 'codex') {
-          process.stdout.write(`\r\n\x1b[90m[aih]\x1b[0m captured_session_id: ${lastCapturedSessionId}\r\n`);
-          process.stdout.write(`\x1b[90m[aih]\x1b[0m resume_cmd: aih codex auto exec resume ${lastCapturedSessionId} "继续执行"\r\n`);
-        }
-        if (cliName === 'codex' && planPath) {
-          setPlanSession(planPath, lastCapturedSessionId, {
-            cli: cliName,
-            accountId: String(activeId),
-            cwd: process.cwd()
-          });
-          process.stdout.write(`\x1b[90m[aih]\x1b[0m Bound plan '${path.basename(planPath)}' -> session ${lastCapturedSessionId}\r\n`);
-        }
-        if (cliName === 'codex' && taskKey) {
-          setTaskSession(taskKey, lastCapturedSessionId, {
-            cli: cliName,
-            accountId: String(activeId),
-            pid: process.pid,
-            cwd: process.cwd()
-          });
-          process.stdout.write(`\r\n\x1b[90m[aih]\x1b[0m Bound task-key '${taskKey}' -> session ${lastCapturedSessionId}\r\n`);
-        }
-      }
       
       // Detect network failure during Auth (like Gemini socket disconnect)
       if (isLogin && (lowerOut.includes('failed to login') || lowerOut.includes('socket disconnected') || lowerOut.includes('connection error'))) {
@@ -2956,23 +3107,20 @@ function runCliPty(cliName, initialId, forwardArgs, isLogin = false, runtimeOpti
         proc.kill();
         setTimeout(() => {
           isSwapping = false;
-          ptyProc = spawnPty(cliBin, cliName, activeId, [], true);
+          ptyProc = spawnPty(cliName, initialId, [], true);
           attachOnData(ptyProc);
         }, 1500);
       }
-
     });
 
     proc.onExit(({ exitCode, signal }) => {
       if (!isSwapping) {
         if (isLogin && exitCode === 0) {
-           cleanupRuntime();
            console.log(`\n\x1b[32m[aih] Auth completed! Booting standard session...\x1b[0m`);
            setTimeout(() => {
-             runCliPty(cliName, activeId, forwardArgs, false, runtimeOptions);
+             runCliPty(cliName, initialId, forwardArgs, false);
            }, 500);
         } else {
-           cleanupRuntime();
            process.stdout.write('\r\n');
            process.exit(exitCode || 0);
         }
@@ -2984,135 +3132,11 @@ function runCliPty(cliName, initialId, forwardArgs, isLogin = false, runtimeOpti
   
   // Cleanup on exit
   process.on('SIGINT', () => {
-    cleanupRuntime();
+    if (canUseRawMode) {
+      try { process.stdin.setRawMode(false); } catch (e) {}
+    }
     process.exit(0);
   });
-  process.on('SIGTERM', () => {
-    cleanupRuntime();
-    process.exit(0);
-  });
-}
-
-function parseCodexAutoReviewArgs(rawArgs) {
-  const out = {
-    prRef: '',
-    repo: '',
-    mergeMethod: 'squash',
-    mergeEnabled: true,
-    autoMerge: true,
-    deleteBranch: false,
-    admin: false,
-    dryRun: false,
-    codexReviewArgs: ['review']
-  };
-  const args = Array.isArray(rawArgs) ? rawArgs.slice(1) : [];
-  for (let i = 0; i < args.length; i++) {
-    const cur = String(args[i] || '');
-    if (cur === '--pr' && i + 1 < args.length) {
-      out.prRef = String(args[++i] || '').trim();
-      continue;
-    }
-    if (cur.startsWith('--pr=')) {
-      out.prRef = cur.slice('--pr='.length).trim();
-      continue;
-    }
-    if (cur === '--repo' && i + 1 < args.length) {
-      out.repo = String(args[++i] || '').trim();
-      continue;
-    }
-    if (cur.startsWith('--repo=')) {
-      out.repo = cur.slice('--repo='.length).trim();
-      continue;
-    }
-    if (cur === '--method' && i + 1 < args.length) {
-      const m = String(args[++i] || '').trim().toLowerCase();
-      if (m === 'merge' || m === 'rebase' || m === 'squash') out.mergeMethod = m;
-      continue;
-    }
-    if (cur.startsWith('--method=')) {
-      const m = cur.slice('--method='.length).trim().toLowerCase();
-      if (m === 'merge' || m === 'rebase' || m === 'squash') out.mergeMethod = m;
-      continue;
-    }
-    if (cur === '--no-merge') { out.mergeEnabled = false; continue; }
-    if (cur === '--auto-merge' || cur === '--auto') { out.autoMerge = true; continue; }
-    if (cur === '--delete-branch' || cur === '-d') { out.deleteBranch = true; continue; }
-    if (cur === '--admin') { out.admin = true; continue; }
-    if (cur === '--dry-run') { out.dryRun = true; continue; }
-    out.codexReviewArgs.push(args[i]);
-  }
-  return out;
-}
-
-function runCodexAutoReviewFlow(accountId, leaseToken, forwardArgs) {
-  const parsed = parseCodexAutoReviewArgs(forwardArgs);
-  if (parsed.dryRun) {
-    console.log('\x1b[36m[aih review]\x1b[0m dry-run mode');
-    console.log(`  codex_args: ${parsed.codexReviewArgs.join(' ')}`);
-    console.log(`  pr: ${parsed.prRef || '(none)'}`);
-    console.log(`  merge: ${parsed.mergeEnabled ? parsed.mergeMethod : 'disabled'}`);
-    releaseAutoAccount('codex', accountId, leaseToken);
-    process.exit(0);
-  }
-
-  const env = getSandboxEnv('codex', accountId);
-  const codexBin = resolveCommandPath('codex') || 'codex';
-  console.log(`\x1b[36m[aih review]\x1b[0m Running codex review on account ${accountId}...`);
-  const review = spawnSync(codexBin, parsed.codexReviewArgs, {
-    cwd: process.cwd(),
-    env,
-    stdio: 'inherit'
-  });
-  if (review.status !== 0) {
-    releaseAutoAccount('codex', accountId, leaseToken);
-    process.exit(typeof review.status === 'number' ? review.status : 1);
-  }
-
-  if (!parsed.mergeEnabled) {
-    console.log('\x1b[32m[aih review]\x1b[0m Review passed; merge disabled by --no-merge.');
-    releaseAutoAccount('codex', accountId, leaseToken);
-    process.exit(0);
-  }
-  if (!parsed.prRef) {
-    console.log('\x1b[33m[aih review]\x1b[0m Review passed, but no PR specified. Use --pr <number|url|branch> for auto-merge.');
-    releaseAutoAccount('codex', accountId, leaseToken);
-    process.exit(0);
-  }
-
-  const mergeArgs = ['pr', 'merge', parsed.prRef];
-  if (parsed.mergeMethod === 'merge') mergeArgs.push('--merge');
-  else if (parsed.mergeMethod === 'rebase') mergeArgs.push('--rebase');
-  else mergeArgs.push('--squash');
-  if (parsed.autoMerge) mergeArgs.push('--auto');
-  if (parsed.deleteBranch) mergeArgs.push('--delete-branch');
-  if (parsed.admin) mergeArgs.push('--admin');
-  if (parsed.repo) mergeArgs.push('--repo', parsed.repo);
-
-  const ghEnv = buildGhEnv(HOST_HOME_DIR, fs, path, process.env);
-  const ghAuth = ensureGhAuthForReview({
-    spawnSync,
-    cwd: process.cwd(),
-    env: ghEnv,
-    hostHomeDir: HOST_HOME_DIR,
-    runtimeHome: process.env.HOME || ''
-  });
-  if (!ghAuth.ok) {
-    (ghAuth.message || []).forEach((line, idx) => {
-      const color = idx === 0 ? '\x1b[31m' : '\x1b[90m';
-      console.error(`${color}${line}\x1b[0m`);
-    });
-    releaseAutoAccount('codex', accountId, leaseToken);
-    process.exit(1);
-  }
-
-  console.log(`\x1b[36m[aih review]\x1b[0m Review passed. Merging PR ${parsed.prRef} via gh...`);
-  const merge = spawnSync('gh', mergeArgs, {
-    cwd: process.cwd(),
-    env: ghEnv,
-    stdio: 'inherit'
-  });
-  releaseAutoAccount('codex', accountId, leaseToken);
-  process.exit(typeof merge.status === 'number' ? merge.status : 1);
 }
 
 function createAccount(cliName, id, skipMigration = false) {
@@ -3128,11 +3152,6 @@ function createAccount(cliName, id, skipMigration = false) {
   const sessionSync = ensureSessionStoreLinks(cliName, id);
 
   console.log(`\x1b[36m[aih]\x1b[0m Created new sandbox for \x1b[33m${cliName}\x1b[0m (Account ID: \x1b[32m${id}\x1b[0m)`);
-  logAuditEvent('account.create', {
-    cli: cliName,
-    accountId: String(id),
-    sessionSync
-  });
   if (sessionSync.migrated > 0 || sessionSync.linked > 0) {
     console.log(`\x1b[36m[aih]\x1b[0m Session links initialized: migrated ${sessionSync.migrated}, linked ${sessionSync.linked}.`);
   }
@@ -3157,24 +3176,9 @@ function createAccount(cliName, id, skipMigration = false) {
 const args = process.argv.slice(2);
 const cmd = args[0];
 
-if (cmd === 'codex') {
-  ensurePlanWatchdogDaemon();
-}
-
 if (!cmd || cmd === 'help' || cmd === '--help' || cmd === '-h') {
   showHelp();
   process.exit(0);
-}
-
-if (cmd === 'doctor') {
-  (async () => {
-    await runDoctor(args.slice(1));
-    process.exit(0);
-  })().catch((e) => {
-    console.error(`\x1b[31m[aih] doctor failed: ${e.message}\x1b[0m`);
-    process.exit(1);
-  });
-  return;
 }
 
 if (cmd === 'ls' || cmd === 'list') {
@@ -3185,11 +3189,6 @@ if (cmd === 'ls' || cmd === 'list') {
   }
   listProfiles();
   process.exit(0);
-}
-
-if (cmd === 'doctor') {
-  const code = runDoctorCommand();
-  process.exit(code);
 }
 
 function getSshKeys() {
@@ -3229,7 +3228,7 @@ function commandExists(commandName) {
   return probe.status === 0;
 }
 
-function getAgeInstallPlan() {
+function getAgeInstallHints() {
   if (process.platform === 'darwin') {
     if (commandExists('brew')) {
       return {
@@ -3317,7 +3316,7 @@ function getAgeInstallPlan() {
 }
 
 function printAgeInstallGuidance() {
-  const plan = getAgeInstallPlan();
+  const plan = getAgeInstallHints();
   console.log(`\x1b[33m[aih]\x1b[0m age CLI is required for SSH-key encryption/decryption.`);
   if (plan.command) {
     console.log(`\x1b[90m[Hint]\x1b[0m ${plan.platform} install command: ${plan.command}`);
@@ -3328,7 +3327,7 @@ function printAgeInstallGuidance() {
 }
 
 function tryAutoInstallAge() {
-  const plan = getAgeInstallPlan();
+  const plan = getAgeInstallHints();
   if (!plan.command) {
     printAgeInstallGuidance();
     return false;
@@ -4206,13 +4205,6 @@ if (cmd === 'import') {
     printRestoreDetails('[Overwritten]', '\x1b[33m', summary.overwrittenAccounts);
     printRestoreDetails('[Skipped]', '\x1b[90m', summary.skippedAccounts);
     console.log(`\x1b[32m[Success] Restore completed!\x1b[0m imported=${summary.imported}, overwritten=${summary.overwritten}, skipped=${summary.skipped}`);
-    logAuditEvent('profiles.import', {
-      overwriteExisting,
-      imported: summary.imported,
-      overwritten: summary.overwritten,
-      skipped: summary.skipped,
-      metadataCopied: summary.metadataCopied
-    });
   } catch (e) {
     console.error(`\n\x1b[31m[Error] Failed to import: ${e.message}\x1b[0m`);
   } finally {
@@ -4223,30 +4215,192 @@ if (cmd === 'import') {
 }
 
 if (cmd === 'proxy') {
-  (async () => {
-    const code = await runProxyEntry(args, {
-      fs,
-      fetchImpl: fetch,
-      http,
-      processObj: process,
-      aiHomeDir: AI_HOME_DIR,
-      logFile: AIH_PROXY_LOG_FILE,
-      getToolAccountIds,
-      getToolConfigDir,
-      getProfileDir,
-      checkStatus,
-      syncCodexAccountsToProxy,
-      startLocalProxyServerModule,
-      runProxyCommand,
-      showProxyUsage,
-      proxyDaemon,
-      parseProxySyncArgs,
-      parseProxyServeArgs,
-      parseProxyEnvArgs
-    });
-    if (typeof code === 'number') process.exit(code);
-  })();
-  return;
+  const action = String(args[1] || '').trim();
+  if (action === 'help' || action === '--help' || action === '-h') {
+    showProxyUsage();
+    process.exit(0);
+  }
+
+  if (action === 'status') {
+    const st = getProxyDaemonStatus();
+    if (st.running) {
+      console.log(`\x1b[36m[aih]\x1b[0m proxy is running (pid=${st.pid})`);
+      console.log('  base_url: http://127.0.0.1:8317/v1');
+      console.log('  api_key: dummy');
+      console.log(`  pid_file: ${st.pidFile}`);
+      console.log(`  log_file: ${st.logFile}`);
+    } else {
+      console.log('\x1b[90m[aih]\x1b[0m proxy is not running');
+    }
+    const auto = getProxyAutostartStatus();
+    if (auto.supported) {
+      console.log(`  autostart: installed=${auto.installed} loaded=${auto.loaded}`);
+    } else {
+      console.log('  autostart: unsupported_on_this_platform');
+    }
+    process.exit(0);
+  }
+
+  if (action === 'autostart') {
+    const sub = String(args[2] || 'status').trim().toLowerCase();
+    try {
+      if (sub === 'install') {
+        installProxyAutostart();
+        console.log(`\x1b[32m[aih]\x1b[0m proxy autostart installed`);
+        process.exit(0);
+      }
+      if (sub === 'uninstall' || sub === 'remove') {
+        uninstallProxyAutostart();
+        console.log(`\x1b[32m[aih]\x1b[0m proxy autostart removed`);
+        process.exit(0);
+      }
+      const st = getProxyAutostartStatus();
+      if (!st.supported) {
+        console.log('\x1b[90m[aih]\x1b[0m autostart is unsupported on this platform');
+        process.exit(0);
+      }
+      console.log(`\x1b[36m[aih]\x1b[0m proxy autostart status`);
+      console.log(`  installed: ${st.installed}`);
+      console.log(`  loaded: ${st.loaded}`);
+      console.log(`  plist: ${st.plist}`);
+      process.exit(0);
+    } catch (e) {
+      console.error(`\x1b[31m[aih] proxy autostart failed: ${e.message}\x1b[0m`);
+      process.exit(1);
+    }
+  }
+
+  if (action === 'stop') {
+    const res = stopProxyDaemon();
+    if (res.stopped) {
+      console.log(`\x1b[32m[aih]\x1b[0m proxy stopped (pid=${res.pid})${res.forced ? ' [forced]' : ''}`);
+      process.exit(0);
+    }
+    console.log(`\x1b[90m[aih]\x1b[0m proxy stop skipped (${res.reason || 'not_running'})`);
+    process.exit(0);
+  }
+
+  if (action === 'start' || !action || action.startsWith('-')) {
+    (async () => {
+      try {
+        const serveArgs = action === 'start' ? args.slice(2) : args.slice(1);
+        const result = await startProxyDaemon(serveArgs);
+        if (result.alreadyRunning) {
+          console.log(`\x1b[90m[aih]\x1b[0m proxy already running (pid=${result.pid})`);
+        } else if (result.started) {
+          console.log(`\x1b[32m[aih]\x1b[0m proxy started in background (pid=${result.pid})`);
+        } else {
+          console.log(`\x1b[33m[aih]\x1b[0m proxy process created (pid=${result.pid}), but health check timed out`);
+        }
+        console.log('  base_url: http://127.0.0.1:8317/v1');
+        console.log('  api_key: dummy');
+        process.exit(0);
+      } catch (e) {
+        console.error(`\x1b[31m[aih] proxy start failed: ${e.message}\x1b[0m`);
+        process.exit(1);
+      }
+    })();
+    return;
+  }
+
+  if (action === 'restart') {
+    const stopped = stopProxyDaemon();
+    if (stopped.stopped) {
+      console.log(`\x1b[90m[aih]\x1b[0m proxy stopped for restart (pid=${stopped.pid})`);
+    }
+    (async () => {
+      try {
+        const result = await startProxyDaemon(args.slice(2));
+        if (result.alreadyRunning) {
+          console.log(`\x1b[90m[aih]\x1b[0m proxy already running (pid=${result.pid})`);
+        } else if (result.started) {
+          console.log(`\x1b[32m[aih]\x1b[0m proxy restarted in background (pid=${result.pid})`);
+        } else {
+          console.log(`\x1b[33m[aih]\x1b[0m proxy process created (pid=${result.pid}), but health check timed out`);
+        }
+        console.log('  base_url: http://127.0.0.1:8317/v1');
+        console.log('  api_key: dummy');
+        process.exit(0);
+      } catch (e) {
+        console.error(`\x1b[31m[aih] proxy restart failed: ${e.message}\x1b[0m`);
+        process.exit(1);
+      }
+    })();
+    return;
+  }
+
+  if (action === 'env') {
+    let envOpts;
+    try {
+      envOpts = parseProxyEnvArgs(args.slice(2));
+    } catch (e) {
+      console.error(`\x1b[31m[aih] ${e.message}\x1b[0m`);
+      console.log('\x1b[90mUsage:\x1b[0m aih proxy env [--base-url <url>] [--api-key <key>]');
+      process.exit(1);
+    }
+    console.log(`export OPENAI_BASE_URL="${envOpts.baseUrl}"`);
+    console.log(`export OPENAI_API_KEY="${envOpts.apiKey}"`);
+    process.exit(0);
+  }
+
+  if (action === 'serve') {
+    let serveOpts;
+    try {
+      const serveArgs = (action === 'serve') ? args.slice(2) : args.slice(1);
+      serveOpts = parseProxyServeArgs(serveArgs);
+    } catch (e) {
+      console.error(`\x1b[31m[aih] ${e.message}\x1b[0m`);
+      console.log('\x1b[90mUsage:\x1b[0m aih proxy [--port <n>]  (or: aih proxy serve [options])');
+      process.exit(1);
+    }
+    (async () => {
+      try {
+        await startLocalProxyServer(serveOpts);
+      } catch (e) {
+        console.error(`\x1b[31m[aih] proxy serve failed: ${e.message}\x1b[0m`);
+        process.exit(1);
+      }
+    })();
+    return;
+  }
+
+  if (action === 'sync-codex' || action === 'sync_codex') {
+    let syncOpts;
+    try {
+      syncOpts = parseProxySyncArgs(args.slice(2));
+    } catch (e) {
+      console.error(`\x1b[31m[aih] ${e.message}\x1b[0m`);
+      console.log('\x1b[90mUsage:\x1b[0m aih proxy sync-codex [--management-url <url>] [--key <management-key>] [--parallel <1-32>] [--limit <n>] [--dry-run]');
+      process.exit(1);
+    }
+    (async () => {
+      try {
+        const result = await syncCodexAccountsToProxy(syncOpts);
+        const modeLabel = result.dryRun ? 'dry-run' : 'write';
+        console.log(`\x1b[36m[aih]\x1b[0m proxy sync-codex done (${modeLabel})`);
+        console.log(`  management: ${result.managementUrl}`);
+        console.log(`  scanned: ${result.scanned}`);
+        console.log(`  eligible: ${result.eligible}`);
+        console.log(`  uploaded: ${result.uploaded}`);
+        console.log(`  invalid: ${result.skippedInvalid}`);
+        if (!result.dryRun) {
+          console.log(`  failed: ${result.failed}`);
+          if (result.firstError) {
+            console.log(`  first_error: ${result.firstError}`);
+          }
+        }
+        process.exit(result.failed > 0 ? 1 : 0);
+      } catch (e) {
+        console.error(`\x1b[31m[aih] proxy sync-codex failed: ${e.message}\x1b[0m`);
+        process.exit(1);
+      }
+    })();
+    return;
+  }
+
+  console.error(`\x1b[31m[aih] Unknown proxy action '${action}'.\x1b[0m`);
+  showProxyUsage();
+  process.exit(1);
 }
 
 const cliName = cmd;
@@ -4260,15 +4414,8 @@ let forwardArgs = [];
 const UNLOCK_ACTIONS = new Set(['unlock', '--unlock', 'unexhaust', 'unban', 'release']);
 const USAGE_ACTIONS = new Set(['usage', '--usage', 'stats']);
 const USAGES_ACTIONS = new Set(['usages', 'usage-all', 'all-usage', 'all-usages']);
-const DEPRECATED_IMPORT_OUTPUT_ACTIONS = new Set(['import-output', 'import_output', 'bulk-import', 'bulk_import']);
-const ACCOUNT_ACTIONS = new Set(['account', 'accounts', 'acct']);
-const ACCOUNT_IMPORT_ACTIONS = new Set(['import']);
-const SESSION_LIST_ACTIONS = new Set(['sessions', 'task-sessions', 'task_sessions', 'session-map', 'session_map']);
-const SESSION_STREAM_ACTIONS = new Set(['session']);
-const PLAN_SESSION_ACTIONS = new Set([]);
-const LAST_SESSION_ACTIONS = new Set(['last-session', 'last_session', 'latest-session', 'latest_session']);
-const PERMISSION_POLICY_ACTIONS = new Set(['policy', 'permission-policy', 'permission_policy', 'permissions']);
-const KNOWN_ACTIONS = new Set(['ls', 'set-default', 'add', 'login', 'auth', 'auto', ...ACCOUNT_ACTIONS, ...SESSION_LIST_ACTIONS, ...SESSION_STREAM_ACTIONS, ...PLAN_SESSION_ACTIONS, ...LAST_SESSION_ACTIONS, ...PERMISSION_POLICY_ACTIONS, ...UNLOCK_ACTIONS, ...USAGE_ACTIONS, ...USAGES_ACTIONS, ...DEPRECATED_IMPORT_OUTPUT_ACTIONS]);
+const IMPORT_OUTPUT_ACTIONS = new Set(['import-output', 'import_output', 'bulk-import', 'bulk_import']);
+const KNOWN_ACTIONS = new Set(['ls', 'set-default', 'add', 'login', 'auto', ...UNLOCK_ACTIONS, ...USAGE_ACTIONS, ...USAGES_ACTIONS, ...IMPORT_OUTPUT_ACTIONS]);
 
 if (idOrAction === 'help') {
   showCliUsage(cliName);
@@ -4287,41 +4434,6 @@ if (idOrAction === 'ls') {
 
 if (idOrAction === '--help' || idOrAction === '-h') {
   showCliUsage(cliName);
-  process.exit(0);
-}
-
-if (idOrAction && PERMISSION_POLICY_ACTIONS.has(idOrAction)) {
-  if (cliName !== 'codex') {
-    console.error(`\x1b[31m[aih] ${idOrAction} is currently supported only for codex.\x1b[0m`);
-    process.exit(1);
-  }
-  const action = String(args[2] || '').trim().toLowerCase();
-  let targetSandbox = '';
-  if (!action || action === 'show' || action === 'get' || action === 'ls') {
-    printCodexPermissionPolicy();
-    process.exit(0);
-  }
-  if (action === 'set' || action === 'use') {
-    targetSandbox = String(args[3] || '').trim().toLowerCase();
-  } else {
-    targetSandbox = action;
-  }
-  if (!CODEX_SANDBOX_VALUES.has(targetSandbox)) {
-    console.error('\x1b[31m[aih]\x1b[0m Invalid sandbox policy. Use: workspace-write | read-only | danger-full-access');
-    process.exit(1);
-  }
-  const saved = savePermissionPolicy({
-    exec: {
-      defaultSandbox: targetSandbox,
-      allowDangerFullAccess: targetSandbox === 'danger-full-access'
-    }
-  }, { aiHomeDir: AI_HOME_DIR });
-  console.log(`\x1b[32m[Success]\x1b[0m Updated codex exec policy: ${targetSandbox}`);
-  printCodexPermissionPolicy(saved);
-  logAuditEvent('codex.permission-policy.update', {
-    sandbox: targetSandbox,
-    allowDangerFullAccess: targetSandbox === 'danger-full-access'
-  });
   process.exit(0);
 }
 
@@ -4344,11 +4456,6 @@ if (idOrAction && UNLOCK_ACTIONS.has(idOrAction)) {
   } else {
     console.log(`\x1b[90m[aih]\x1b[0m ${cliName} Account ID ${targetId} was not marked as exhausted.`);
   }
-  logAuditEvent('account.unlock', {
-    cli: cliName,
-    accountId: targetId,
-    cleared
-  });
   process.exit(0);
 }
 
@@ -4376,33 +4483,17 @@ if (idOrAction && USAGES_ACTIONS.has(idOrAction)) {
   process.exit(0);
 }
 
-if (idOrAction && DEPRECATED_IMPORT_OUTPUT_ACTIONS.has(idOrAction)) {
-  console.error(`\x1b[31m[aih]\x1b[0m '${idOrAction}' has been removed.`);
-  showCodexAccountImportUsage();
-  process.exit(1);
-}
-
-if (idOrAction && ACCOUNT_ACTIONS.has(idOrAction)) {
-  const accountSubAction = String(args[2] || '').trim().toLowerCase();
-  if (!accountSubAction || accountSubAction === 'help' || accountSubAction === '--help' || accountSubAction === '-h') {
-    showCodexAccountImportUsage();
-    process.exit(0);
-  }
-  if (!ACCOUNT_IMPORT_ACTIONS.has(accountSubAction)) {
-    console.error(`\x1b[31m[aih] Unknown account action '${accountSubAction || '(empty)'}'.\x1b[0m`);
-    showCodexAccountImportUsage();
-    process.exit(1);
-  }
+if (idOrAction && IMPORT_OUTPUT_ACTIONS.has(idOrAction)) {
   if (cliName !== 'codex') {
-    console.error(`\x1b[31m[aih] account import is currently supported only for codex.\x1b[0m`);
+    console.error(`\x1b[31m[aih] ${idOrAction} is currently supported only for codex.\x1b[0m`);
     process.exit(1);
   }
   let parsedOptions;
   try {
-    parsedOptions = parseCodexBulkImportArgs(args.slice(3));
+    parsedOptions = parseCodexBulkImportArgs(args.slice(2));
   } catch (e) {
     console.error(`\x1b[31m[aih] ${e.message}\x1b[0m`);
-    showCodexAccountImportUsage();
+    console.log(`\x1b[90mUsage:\x1b[0m aih codex import-output [sourceDir] [--parallel <1-32>] [--limit <n>] [--dry-run]`);
     process.exit(1);
   }
 
@@ -4410,7 +4501,7 @@ if (idOrAction && ACCOUNT_ACTIONS.has(idOrAction)) {
     try {
       const result = await importCodexTokensFromOutput(parsedOptions);
       const modeLabel = result.dryRun ? 'dry-run' : 'write';
-      console.log(`\x1b[36m[aih]\x1b[0m codex account import done (${modeLabel})`);
+      console.log(`\x1b[36m[aih]\x1b[0m codex import-output done (${modeLabel})`);
       console.log(`  source: ${result.sourceDir}`);
       console.log(`  files: ${result.scannedFiles}`);
       console.log(`  parsed: ${result.parsedLines}`);
@@ -4425,77 +4516,11 @@ if (idOrAction && ACCOUNT_ACTIONS.has(idOrAction)) {
       }
       process.exit(0);
     } catch (e) {
-      console.error(`\x1b[31m[aih] account import failed: ${e.message}\x1b[0m`);
+      console.error(`\x1b[31m[aih] import-output failed: ${e.message}\x1b[0m`);
       process.exit(1);
     }
   })();
   return;
-}
-
-if (idOrAction && SESSION_STREAM_ACTIONS.has(idOrAction)) {
-  if (cliName !== 'codex') {
-    console.error(`\x1b[31m[aih] ${idOrAction} is currently supported only for codex.\x1b[0m`);
-    process.exit(1);
-  }
-  const targetSid = String(args[2] || '').trim();
-  const options = parseSessionHistoryOptions(args.slice(3));
-  showCodexSessionStream(targetSid, options);
-  if (options.once) process.exit(0);
-  return;
-}
-
-if (idOrAction && SESSION_LIST_ACTIONS.has(idOrAction)) {
-  if (cliName !== 'codex') {
-    console.error(`\x1b[31m[aih] ${idOrAction} is currently supported only for codex.\x1b[0m`);
-    process.exit(1);
-  }
-  const sessionAction = String(args[2] || '').trim().toLowerCase();
-  if (sessionAction === 'delete' || sessionAction === 'rm' || sessionAction === 'remove') {
-    const targetSid = String(args[3] || '').trim();
-    if (!looksLikeSessionId(targetSid)) {
-      console.error('\x1b[31m[aih] Invalid session_id. Usage: aih codex sessions delete <session_id>\x1b[0m');
-      process.exit(1);
-    }
-    const removed = deleteCodexSession(targetSid);
-    if (!removed.ok) {
-      console.error('\x1b[31m[aih] Failed to delete session entry.\x1b[0m');
-      process.exit(1);
-    }
-    const summary = removed.removed || { tasks: 0, plans: 0, recentSessions: 0 };
-    const statusColor = removed.changed ? '\x1b[32m' : '\x1b[33m';
-    const statusText = removed.changed ? 'Deleted session bindings.' : 'No matching session binding found.';
-    console.log(`${statusColor}[aih]\x1b[0m ${statusText}`);
-    console.log(`  session_id: ${targetSid}`);
-    console.log(`  removed.tasks: ${summary.tasks}`);
-    console.log(`  removed.plans: ${summary.plans}`);
-    console.log(`  removed.recent_sessions: ${summary.recentSessions}`);
-    process.exit(0);
-  }
-  let limit = 20;
-  const a2 = String(args[2] || '').trim();
-  const a3 = String(args[3] || '').trim();
-  if ((a2 === '--limit' || a2 === '-n') && /^\d+$/.test(a3)) limit = Number(a3);
-  if (a2.startsWith('--limit=') && /^\d+$/.test(a2.slice('--limit='.length))) limit = Number(a2.slice('--limit='.length));
-  showCodexSessions(limit);
-  process.exit(0);
-}
-
-if (idOrAction && PLAN_SESSION_ACTIONS.has(idOrAction)) {
-  if (cliName !== 'codex') {
-    console.error(`\x1b[31m[aih] ${idOrAction} is currently supported only for codex.\x1b[0m`);
-    process.exit(1);
-  }
-  showCodexPlanSessions(args[2] || '');
-  process.exit(0);
-}
-
-if (idOrAction && LAST_SESSION_ACTIONS.has(idOrAction)) {
-  if (cliName !== 'codex') {
-    console.error(`\x1b[31m[aih] ${idOrAction} is currently supported only for codex.\x1b[0m`);
-    process.exit(1);
-  }
-  showCodexLastSession();
-  process.exit(0);
 }
 
 if (idOrAction === 'set-default') {
@@ -4510,84 +4535,12 @@ if (idOrAction === 'set-default') {
      console.error(`\x1b[31m[aih] Account ID ${targetId} does not exist.\x1b[0m`);
      process.exit(1);
   }
-  const defaultPath = path.join(toolDir, '.aih_default');
-  const currentDefaultId = fs.existsSync(defaultPath) ? String(fs.readFileSync(defaultPath, 'utf8') || '').trim() : '';
-
-  let usageProtectionTriggered = false;
-  let usageThresholdPct = 0;
-  if (isUsageManagedCli(cliName)) {
-    const usageCheckStartedAt = Date.now();
-    const existingUsage = readUsageCache(cliName, targetId);
-    const usageAgeMs = existingUsage && existingUsage.capturedAt ? (Date.now() - Number(existingUsage.capturedAt)) : Number.POSITIVE_INFINITY;
-    const needsRefresh = !existingUsage || !Number.isFinite(usageAgeMs) || usageAgeMs > USAGE_REFRESH_STALE_MS;
-    if (needsRefresh) {
-      process.stdout.write(`\x1b[90m[aih]\x1b[0m Usage cache ${existingUsage ? 'stale' : 'missing'}, refreshing quota for Account ID ${targetId} ... `);
-    } else {
-      process.stdout.write(`\x1b[90m[aih]\x1b[0m Checking usage quota for Account ID ${targetId} (cache) ... `);
-    }
-    usageThresholdPct = readUsageThresholdPct();
-    const usageMarked = syncExhaustedStateFromUsage(cliName, targetId, { mode: needsRefresh ? 'refresh' : 'cached' });
-    const usageCheckMs = Date.now() - usageCheckStartedAt;
-    process.stdout.write(`done (${usageCheckMs}ms)\n`);
-    usageProtectionTriggered = usageMarked === true || isExhausted(cliName, targetId);
-    if (usageProtectionTriggered) {
-      const reserveRemainingPct = Math.max(0, 100 - usageThresholdPct);
-      console.log(`\x1b[33m[Warning]\x1b[0m Account ID ${targetId} is below quota reserve (${reserveRemainingPct}%).`);
-      const proceed = askYesNo('Still set this account as default?', false);
-      if (!proceed) {
-        console.log('\x1b[90m[aih]\x1b[0m set-default cancelled.');
-        logAuditEvent('account.set-default.cancelled_by_quota_protection', {
-          cli: cliName,
-          accountId: targetId,
-          thresholdPct: usageThresholdPct
-        });
-        process.exit(0);
-      }
-    }
+  fs.writeFileSync(path.join(toolDir, '.aih_default'), targetId);
+  console.log(`\x1b[32m[Success]\x1b[0m Set Account ID ${targetId} as default for ${cliName} in ai-home.`);
+  const sessionSync = ensureSessionStoreLinks(cliName, targetId);
+  if (sessionSync.migrated > 0 || sessionSync.linked > 0) {
+    console.log(`\x1b[36m[aih]\x1b[0m Session links refreshed (${cliName}): migrated ${sessionSync.migrated}, linked ${sessionSync.linked}.`);
   }
-
-  if (currentDefaultId !== targetId) {
-    fs.writeFileSync(defaultPath, targetId);
-    console.log(`\x1b[32m[Success]\x1b[0m Set Account ID ${targetId} as default for ${cliName} in ai-home.`);
-  } else {
-    console.log(`\x1b[90m[aih]\x1b[0m Account ID ${targetId} is already default for ${cliName}.`);
-  }
-  let syncResult;
-  if (currentDefaultId === targetId) {
-    const cfg = CLI_CONFIGS[cliName];
-    const hostGlobalDir = cfg && cfg.globalDir ? path.join(HOST_HOME_DIR, cfg.globalDir) : '';
-    syncResult = {
-      ok: true,
-      reason: 'unchanged_default',
-      hostGlobalDir,
-      skippedSync: true,
-      backup: { created: false }
-    };
-  } else {
-    syncResult = syncGlobalConfigToHost(cliName, targetId);
-  }
-  if (syncResult.ok && syncResult.reason === 'already_in_sync') {
-    console.log(`\x1b[90m[aih]\x1b[0m Host config already up to date, sync skipped (${syncResult.hostGlobalDir}).`);
-  } else if (syncResult.ok && syncResult.reason === 'unchanged_default') {
-    console.log(`\x1b[90m[aih]\x1b[0m Default unchanged, host config sync skipped (${syncResult.hostGlobalDir}).`);
-  } else if (syncResult.ok) {
-    console.log(`\x1b[32m[Success]\x1b[0m Synced ${cliName} host config (${syncResult.hostGlobalDir}) from Account ID ${targetId}.`);
-    if (syncResult.backup && syncResult.backup.created) {
-      const removedText = syncResult.backup.removed > 0 ? `, pruned ${syncResult.backup.removed} old backup(s)` : '';
-      console.log(`\x1b[90m[aih]\x1b[0m Backup created: ${syncResult.backup.backupPath}${removedText}.`);
-    }
-  } else if (syncResult.reason !== 'unsupported-cli') {
-    console.log(`\x1b[33m[Warning]\x1b[0m Default set, but host config sync skipped (${syncResult.reason}).`);
-  }
-  logAuditEvent('account.set-default', {
-    cli: cliName,
-    accountId: targetId,
-    usageProtectionTriggered,
-    usageThresholdPct,
-    hostConfigSynced: !!syncResult.ok,
-    hostConfigSyncReason: syncResult.reason || '',
-    defaultAlreadySet: currentDefaultId === targetId
-  });
   process.exit(0);
 }
 
@@ -4649,107 +4602,16 @@ if (idOrAction === 'auto') {
      process.exit(1);
   }
   
-  let allocation = null;
-  try {
-    allocation = allocateAutoAccount(cliName, null);
-  } catch (e) {
-    allocation = null;
-  }
-  if (!allocation || !allocation.id) {
+  const nextId = getNextAvailableId(cliName, null);
+  if (!nextId) {
     console.log(`\x1b[31mNo active (non-exhausted) accounts found to auto-route. Use 'aih ${cliName} add' first.\x1b[0m`);
     process.exit(1);
   }
   
-  let nextId = String(allocation.id);
   console.log(`\x1b[36m[aih auto]\x1b[0m Auto-selected Account ID: \x1b[32m${nextId}\x1b[0m`);
   
   forwardArgs = args.slice(2);
-  let taskKey = '';
-  let planPath = '';
-  if (cliName === 'codex') {
-    if (String(forwardArgs[0] || '') === 'review') {
-      console.error('\x1b[31m[aih]\x1b[0m codex auto review has been removed.');
-      releaseAutoAccount(cliName, nextId, allocation.leaseToken);
-      process.exit(1);
-    }
-    const resolved = resolveCodexAutoExecArgs(forwardArgs);
-    if (resolved.error) {
-      console.error(`\x1b[31m[aih]\x1b[0m ${resolved.error}`);
-      process.exit(1);
-    }
-    if (String(resolved.planPath || '').trim()) {
-      console.error('\x1b[31m[aih]\x1b[0m --plan mode has been removed.');
-      releaseAutoAccount(cliName, nextId, allocation.leaseToken);
-      process.exit(1);
-    }
-    forwardArgs = resolved.args;
-    taskKey = resolved.taskKey;
-    planPath = resolved.planPath;
-    const resumeSid = extractCodexResumeSessionId(forwardArgs);
-    if (resumeSid) {
-      const previousAccountId = findBoundAccountIdBySessionId(resumeSid);
-      if (previousAccountId && previousAccountId === nextId) {
-        let rotated = null;
-        try {
-          rotated = allocateAutoAccount(cliName, null, { excludeIds: [previousAccountId] });
-        } catch (_) {
-          rotated = null;
-        }
-        if (rotated && rotated.id) {
-          releaseAutoAccount(cliName, nextId, allocation.leaseToken);
-          allocation = rotated;
-          nextId = String(rotated.id);
-          console.log(`\x1b[36m[aih auto]\x1b[0m Resume rotation switched account: \x1b[32m${previousAccountId}\x1b[0m -> \x1b[32m${nextId}\x1b[0m`);
-        }
-      }
-    }
-    const overrideAccountId = String(resolved.overrideAccountId || '').trim();
-    if (overrideAccountId) {
-      const overrideDir = getProfileDir(cliName, overrideAccountId);
-      if (!fs.existsSync(overrideDir)) {
-        console.error(`\x1b[31m[aih auto]\x1b[0m Override account ID ${overrideAccountId} does not exist.`);
-        releaseAutoAccount(cliName, nextId, allocation.leaseToken);
-        process.exit(1);
-      }
-      const overrideStatus = checkStatus(cliName, overrideDir);
-      if (!overrideStatus.configured) {
-        console.error(`\x1b[31m[aih auto]\x1b[0m Override account ID ${overrideAccountId} is not configured.`);
-        releaseAutoAccount(cliName, nextId, allocation.leaseToken);
-        process.exit(1);
-      }
-      if (isExhausted(cliName, overrideAccountId)) {
-        console.error(`\x1b[31m[aih auto]\x1b[0m Override account ID ${overrideAccountId} is exhausted.`);
-        releaseAutoAccount(cliName, nextId, allocation.leaseToken);
-        process.exit(1);
-      }
-      if (overrideAccountId !== nextId) {
-        releaseAutoAccount(cliName, nextId, allocation.leaseToken);
-        allocation = { id: overrideAccountId, leaseToken: '' };
-        nextId = overrideAccountId;
-        console.log(`\x1b[36m[aih auto]\x1b[0m Override-selected Account ID: \x1b[32m${nextId}\x1b[0m`);
-      }
-    }
-    const normalizedForwardArgs = (() => {
-      const src = Array.isArray(forwardArgs) ? [...forwardArgs] : [];
-      if (String(src[0] || '') !== 'exec') return src;
-      return stripCodexExecSandboxArgs(src);
-    })();
-    const isExec = String(normalizedForwardArgs[0] || '') === 'exec';
-    const isResume = String(normalizedForwardArgs[1] || '') === 'resume';
-    if (isExec && !isResume && (taskKey || planPath)) {
-      console.error('\x1b[31m[aih]\x1b[0m plan claim mode has been removed.');
-      releaseAutoAccount(cliName, nextId, allocation.leaseToken);
-      process.exit(1);
-    }
-    if (resolved.note) {
-      console.log(`\x1b[36m[aih auto]\x1b[0m ${resolved.note}`);
-    }
-  }
-  runCliPty(cliName, nextId, forwardArgs, false, {
-    leaseToken: allocation.leaseToken || '',
-    taskKey,
-    planPath
-  });
+  runCliPty(cliName, nextId, forwardArgs);
   return;
 }
 
@@ -4770,11 +4632,6 @@ if (idOrAction && /^\d+$/.test(idOrAction)) {
     } else {
       console.log(`\x1b[90m[aih]\x1b[0m ${cliName} Account ID ${id} was not marked as exhausted.`);
     }
-    logAuditEvent('account.unlock', {
-      cli: cliName,
-      accountId: id,
-      cleared
-    });
     process.exit(0);
   }
   if (idStyleAction && USAGE_ACTIONS.has(idStyleAction)) {
@@ -4854,13 +4711,8 @@ if (!configured) {
   }
 }
 
-const firstForwardArg = String((forwardArgs && forwardArgs[0]) || '').trim().toLowerCase();
-const isAuthFlowArg = firstForwardArg === 'auth' || firstForwardArg === 'login';
-const shouldSyncUsageOnLaunch = process.env.AIH_SYNC_USAGE_ON_LAUNCH === '1' && !isAuthFlowArg;
-if (shouldSyncUsageOnLaunch) {
-  // Optional slow-path: refresh exhausted marker from trusted usage snapshots.
-  syncExhaustedStateFromUsage(cliName, id);
-}
+// Refresh exhausted marker based on trusted usage snapshots before launch.
+syncExhaustedStateFromUsage(cliName, id);
 
 // Check if manually selected account is exhausted
 if (isExhausted(cliName, id)) {

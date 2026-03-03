@@ -148,7 +148,7 @@ aih proxy restart
 aih proxy stop
 ```
 
-在客户端（例如 Cherry Studio）里填写：
+在调用方里填写：
 - `base_url`: `http://127.0.0.1:8317/v1`
 - `api_key`: `dummy`
 
