@@ -23,12 +23,16 @@ function fixStalePreCommitHook(rootDir) {
     return;
   }
 
-  // Cleanup legacy hook that references removed plan guard script.
-  if (!hookBody.includes('scripts/plan-commit-guard.js')) return;
+  const nodeScriptMatch = hookBody.match(/^\s*node\s+([^\s]+)\s*$/m);
+  if (!nodeScriptMatch) return;
+
+  const rawScriptPath = nodeScriptMatch[1].trim();
+  const scriptPath = path.resolve(rootDir, rawScriptPath);
+  if (fs.existsSync(scriptPath)) return;
 
   const safeHook = [
     '#!/bin/sh',
-    '# reset stale plan guard hook removed from repository',
+    '# reset stale hook entry whose target script is missing',
     'exit 0',
     ''
   ].join('\n');
