@@ -106,21 +106,7 @@ function askYesNo(query, defaultYes = true) {
 }
 
 function ensurePlanWatchdogDaemon() {
-  if (String(process.env.AIH_DISABLE_PLAN_WATCHDOG || '').trim() === '1') return;
-  if (String(process.env.AIH_WATCHDOG_CHILD || '').trim() === '1') return;
-  const watchdogScript = path.resolve(__dirname, '..', 'scripts', 'plan-watchdog.js');
-  if (!fs.existsSync(watchdogScript)) return;
-  try {
-    spawnSync(process.execPath, [watchdogScript, '--repair', '--once'], {
-      cwd: path.resolve(__dirname, '..'),
-      stdio: 'ignore',
-      timeout: 3000,
-      env: {
-        ...process.env,
-        AIH_WATCHDOG_CHILD: '1'
-      }
-    });
-  } catch (e) {}
+  // plan subsystem removed
 }
 
 function stripAnsi(string) {
@@ -2304,13 +2290,10 @@ function showHelp() {
   aih <cli> add [or login]  \x1b[90mCreate a new account and run the login flow\x1b[0m
   aih <cli>                 \x1b[90mRun a tool with the default account (ID: 1)\x1b[0m
   aih <cli> auto            \x1b[90mRun the next non-exhausted account automatically\x1b[0m
-  aih codex auto review --pr <PR> [prompt] \x1b[90mRun codex review then auto-merge PR if pass\x1b[0m
-  aih codex auto exec --plan <plans/xxx.plan.md> "<prompt>" \x1b[90mBind one plan to one session\x1b[0m
   aih codex auto exec resume <session_id> [--account <id>] [prompt] \x1b[90mResume a specific exec session precisely\x1b[0m
   aih codex sessions [--limit N] \x1b[90mShow recent codex session_id list\x1b[0m
   aih codex session <session_id> [--once] [--limit N] [--raw] [--self-only] [--timeout N] \x1b[90mShow/follow one session history stream\x1b[0m
   aih codex sessions delete <session_id> \x1b[90mDelete one session binding/history entry\x1b[0m
-  aih codex plan-sessions [plan] \x1b[90mShow plan -> session_id bindings\x1b[0m
   aih codex last-session     \x1b[90mShow current project's latest session_id\x1b[0m
   aih codex policy [set <sandbox>] \x1b[90mShow/update persistent exec sandbox policy\x1b[0m
   aih <cli> usage <id>      \x1b[90mShow trusted usage-remaining snapshot (OAuth only)\x1b[0m
@@ -2506,13 +2489,10 @@ function showCliUsage(cliName) {
   aih ${cliName} add             \x1b[90mCreate a new account and login\x1b[0m
   aih ${cliName} login           \x1b[90mAlias of add\x1b[0m
   aih ${cliName} auto            \x1b[90mAuto-select next non-exhausted account\x1b[0m
-  ${cliName === 'codex' ? `aih codex auto review --pr <PR> [prompt]  \x1b[90mReview then auto-merge PR if pass\x1b[0m` : ''}
-  ${cliName === 'codex' ? `aih codex auto exec --plan <plans/xxx.plan.md> "<prompt>"  \x1b[90mBind one plan to one session\x1b[0m` : ''}
   ${cliName === 'codex' ? `aih codex auto exec resume <session_id> [--account <id>] [prompt]  \x1b[90mResume specific exec session\x1b[0m` : ''}
   ${cliName === 'codex' ? `aih codex sessions [--limit N]  \x1b[90mShow recent codex session_id list\x1b[0m` : ''}
   ${cliName === 'codex' ? `aih codex session <session_id> [--once] [--limit N] [--raw] [--self-only] [--timeout N]  \x1b[90mShow/follow one session history stream\x1b[0m` : ''}
   ${cliName === 'codex' ? `aih codex sessions delete <session_id>  \x1b[90mDelete one session binding/history entry\x1b[0m` : ''}
-  ${cliName === 'codex' ? `aih codex plan-sessions [plan]  \x1b[90mShow plan -> session_id bindings\x1b[0m` : ''}
   ${cliName === 'codex' ? `aih codex last-session  \x1b[90mShow current project's latest session_id\x1b[0m` : ''}
   ${cliName === 'codex' ? `aih codex policy [set <workspace-write|read-only|danger-full-access>]  \x1b[90mShow/update persistent exec sandbox policy\x1b[0m` : ''}
   aih ${cliName} usage <id>      \x1b[90mShow trusted usage-remaining snapshot (OAuth)\x1b[0m
@@ -4285,7 +4265,7 @@ const ACCOUNT_ACTIONS = new Set(['account', 'accounts', 'acct']);
 const ACCOUNT_IMPORT_ACTIONS = new Set(['import']);
 const SESSION_LIST_ACTIONS = new Set(['sessions', 'task-sessions', 'task_sessions', 'session-map', 'session_map']);
 const SESSION_STREAM_ACTIONS = new Set(['session']);
-const PLAN_SESSION_ACTIONS = new Set(['plan-sessions', 'plan_sessions', 'plansessions']);
+const PLAN_SESSION_ACTIONS = new Set([]);
 const LAST_SESSION_ACTIONS = new Set(['last-session', 'last_session', 'latest-session', 'latest_session']);
 const PERMISSION_POLICY_ACTIONS = new Set(['policy', 'permission-policy', 'permission_policy', 'permissions']);
 const KNOWN_ACTIONS = new Set(['ls', 'set-default', 'add', 'login', 'auth', 'auto', ...ACCOUNT_ACTIONS, ...SESSION_LIST_ACTIONS, ...SESSION_STREAM_ACTIONS, ...PLAN_SESSION_ACTIONS, ...LAST_SESSION_ACTIONS, ...PERMISSION_POLICY_ACTIONS, ...UNLOCK_ACTIONS, ...USAGE_ACTIONS, ...USAGES_ACTIONS, ...DEPRECATED_IMPORT_OUTPUT_ACTIONS]);
@@ -4688,12 +4668,18 @@ if (idOrAction === 'auto') {
   let planPath = '';
   if (cliName === 'codex') {
     if (String(forwardArgs[0] || '') === 'review') {
-      runCodexAutoReviewFlow(nextId, allocation.leaseToken, forwardArgs);
-      return;
+      console.error('\x1b[31m[aih]\x1b[0m codex auto review has been removed.');
+      releaseAutoAccount(cliName, nextId, allocation.leaseToken);
+      process.exit(1);
     }
     const resolved = resolveCodexAutoExecArgs(forwardArgs);
     if (resolved.error) {
       console.error(`\x1b[31m[aih]\x1b[0m ${resolved.error}`);
+      process.exit(1);
+    }
+    if (String(resolved.planPath || '').trim()) {
+      console.error('\x1b[31m[aih]\x1b[0m --plan mode has been removed.');
+      releaseAutoAccount(cliName, nextId, allocation.leaseToken);
       process.exit(1);
     }
     forwardArgs = resolved.args;
@@ -4750,14 +4736,10 @@ if (idOrAction === 'auto') {
     })();
     const isExec = String(normalizedForwardArgs[0] || '') === 'exec';
     const isResume = String(normalizedForwardArgs[1] || '') === 'resume';
-    if (isExec && !isResume && taskKey && planPath) {
-      const claim = claimPlanTask(planPath, taskKey, 'aih-auto');
-      if (!claim.ok) {
-        console.error(`\x1b[31m[aih auto]\x1b[0m ${claim.error}`);
-        releaseAutoAccount(cliName, nextId, allocation.leaseToken);
-        process.exit(1);
-      }
-      console.log(`\x1b[36m[aih auto]\x1b[0m Claimed ${claim.taskId} -> ${claim.owner} (${claim.branch})`);
+    if (isExec && !isResume && (taskKey || planPath)) {
+      console.error('\x1b[31m[aih]\x1b[0m plan claim mode has been removed.');
+      releaseAutoAccount(cliName, nextId, allocation.leaseToken);
+      process.exit(1);
     }
     if (resolved.note) {
       console.log(`\x1b[36m[aih auto]\x1b[0m ${resolved.note}`);
