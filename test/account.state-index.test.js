@@ -72,3 +72,29 @@ test('account state index stores and returns display name', () => {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('account state index setExhausted does not create phantom rows', () => {
+  const root = mkTmpDir();
+  try {
+    const index = createAccountStateIndex({ aiHomeDir: root, fs });
+    const changed = index.setExhausted('codex', '999', true);
+    assert.equal(changed, false);
+    assert.deepEqual(index.listAccountIds('codex'), []);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('account state index prunes missing ids deterministically', () => {
+  const root = mkTmpDir();
+  try {
+    const index = createAccountStateIndex({ aiHomeDir: root, fs });
+    index.upsertAccountState('codex', '1', { configured: true, exhausted: false, remainingPct: 50 });
+    index.upsertAccountState('codex', '2', { configured: true, exhausted: false, remainingPct: 80 });
+    const removed = index.pruneMissingIds('codex', ['2']);
+    assert.equal(removed, 1);
+    assert.deepEqual(index.listAccountIds('codex'), ['2']);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
