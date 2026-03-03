@@ -25,13 +25,6 @@
   },
   "bundle": {
     "active": true,
-    "resources": [
-      "../../../bin",
-      "../../../lib",
-      "../../../scripts",
-      "../../../package.json",
-      "../../../package-lock.json"
-    ],
     "targets": [
       "nsis",
       "msi",
@@ -41,7 +34,7 @@
       "app",
       "dmg"
     ],
-    "createUpdaterArtifacts": false,
+    "createUpdaterArtifacts": true,
     "publisher": "AI Home Team",
     "homepage": "https://github.com/example/ai-home",
     "copyright": "Copyright (c) 2026 AI Home Team",
@@ -68,9 +61,7 @@
       "hardenedRuntime": true,
       "signingIdentity": null,
       "providerShortName": null,
-      "entitlements": null,
-      "frameworks": [],
-      "files": {}
+      "entitlements": null
     },
     "linux": {
       "deb": {

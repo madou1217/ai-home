@@ -1,21 +1,19 @@
 import { Component, type ErrorInfo, type ReactNode, useEffect, useMemo, useState } from "react";
 import DashboardView from "./views/dashboard";
 import SessionLauncherView from "./views/session-launcher";
-import SessionsView from "./views/sessions";
 import MigrationView from "./views/migration";
 import AuditLogView from "./views/audit-log";
 
-type TabKey = "dashboard" | "launcher" | "sessions" | "migration" | "audit";
+type TabKey = "dashboard" | "launcher" | "migration" | "audit";
 
 const TAB_LABELS: Record<TabKey, string> = {
   dashboard: "Dashboard",
   launcher: "Session Launcher",
-  sessions: "Sessions",
   migration: "Migration",
   audit: "Audit Log",
 };
 
-const TAB_ORDER: TabKey[] = ["dashboard", "launcher", "sessions", "migration", "audit"];
+const TAB_ORDER: TabKey[] = ["dashboard", "launcher", "migration", "audit"];
 const DEFAULT_TAB: TabKey = "dashboard";
 
 function parseHashToTab(hashValue: string): TabKey | null {
@@ -112,7 +110,6 @@ class AppShellErrorBoundary extends Component<AppShellErrorBoundaryProps, AppShe
 function renderView(tab: TabKey) {
   if (tab === "dashboard") return <DashboardView />;
   if (tab === "launcher") return <SessionLauncherView />;
-  if (tab === "sessions") return <SessionsView />;
   if (tab === "migration") return <MigrationView />;
   return <AuditLogView />;
 }
@@ -160,7 +157,7 @@ export default function App() {
       <header style={{ marginBottom: 18 }}>
         <h1 style={{ margin: 0, fontSize: 26 }}>AI Home Desktop</h1>
         <p style={{ margin: "8px 0 0", color: "#4b5563" }}>
-          Desktop control center for dashboard monitoring, session launch/management, migration, and audit visibility.
+          Desktop control center for dashboard monitoring, one-click session launch, migration, and audit visibility.
         </p>
       </header>
 

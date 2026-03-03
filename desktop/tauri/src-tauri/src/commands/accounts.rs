@@ -6,16 +6,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 const EXHAUSTED_COOLDOWN_MS: u128 = 3_600_000;
 const ACCOUNTS_COMMANDS: [&str; 3] = ["accounts_namespace_info", "list", "set_default"];
-const ACCOUNTS_ERROR_CODES: [&str; 8] = [
-  "ACCOUNTS_HOME_NOT_SET",
-  "ACCOUNTS_INVALID_INPUT",
-  "ACCOUNTS_CLI_REQUIRED",
-  "ACCOUNTS_ID_REQUIRED",
-  "ACCOUNTS_UNSUPPORTED_CLI",
-  "ACCOUNTS_INVALID_ID",
-  "ACCOUNTS_NOT_FOUND",
-  "ACCOUNTS_DEFAULT_WRITE_FAILED",
-];
 
 #[derive(Serialize)]
 pub struct AccountsNamespaceInfo {
@@ -32,7 +22,6 @@ pub enum AccountsAction {
 }
 
 #[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct AccountStatusItem {
   pub id: String,
   pub configured: bool,
@@ -42,45 +31,18 @@ pub struct AccountStatusItem {
 }
 
 #[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AccountsCommandData {
-  pub cli_name: Option<String>,
-  pub default_id: Option<String>,
-  pub default_exists: Option<bool>,
-  pub updated_default_id: Option<String>,
-  pub accounts: Vec<AccountStatusItem>,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct AccountsCommandResponse {
   pub namespace: &'static str,
   pub action: &'static str,
   pub ok: bool,
   pub code: &'static str,
   pub message: String,
-  pub data: AccountsCommandData,
+  pub cli_name: Option<String>,
+  pub default_id: Option<String>,
+  pub default_exists: Option<bool>,
+  pub updated_default_id: Option<String>,
+  pub accounts: Vec<AccountStatusItem>,
   pub commands: Vec<&'static str>,
-  pub error_codes: Vec<&'static str>,
-}
-
-fn build_response(
-  action: &'static str,
-  ok: bool,
-  code: &'static str,
-  message: String,
-  data: AccountsCommandData,
-) -> AccountsCommandResponse {
-  AccountsCommandResponse {
-    namespace: "accounts",
-    action,
-    ok,
-    code,
-    message,
-    data,
-    commands: ACCOUNTS_COMMANDS.to_vec(),
-    error_codes: ACCOUNTS_ERROR_CODES.to_vec(),
-  }
 }
 
 fn supported_cli(cli_name: &str) -> bool {
@@ -332,55 +294,30 @@ fn write_default_account_id(tool_dir: &Path, account_id: &str) -> crate::Fronten
 
 fn list_accounts(cli_name: &str) -> crate::FrontendResult<AccountsCommandResponse> {
   if !supported_cli(cli_name) {
-    return Ok(build_response(
-      "list",
-      false,
+    return Err(crate::map_command_error(
+      "accounts",
       "ACCOUNTS_UNSUPPORTED_CLI",
       format!("unsupported cli: {cli_name}"),
-      AccountsCommandData {
-        cli_name: Some(cli_name.to_string()),
-        default_id: None,
-        default_exists: None,
-        updated_default_id: None,
-        accounts: vec![],
-      },
     ));
   }
 
-  let tool_dir = match profiles_root() {
-    Ok(root) => root.join(cli_name),
-    Err(err) => {
-      return Ok(build_response(
-        "list",
-        false,
-        err.code,
-        err.message,
-        AccountsCommandData {
-          cli_name: Some(cli_name.to_string()),
-          default_id: None,
-          default_exists: None,
-          updated_default_id: None,
-          accounts: vec![],
-        },
-      ));
-    }
-  };
+  let tool_dir = profiles_root()?.join(cli_name);
   let default_id = sanitize_account_id(read_text_file(&tool_dir.join(".aih_default")));
 
   if !tool_dir.exists() {
-    return Ok(build_response(
-      "list",
-      true,
-      "ACCOUNTS_LIST_OK",
-      format!("no accounts found for {cli_name}"),
-      AccountsCommandData {
-        cli_name: Some(cli_name.to_string()),
-        default_id,
-        default_exists: Some(false),
-        updated_default_id: None,
-        accounts: vec![],
-      },
-    ));
+    return Ok(AccountsCommandResponse {
+      namespace: "accounts",
+      action: "list",
+      ok: true,
+      code: "ACCOUNTS_LIST_OK",
+      message: format!("no accounts found for {cli_name}"),
+      cli_name: Some(cli_name.to_string()),
+      default_id,
+      default_exists: Some(false),
+      updated_default_id: None,
+      accounts: vec![],
+      commands: ACCOUNTS_COMMANDS.to_vec(),
+    });
   }
 
   let ids = collect_account_ids(&tool_dir);
@@ -404,118 +341,63 @@ fn list_accounts(cli_name: &str) -> crate::FrontendResult<AccountsCommandRespons
     })
     .collect();
 
-  Ok(build_response(
-    "list",
-    true,
-    "ACCOUNTS_LIST_OK",
-    format!("listed accounts for {cli_name}"),
-    AccountsCommandData {
-      cli_name: Some(cli_name.to_string()),
-      default_id,
-      default_exists: Some(default_exists),
-      updated_default_id: None,
-      accounts,
-    },
-  ))
+  Ok(AccountsCommandResponse {
+    namespace: "accounts",
+    action: "list",
+    ok: true,
+    code: "ACCOUNTS_LIST_OK",
+    message: format!("listed accounts for {cli_name}"),
+    cli_name: Some(cli_name.to_string()),
+    default_id,
+    default_exists: Some(default_exists),
+    updated_default_id: None,
+    accounts,
+    commands: ACCOUNTS_COMMANDS.to_vec(),
+  })
 }
 
 fn set_default_account(cli_name: &str, account_id: &str) -> crate::FrontendResult<AccountsCommandResponse> {
   if !supported_cli(cli_name) {
-    return Ok(build_response(
-      "set_default",
-      false,
+    return Err(crate::map_command_error(
+      "accounts",
       "ACCOUNTS_UNSUPPORTED_CLI",
       format!("unsupported cli: {cli_name}"),
-      AccountsCommandData {
-        cli_name: Some(cli_name.to_string()),
-        default_id: None,
-        default_exists: None,
-        updated_default_id: None,
-        accounts: vec![],
-      },
     ));
   }
 
   if !account_id.chars().all(|c| c.is_ascii_digit()) {
-    return Ok(build_response(
-      "set_default",
-      false,
+    return Err(crate::map_command_error(
+      "accounts",
       "ACCOUNTS_INVALID_ID",
       format!("invalid account id: {account_id}"),
-      AccountsCommandData {
-        cli_name: Some(cli_name.to_string()),
-        default_id: None,
-        default_exists: None,
-        updated_default_id: None,
-        accounts: vec![],
-      },
     ));
   }
 
-  let tool_dir = match profiles_root() {
-    Ok(root) => root.join(cli_name),
-    Err(err) => {
-      return Ok(build_response(
-        "set_default",
-        false,
-        err.code,
-        err.message,
-        AccountsCommandData {
-          cli_name: Some(cli_name.to_string()),
-          default_id: None,
-          default_exists: None,
-          updated_default_id: None,
-          accounts: vec![],
-        },
-      ));
-    }
-  };
+  let tool_dir = profiles_root()?.join(cli_name);
   let account_dir = tool_dir.join(account_id);
   if !account_dir.is_dir() {
-    return Ok(build_response(
-      "set_default",
-      false,
+    return Err(crate::map_command_error(
+      "accounts",
       "ACCOUNTS_NOT_FOUND",
       format!("account id {account_id} does not exist for {cli_name}"),
-      AccountsCommandData {
-        cli_name: Some(cli_name.to_string()),
-        default_id: None,
-        default_exists: Some(false),
-        updated_default_id: None,
-        accounts: vec![],
-      },
     ));
   }
 
-  if let Err(err) = write_default_account_id(&tool_dir, account_id) {
-    return Ok(build_response(
-      "set_default",
-      false,
-      err.code,
-      err.message,
-      AccountsCommandData {
-        cli_name: Some(cli_name.to_string()),
-        default_id: None,
-        default_exists: None,
-        updated_default_id: None,
-        accounts: vec![],
-      },
-    ));
-  }
+  write_default_account_id(&tool_dir, account_id)?;
 
-  Ok(build_response(
-    "set_default",
-    true,
-    "ACCOUNTS_SET_DEFAULT_OK",
-    format!("set default account to {account_id} for {cli_name}"),
-    AccountsCommandData {
-      cli_name: Some(cli_name.to_string()),
-      default_id: Some(account_id.to_string()),
-      default_exists: Some(true),
-      updated_default_id: Some(account_id.to_string()),
-      accounts: vec![],
-    },
-  ))
+  Ok(AccountsCommandResponse {
+    namespace: "accounts",
+    action: "set_default",
+    ok: true,
+    code: "ACCOUNTS_SET_DEFAULT_OK",
+    message: format!("set default account to {account_id} for {cli_name}"),
+    cli_name: Some(cli_name.to_string()),
+    default_id: Some(account_id.to_string()),
+    default_exists: Some(true),
+    updated_default_id: Some(account_id.to_string()),
+    accounts: vec![],
+    commands: ACCOUNTS_COMMANDS.to_vec(),
+  })
 }
 
 #[tauri::command]
@@ -527,97 +409,47 @@ pub fn accounts_namespace_info(
 ) -> crate::FrontendResult<AccountsCommandResponse> {
   if let Some(reason) = simulate_error {
     if reason == "invalid_input" {
-      return Ok(build_response(
-        "namespace_info",
-        false,
+      return Err(crate::map_command_error(
+        "accounts",
         "ACCOUNTS_INVALID_INPUT",
-        "invalid input for accounts namespace".to_string(),
-        AccountsCommandData {
-          cli_name: None,
-          default_id: None,
-          default_exists: None,
-          updated_default_id: None,
-          accounts: vec![],
-        },
+        "invalid input for accounts namespace",
       ));
     }
   }
 
   match action.unwrap_or(AccountsAction::NamespaceInfo) {
-    AccountsAction::NamespaceInfo => Ok(build_response(
-      "namespace_info",
-      true,
-      "ACCOUNTS_NAMESPACE_INFO_OK",
-      "accounts namespace ready".to_string(),
-      AccountsCommandData {
-        cli_name: None,
-        default_id: None,
-        default_exists: None,
-        updated_default_id: None,
-        accounts: vec![],
-      },
-    )),
+    AccountsAction::NamespaceInfo => Ok(AccountsCommandResponse {
+      namespace: "accounts",
+      action: "namespace_info",
+      ok: true,
+      code: "ACCOUNTS_NAMESPACE_INFO_OK",
+      message: "accounts namespace ready".to_string(),
+      cli_name: None,
+      default_id: None,
+      default_exists: None,
+      updated_default_id: None,
+      accounts: vec![],
+      commands: ACCOUNTS_COMMANDS.to_vec(),
+    }),
     AccountsAction::List => {
-      let Some(cli) = cli_name
+      let cli = cli_name
         .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty())
-      else {
-        return Ok(build_response(
-          "list",
-          false,
-          "ACCOUNTS_CLI_REQUIRED",
-          "cli_name is required".to_string(),
-          AccountsCommandData {
-            cli_name: None,
-            default_id: None,
-            default_exists: None,
-            updated_default_id: None,
-            accounts: vec![],
-          },
-        ));
-      };
+        .ok_or_else(|| crate::map_command_error("accounts", "ACCOUNTS_CLI_REQUIRED", "cli_name is required"))?;
       list_accounts(cli)
     }
     AccountsAction::SetDefault => {
-      let Some(cli) = cli_name
+      let cli = cli_name
         .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty())
-      else {
-        return Ok(build_response(
-          "set_default",
-          false,
-          "ACCOUNTS_CLI_REQUIRED",
-          "cli_name is required".to_string(),
-          AccountsCommandData {
-            cli_name: None,
-            default_id: None,
-            default_exists: None,
-            updated_default_id: None,
-            accounts: vec![],
-          },
-        ));
-      };
-      let Some(id) = account_id
+        .ok_or_else(|| crate::map_command_error("accounts", "ACCOUNTS_CLI_REQUIRED", "cli_name is required"))?;
+      let id = account_id
         .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty())
-      else {
-        return Ok(build_response(
-          "set_default",
-          false,
-          "ACCOUNTS_ID_REQUIRED",
-          "account_id is required".to_string(),
-          AccountsCommandData {
-            cli_name: Some(cli.to_string()),
-            default_id: None,
-            default_exists: None,
-            updated_default_id: None,
-            accounts: vec![],
-          },
-        ));
-      };
+        .ok_or_else(|| crate::map_command_error("accounts", "ACCOUNTS_ID_REQUIRED", "account_id is required"))?;
       set_default_account(cli, id)
     }
   }

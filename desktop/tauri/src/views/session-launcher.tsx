@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from "react";
-import SessionsView from "./sessions";
 
 export type CliName = "codex" | "claude" | "gemini";
 export type CliAccounts = Record<CliName, string[]>;
@@ -11,9 +10,9 @@ interface LaunchRequest {
 }
 
 interface SessionLauncherProps {
-  accountsByCli?: CliAccounts;
-  busy?: boolean;
-  onLaunch?: (request: LaunchRequest) => Promise<void>;
+  accountsByCli: CliAccounts;
+  busy: boolean;
+  onLaunch: (request: LaunchRequest) => Promise<void>;
 }
 
 type LaunchPhase = "idle" | "launching" | "ok" | "error";
@@ -36,18 +35,6 @@ const CLI_LABEL: Record<CliName, string> = {
 
 const CLI_ROWS: CliName[] = ["codex", "claude", "gemini"];
 const LAUNCH_TIMEOUT_MS = 15000;
-const EMPTY_ACCOUNTS: CliAccounts = { codex: [], claude: [], gemini: [] };
-
-declare global {
-  interface Window {
-    __TAURI__?: {
-      invoke?: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
-      core?: {
-        invoke?: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
-      };
-    };
-  }
-}
 
 function nowLabel(): string {
   return new Date().toLocaleTimeString();
@@ -67,14 +54,6 @@ function timeoutAfter(ms: number): Promise<never> {
 
 function emptyLaunchState(): LaunchUiState {
   return { phase: "idle", message: "", hint: "" };
-}
-
-async function invokeTauri<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
-  const invokeFn = window.__TAURI__?.core?.invoke || window.__TAURI__?.invoke;
-  if (!invokeFn) {
-    throw new Error("tauri_invoke_unavailable");
-  }
-  return invokeFn<T>(cmd, args ?? {});
 }
 
 function classifyFailure(cli: CliName, error: unknown): { message: string; hint: string } {
@@ -104,10 +83,7 @@ function classifyFailure(cli: CliName, error: unknown): { message: string; hint:
   };
 }
 
-export default function SessionLauncher(props: SessionLauncherProps = {}) {
-  const launchBusy = Boolean(props.busy);
-  const accountsByCli = props.accountsByCli || EMPTY_ACCOUNTS;
-
+export default function SessionLauncher(props: SessionLauncherProps) {
   const [prompt, setPrompt] = useState("");
   const [selectedByCli, setSelectedByCli] = useState<Record<CliName, string>>({
     codex: "",
@@ -126,7 +102,7 @@ export default function SessionLauncher(props: SessionLauncherProps = {}) {
       const next = { ...prev };
       let changed = false;
       CLI_ROWS.forEach((cli) => {
-        const options = accountsByCli[cli] || [];
+        const options = props.accountsByCli[cli] || [];
         const current = prev[cli];
         if (!options.length && current !== "") {
           next[cli] = "";
@@ -140,17 +116,9 @@ export default function SessionLauncher(props: SessionLauncherProps = {}) {
       });
       return changed ? next : prev;
     });
-  }, [accountsByCli]);
+  }, [props.accountsByCli]);
 
   const cliRows = useMemo(() => CLI_ROWS, []);
-
-  async function launchViaDesktopBridge(request: LaunchRequest): Promise<void> {
-    await invokeTauri<number>("launch_aih_session", {
-      cli: request.cli,
-      accountId: request.accountId,
-      prompt: request.prompt || null,
-    });
-  }
 
   async function triggerLaunch(cli: CliName, request: LaunchRequest): Promise<void> {
     setLastRequestByCli((prev) => ({ ...prev, [cli]: request }));
@@ -160,8 +128,7 @@ export default function SessionLauncher(props: SessionLauncherProps = {}) {
     }));
 
     try {
-      const launchAction = props.onLaunch || launchViaDesktopBridge;
-      await Promise.race([launchAction(request), timeoutAfter(LAUNCH_TIMEOUT_MS)]);
+      await Promise.race([props.onLaunch(request), timeoutAfter(LAUNCH_TIMEOUT_MS)]);
       setLaunchByCli((prev) => ({
         ...prev,
         [cli]: {
@@ -202,10 +169,10 @@ export default function SessionLauncher(props: SessionLauncherProps = {}) {
 
       <div style={{ display: "grid", gap: 10 }}>
         {cliRows.map((cli) => {
-          const accounts = accountsByCli[cli] || [];
+          const accounts = props.accountsByCli[cli] || [];
           const selected = selectedByCli[cli] || "";
           const launchState = launchByCli[cli];
-          const canLaunch = Boolean(selected) && !launchBusy && launchState.phase !== "launching";
+          const canLaunch = Boolean(selected) && !props.busy && launchState.phase !== "launching";
           const canRetry = launchState.phase === "error" && Boolean(lastRequestByCli[cli]);
 
           return (
@@ -237,7 +204,7 @@ export default function SessionLauncher(props: SessionLauncherProps = {}) {
                       setSelectedByCli((prev) => ({ ...prev, [cli]: value }));
                     }}
                     style={{ marginLeft: 8 }}
-                    disabled={!accounts.length || launchBusy}
+                    disabled={!accounts.length || props.busy}
                   >
                     {!accounts.length ? <option value="">N/A</option> : null}
                     {accounts.map((id) => (
@@ -279,7 +246,7 @@ export default function SessionLauncher(props: SessionLauncherProps = {}) {
                       if (!request) return;
                       void triggerLaunch(cli, request);
                     }}
-                    disabled={launchBusy || launchState.phase === "launching"}
+                    disabled={props.busy || launchState.phase === "launching"}
                   >
                     Retry Last Launch
                   </button>
@@ -305,8 +272,6 @@ export default function SessionLauncher(props: SessionLauncherProps = {}) {
           );
         })}
       </div>
-
-      <SessionsView prompt={prompt} />
     </section>
   );
 }
