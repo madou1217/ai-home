@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { syncCodexAccountsToProxy } = require('../lib/proxy/sync');
+const { syncCodexAccountsToProxy } = require('../lib/server/sync');
 
 function mkTmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'aih-sync-test-'));

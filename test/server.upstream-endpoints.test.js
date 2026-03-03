@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { handleUpstreamPassthrough } = require('../lib/proxy/upstream-endpoints');
+const { handleUpstreamPassthrough } = require('../lib/server/upstream-endpoints');
 
 function createResCapture() {
   return {

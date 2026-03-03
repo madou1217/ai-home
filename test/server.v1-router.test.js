@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { handleV1Request } = require('../lib/proxy/v1-router');
+const { handleV1Request } = require('../lib/server/v1-router');
 
 function createResCapture() {
   return {

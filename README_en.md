@@ -43,7 +43,7 @@ Instead of browser auth, you can inject third-party API keys (like OpenRouter).
 aih claude add api_key
 
 # Method B: Auto-detect exported env vars
-export OPENAI_BASE_URL="https://api.your-proxy.com/v1"
+export OPENAI_BASE_URL="https://api.your-server.com/v1"
 export OPENAI_API_KEY="sk-xxxx"
 aih codex
 ```

@@ -44,7 +44,7 @@ aih codex add
 aih claude add api_key
 
 # 方式 B：自动识别环境变量 (极客推荐)
-export OPENAI_BASE_URL="https://api.your-proxy.com/v1"
+export OPENAI_BASE_URL="https://api.your-server.com/v1"
 export OPENAI_API_KEY="sk-xxxx"
 aih codex
 ```

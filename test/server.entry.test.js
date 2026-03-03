@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { runProxyEntry } = require('../lib/proxy/entry');
+const { runProxyEntry } = require('../lib/server/entry');
 
 test('runProxyEntry wires start/sync delegates into runProxyCommand', async () => {
   let seenStart = false;

@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { loadCodexProxyAccounts } = require('../lib/proxy/accounts');
+const { loadCodexProxyAccounts } = require('../lib/server/accounts');
 
 function writeJson(filePath, payload) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });

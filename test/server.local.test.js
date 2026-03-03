@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const {
   isRetriableLocalError,
   getLocalFailureCooldownMs
-} = require('../lib/proxy/local');
+} = require('../lib/server/local');
 
 test('local errors: usage limit is not retriable', () => {
   const msg = 'ERROR: You\'ve hit your usage limit. Upgrade to Plus to continue using Codex.';

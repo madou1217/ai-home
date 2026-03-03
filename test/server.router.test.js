@@ -5,7 +5,7 @@ const {
   chooseProxyAccount,
   markProxyAccountSuccess,
   markProxyAccountFailure
-} = require('../lib/proxy/router');
+} = require('../lib/server/router');
 
 test('resolveRequestProvider respects explicit mode and model hint', () => {
   assert.equal(resolveRequestProvider({ provider: 'codex' }, { model: 'gemini-2.5-flash' }), 'codex');

@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { handleManagementRequest } = require('../lib/proxy/management-router');
+const { handleManagementRequest } = require('../lib/server/management-router');
 
 function createResCapture() {
   return {
