@@ -1496,7 +1496,7 @@ function listProfiles(filterCliName = null) {
         batch.forEach(id => {
           const pDir = path.join(toolDir, id);
           const { configured, accountName } = checkStatus(tool, pDir);
-          // Keep ls lightweight: do not refresh remote usage for every account here.
+          // Keep ls lightweight: do not refresh usage snapshot for every account here.
           const exhausted = isExhausted(tool, id) ? `\x1b[31m[Exhausted Limit]\x1b[0m ` : '';
           const isDefault = (id === defaultId) ? `\x1b[32m[★ Default]\x1b[0m ` : '';
           const usageLabel = formatUsageLabel(tool, id, accountName);

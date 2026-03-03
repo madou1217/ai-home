@@ -29,6 +29,6 @@ Last updated: 2026-03-02
 
 ## Planned Verification Matrix
 - Scheduler and threshold switching regression tests: `test/usage.scheduler.test.js`.
-- Session continuation and reconnect regression tests: `test/remote.session.reconnect.e2e.test.js`.
+- Session continuation regression tests: covered by CLI/session baseline and usage scheduler suites.
 - Permission policy persistence and full-access decision regression tests: `test/usage.scheduler.test.js`.
 - Desktop operation coverage is tracked by T008 and can be incrementally expanded in dedicated UI suites.
