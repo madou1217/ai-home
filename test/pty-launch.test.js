@@ -46,7 +46,7 @@ test('resolveWindowsBatchLaunch injects cmd directory into PATH and uses basenam
     { Path: 'C:\\Windows\\System32' },
     'win32'
   );
-  assert.equal(resolved.launchBin, 'codex.cmd');
+  assert.equal(resolved.launchBin, 'codex');
   assert.match(resolved.envPatch.Path, /D:\\nvm4w\\nodejs/i);
   assert.equal(resolved.envPatch.Path, resolved.envPatch.PATH);
 });
