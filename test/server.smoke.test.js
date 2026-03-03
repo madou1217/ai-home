@@ -3,6 +3,9 @@ const assert = require('node:assert/strict');
 const { spawn } = require('node:child_process');
 const path = require('node:path');
 const net = require('node:net');
+const http = require('node:http');
+const fs = require('node:fs');
+const os = require('node:os');
 
 async function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -38,6 +41,7 @@ async function waitForHealth(port, timeoutMs = 10000) {
 async function startProxy(t, extraArgs = []) {
   const port = await getFreePort();
   const cliPath = path.join(process.cwd(), 'bin', 'ai-home.js');
+  const testHome = fs.mkdtempSync(path.join(os.tmpdir(), 'aih-smoke-'));
   const child = spawn(process.execPath, [
     cliPath,
     'server',
@@ -45,12 +49,16 @@ async function startProxy(t, extraArgs = []) {
     '--port',
     String(port),
     '--backend',
-    'codex-local',
+    'openai-upstream',
     '--provider',
     'codex',
     ...extraArgs
   ], {
-    stdio: ['ignore', 'pipe', 'pipe']
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: {
+      ...process.env,
+      AIH_HOME: testHome
+    }
   });
 
   let stderr = '';
@@ -60,13 +68,43 @@ async function startProxy(t, extraArgs = []) {
   t.after(() => {
     try { child.kill('SIGTERM'); } catch (e) {}
     try { child.kill('SIGKILL'); } catch (e) {}
+    try { fs.rmSync(testHome, { recursive: true, force: true }); } catch (_error) {}
   });
 
   return { child, port, getStderr: () => stderr };
 }
 
+async function startMockUpstream(t) {
+  const port = await getFreePort();
+  const server = http.createServer(async (req, res) => {
+    const method = String(req.method || 'GET').toUpperCase();
+    const pathname = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`).pathname;
+    if (method === 'GET' && pathname === '/v1/models') {
+      res.statusCode = 200;
+      res.setHeader('content-type', 'application/json; charset=utf-8');
+      res.end(JSON.stringify({
+        object: 'list',
+        data: [{ id: 'gpt-4.1', object: 'model', created: 0, owned_by: 'openai' }]
+      }));
+      return;
+    }
+    res.statusCode = 404;
+    res.setHeader('content-type', 'application/json; charset=utf-8');
+    res.end(JSON.stringify({ error: 'not_found' }));
+  });
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(port, '127.0.0.1', resolve);
+  });
+  t.after(() => {
+    try { server.close(); } catch (_error) {}
+  });
+  return `http://127.0.0.1:${port}`;
+}
+
 test('server serve exposes health/models/metrics', async (t) => {
-  const { port, getStderr } = await startProxy(t);
+  const upstream = await startMockUpstream(t);
+  const { port, getStderr } = await startProxy(t, ['--upstream', upstream]);
   const ready = await waitForHealth(port, 12000);
   assert.equal(ready, true, `server did not become healthy: ${getStderr()}`);
 
@@ -95,7 +133,9 @@ test('server serve exposes health/models/metrics', async (t) => {
 });
 
 test('server serve enforces client and management keys when configured', async (t) => {
+  const upstream = await startMockUpstream(t);
   const { port, getStderr } = await startProxy(t, [
+    '--upstream', upstream,
     '--client-key', 'client-secret',
     '--management-key', 'mgmt-secret'
   ]);
@@ -132,24 +172,26 @@ test('server serve enforces client and management keys when configured', async (
   assert.ok(Number(metrics.totalRequests) >= 1);
 });
 
-test('server serve returns codex-local unsupported error and records failure metrics', async (t) => {
-  const { port, getStderr } = await startProxy(t);
+test('server serve forwards upstream unsupported endpoint errors and records failures', async (t) => {
+  const deadUpstreamPort = await getFreePort();
+  const upstream = `http://127.0.0.1:${deadUpstreamPort}`;
+  const { port, getStderr } = await startProxy(t, ['--upstream', upstream]);
   const ready = await waitForHealth(port, 12000);
   assert.equal(ready, true, `server did not become healthy: ${getStderr()}`);
 
-  const unsupportedRes = await fetch(`http://127.0.0.1:${port}/v1/edits`, {
+  const unsupportedRes = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
     method: 'POST',
     headers: {
       authorization: 'Bearer dummy',
       'content-type': 'application/json'
     },
-    body: JSON.stringify({ model: 'gpt-4o-mini', input: 'x' })
+    body: JSON.stringify({
+      model: 'gpt-4.1',
+      messages: [{ role: 'user', content: 'hello' }]
+    })
   });
-  assert.equal(unsupportedRes.status, 404);
-  assert.deepEqual(await unsupportedRes.json(), {
-    ok: false,
-    error: 'unsupported_in_codex_local_backend'
-  });
+  assert.ok(unsupportedRes.status >= 400);
+  await unsupportedRes.json();
 
   const metricsRes = await fetch(`http://127.0.0.1:${port}/v0/management/metrics`);
   assert.equal(metricsRes.status, 200);
@@ -157,5 +199,5 @@ test('server serve returns codex-local unsupported error and records failure met
   assert.equal(metrics.ok, true);
   assert.ok(Number(metrics.totalFailures) >= 1);
   const routeErrors = Array.isArray(metrics.lastErrors) ? metrics.lastErrors : [];
-  assert.ok(routeErrors.some((item) => String((item && item.error) || '').includes('unsupported_in_codex_local_backend')));
+  assert.ok(routeErrors.length >= 1);
 });

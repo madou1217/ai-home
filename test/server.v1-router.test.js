@@ -36,7 +36,7 @@ test('v1 router enforces client key', async () => {
     res,
     method: 'GET',
     pathname: '/v1/models',
-    options: { backend: 'codex-local', provider: 'auto' },
+    options: { backend: 'openai-upstream', provider: 'auto' },
     state: {
       modelRegistry: { providers: { codex: new Set(['gpt-4o-mini']), gemini: new Set() } },
       metrics: { totalRequests: 0, routeCounts: {}, totalSuccess: 0 }
@@ -62,7 +62,7 @@ test('v1 router returns 413 when request body exceeds limit', async () => {
     res,
     method: 'POST',
     pathname: '/v1/chat/completions',
-    options: { backend: 'codex-local', provider: 'auto' },
+    options: { backend: 'openai-upstream', provider: 'auto' },
     state: {
       modelRegistry: { providers: { codex: new Set(['gpt-4o-mini']), gemini: new Set() } },
       metrics: { totalRequests: 0, routeCounts: {}, totalSuccess: 0 }
