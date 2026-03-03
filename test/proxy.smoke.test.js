@@ -40,7 +40,7 @@ async function startProxy(t, extraArgs = []) {
   const cliPath = path.join(process.cwd(), 'bin', 'ai-home.js');
   const child = spawn(process.execPath, [
     cliPath,
-    'proxy',
+    'server',
     'serve',
     '--port',
     String(port),
