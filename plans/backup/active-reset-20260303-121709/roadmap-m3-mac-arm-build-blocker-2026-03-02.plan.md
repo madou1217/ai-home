@@ -16,10 +16,10 @@
 - [ ] Keep changes scoped and reviewable via separated PR chain.
 
 ## Checklist
-- [ ] T001 Build blocker root-cause and recovery spec
-- [ ] T002 Reconstruct missing Tauri project scaffolding files
-- [ ] T003 Restore desktop frontend build scaffold and dist generation
-- [ ] T004 Build pipeline validation for macOS arm64 output
+- [x] T001 Build blocker root-cause and recovery spec
+- [x] T002 Reconstruct missing Tauri project scaffolding files
+- [x] T003 Restore desktop frontend build scaffold and dist generation
+- [x] T004 Build pipeline validation for macOS arm64 output
 
 Keep this checklist synced with `status`:
 - `status: done` => `[x]`
@@ -28,15 +28,16 @@ Keep this checklist synced with `status`:
 - id: T001
   title: Build blocker root-cause and recovery spec
   scope: Identify why desktop/tauri/src-tauri cannot build and define exact recovery steps.
-  status: todo
-  owner: 
-  claimed_at: 
-  done_at: 
+  status: done
+  owner: codex
+  claimed_at: 2026-03-02T01:17:48+08:00
+  done_at: 2026-03-02T01:20:58+08:00
   priority: P1
   depends_on: []
   branch: feat/m3-mac-arm-build-blocker
-  pr_or_commit: 
-  blocker: 
+  pr_or_commit: working-tree
+  blocker:
+  deliverable: A short recovery spec documenting missing build essentials and acceptance checks.
   acceptance:
   - Root cause is documented with concrete missing files and expected structure.
   - Recovery path lists exact commands and required artifacts for mac arm packaging.
@@ -47,15 +48,16 @@ Keep this checklist synced with `status`:
 - id: T002
   title: Reconstruct missing Tauri project scaffolding files
   scope: Restore Rust/Tauri manifest and config files required to build desktop app.
-  status: todo
-  owner: 
-  claimed_at: 
-  done_at: 
+  status: done
+  owner: codex
+  claimed_at: 2026-03-02T01:20:58+08:00
+  done_at: 2026-03-02T01:21:56+08:00
   priority: P1
   depends_on: [T001]
   branch: feat/m3-mac-arm-build-blocker
-  pr_or_commit: 
-  blocker: 
+  pr_or_commit: working-tree
+  blocker:
+  deliverable: Buildable `desktop/tauri/src-tauri` scaffolding with valid cargo metadata.
   acceptance:
   - `desktop/tauri/src-tauri/Cargo.toml` exists and references current command modules.
   - `desktop/tauri/src-tauri/build.rs` and minimal cargo metadata are valid for tauri build.
@@ -66,15 +68,16 @@ Keep this checklist synced with `status`:
 - id: T003
   title: Restore desktop frontend build scaffold and dist generation
   scope: Add missing frontend project files so `../dist` can be produced for tauri packaging.
-  status: todo
-  owner: 
-  claimed_at: 
-  done_at: 
+  status: done
+  owner: codex
+  claimed_at: 2026-03-02T01:21:56+08:00
+  done_at: 2026-03-02T01:24:45+08:00
   priority: P1
   depends_on: [T002]
   branch: feat/m3-mac-arm-build-blocker
-  pr_or_commit: 
-  blocker: 
+  pr_or_commit: working-tree
+  blocker:
+  deliverable: Reproducible desktop frontend build producing `desktop/tauri/dist`.
   acceptance:
   - `desktop/tauri` includes minimal package/toolchain files and installs cleanly.
   - `npm run build` under `desktop/tauri` produces `dist/index.html`.
@@ -89,15 +92,16 @@ Keep this checklist synced with `status`:
 - id: T004
   title: Build pipeline validation for macOS arm64 output
   scope: Add/adjust local and CI packaging checks for .app/.dmg on mac arm.
-  status: todo
-  owner: 
-  claimed_at: 
-  done_at: 
+  status: done
+  owner: codex
+  claimed_at: 2026-03-02T01:27:53+08:00
+  done_at: 2026-03-02T01:30:58+08:00
   priority: P1
   depends_on: [T003]
   branch: feat/m3-mac-arm-build-blocker
-  pr_or_commit: 
-  blocker: 
+  pr_or_commit: working-tree
+  blocker:
+  deliverable: Reproducible build command path and CI preflight/build verification.
   acceptance:
   - Local command can produce macOS arm installable output.
   - CI preflight checks fail fast when tauri scaffolding is incomplete.
@@ -114,4 +118,17 @@ Keep this checklist synced with `status`:
   - package.json
 
 ## Activity Log
-- 2026-03-03T04:17:29.652Z [operator] Global reset: reinitialized all tasks to todo for fresh planning cycle (manual mode, no exec-plan session bindings).
+- 2026-03-02T01:13:49+08:00 [coordinator] Plan created for mac arm packaging blocker.
+- 2026-03-02T01:17:48+08:00 [coordinator] Claimed T001 owner=codex.
+- 2026-03-02T01:20:58+08:00 [coordinator] Completed T001 root-cause and recovery spec.
+- 2026-03-02T01:20:58+08:00 [coordinator] Claimed T002 owner=codex.
+- 2026-03-02T01:21:56+08:00 [coordinator] Completed T002 tauri scaffolding restore.
+- 2026-03-02T01:21:56+08:00 [coordinator] Replanned T003/T004 to isolate frontend-dist blocker from CI validation.
+- 2026-03-02T01:21:56+08:00 [coordinator] Claimed T003 owner=codex.
+
+- 2026-03-02T01:23:59+08:00 [aih-auto] Claimed T003 (m3-t003-codex) owner=codex branch=feat/m3-mac-arm-build-blocker.
+- 2026-03-02T01:24:45+08:00 [codex] Completed T003 (m3-t003-codex); verified desktop/tauri frontend scaffold and `npm run build` output `dist/index.html`; set status=done and synced checklist.
+- 2026-03-02T01:27:53+08:00 [coordinator] Claimed T004 owner=codex.
+- 2026-03-02T01:27:53+08:00 [coordinator] Expanded T004 scope for missing icon assets and tauri cli prerequisite.
+- 2026-03-02T01:30:25+08:00 [coordinator] Expanded T004 scope for tauri updater/bundle config fix after bundler error.
+- 2026-03-02T01:30:58+08:00 [codex] Completed T004; built mac arm bundles (.app/.dmg) and verified artifact path/checksum.

@@ -14,14 +14,14 @@
 ## TodoList
 
 ## Checklist
-- [x] T001 Tauri command registration
-- [x] T002 Desktop accounts command module
-- [x] T003 Desktop migration command module
-- [x] T004 Desktop audit command module
-- [x] T005 Desktop dashboard and launcher UI
-- [x] T006 Desktop migration and audit UI
-- [x] T007 Desktop packaging config
-- [x] T008 Desktop release workflow and checklist
+- [ ] T001 Tauri command registration
+- [ ] T002 Desktop accounts command module
+- [ ] T003 Desktop migration command module
+- [ ] T004 Desktop audit command module
+- [ ] T005 Desktop dashboard and launcher UI
+- [ ] T006 Desktop migration and audit UI
+- [ ] T007 Desktop packaging config
+- [ ] T008 Desktop release workflow and checklist
 
 Keep this checklist synced with `status`:
 - `status: done` => `[x]`
@@ -30,16 +30,15 @@ Keep this checklist synced with `status`:
 - id: T001
   title: Tauri command registration
   scope: Wire Rust command endpoints and unified error mapping entrypoint
-  status: done
-  owner: alice
-  claimed_at: 2026-03-01T22:10:42+08:00
-  done_at: 2026-03-01T22:14:55+08:00
+  status: todo
+  owner: 
+  claimed_at: 
+  done_at: 
   priority: P0
   depends_on: []
   branch: feat/alice-m3-t001
-  pr_or_commit: e5d0966
-  blocker:
-  deliverable: Main Tauri entry exposes stable command registration for GUI calls
+  pr_or_commit: 
+  blocker: 
   acceptance:
   - main entry registers account/migration/audit command namespaces
   - command registration failures map to deterministic frontend-visible errors
@@ -49,16 +48,15 @@ Keep this checklist synced with `status`:
 - id: T002
   title: Desktop accounts command module
   scope: Implement Rust command module for account list/status/default switch operations
-  status: done
-  owner: alice
-  claimed_at: 2026-03-01T22:16:27+08:00
-  done_at: 2026-03-01T22:36:51+08:00
+  status: todo
+  owner: 
+  claimed_at: 
+  done_at: 
   priority: P0
   depends_on: [T001]
   branch: feat/alice-m3-t002
-  pr_or_commit: 822715f
-  blocker:
-  deliverable: Accounts command module callable from GUI
+  pr_or_commit: 
+  blocker: 
   acceptance:
   - GUI-callable commands cover account list and default switch
   - command responses include machine-consumable status fields
@@ -68,16 +66,15 @@ Keep this checklist synced with `status`:
 - id: T003
   title: Desktop migration command module
   scope: Implement Rust command module for export/import trigger and progress/result reporting
-  status: done
-  owner: bob
-  claimed_at: 2026-03-01T22:16:27+08:00
-  done_at: 2026-03-01T22:37:15+08:00
+  status: todo
+  owner: 
+  claimed_at: 
+  done_at: 
   priority: P0
   depends_on: [T001]
   branch: feat/bob-m3-t003
-  pr_or_commit: c586997
-  blocker:
-  deliverable: Migration command module with explicit result contract
+  pr_or_commit: 
+  blocker: 
   acceptance:
   - GUI can trigger export/import and receive structured result payload
   - failure states carry actionable reason codes
@@ -87,16 +84,15 @@ Keep this checklist synced with `status`:
 - id: T004
   title: Desktop audit command module
   scope: Implement Rust command module for local audit query and filtering
-  status: done
-  owner: carol
-  claimed_at: 2026-03-01T22:16:27+08:00
-  done_at: 2026-03-01T22:38:06+08:00
+  status: todo
+  owner: 
+  claimed_at: 
+  done_at: 
   priority: P1
   depends_on: [T001]
   branch: feat/carol-m3-t004
-  pr_or_commit: c1c629f
-  blocker:
-  deliverable: Audit command module for local searchable operation logs
+  pr_or_commit: 
+  blocker: 
   acceptance:
   - GUI can query audit records with filters and pagination cursor
   - response schema remains stable for frontend rendering
@@ -106,16 +102,15 @@ Keep this checklist synced with `status`:
 - id: T005
   title: Desktop dashboard and launcher UI
   scope: Build desktop dashboard and one-click session launcher core UI flows
-  status: done
-  owner: dave
-  claimed_at: 2026-03-01T22:16:27+08:00
-  done_at: 2026-03-01T22:37:32+08:00
+  status: todo
+  owner: 
+  claimed_at: 
+  done_at: 
   priority: P0
   depends_on: [T002]
   branch: feat/dave-m3-t005
-  pr_or_commit: 4ce70e1
-  blocker:
-  deliverable: Dashboard view with account/tool status and session launch controls
+  pr_or_commit: 
+  blocker: 
   acceptance:
   - dashboard shows status/default/usage/recent actions
   - one-click launcher supports codex/claude/gemini entry actions
@@ -127,16 +122,15 @@ Keep this checklist synced with `status`:
 - id: T006
   title: Desktop migration and audit UI
   scope: Build visual export/import workflow and local audit browsing UI
-  status: done
-  owner: ivan
-  claimed_at: 2026-03-01T22:16:53+08:00
-  done_at: 2026-03-01T22:38:31+08:00
+  status: todo
+  owner: 
+  claimed_at: 
+  done_at: 
   priority: P1
   depends_on: [T003, T004]
   branch: feat/ivan-m3-t006
-  pr_or_commit: c1d43a7
-  blocker:
-  deliverable: GUI flows for migration and audit visibility
+  pr_or_commit: 
+  blocker: 
   acceptance:
   - migration UI supports trigger/status/result states
   - audit UI supports search/filter and detail expansion
@@ -147,16 +141,15 @@ Keep this checklist synced with `status`:
 - id: T007
   title: Desktop packaging config
   scope: Harden Tauri packaging config for Win/Linux/macOS release artifacts
-  status: done
-  owner: bob
-  claimed_at: 2026-03-01T22:11:25+08:00
-  done_at: 2026-03-01T22:14:10+08:00
+  status: todo
+  owner: 
+  claimed_at: 
+  done_at: 
   priority: P1
   depends_on: []
   branch: feat/bob-m3-t007
-  pr_or_commit: fbcebe7
-  blocker:
-  deliverable: Cross-platform packaging configuration tuned for production deliverables
+  pr_or_commit: 
+  blocker: 
   acceptance:
   - configuration includes platform-specific packaging metadata
   - build config is compatible with CI release workflow
@@ -166,16 +159,15 @@ Keep this checklist synced with `status`:
 - id: T008
   title: Desktop release workflow and checklist
   scope: Create CI release workflow and release-verification checklist for desktop production
-  status: done
-  owner: judy
-  claimed_at: 2026-03-01T22:16:53+08:00
-  done_at: 2026-03-01T22:37:50+08:00
+  status: todo
+  owner: 
+  claimed_at: 
+  done_at: 
   priority: P1
   depends_on: [T007]
   branch: feat/judy-m3-t008
-  pr_or_commit: 60915f1
-  blocker:
-  deliverable: Repeatable release workflow with quality gate checklist
+  pr_or_commit: 
+  blocker: 
   acceptance:
   - workflow emits installable artifacts for three platforms
   - checklist covers add account/switch default/export/import GUI paths
@@ -184,55 +176,4 @@ Keep this checklist synced with `status`:
   - docs/release/desktop-platform-checklist.md
 
 ## Activity Log
-- 2026-03-01T21:34:22+08:00 [ai-coordinator] Plan expanded for high-parallel execution from ROADMAP Milestone 3 (UTC+8).
-- 2026-03-01T21:38:06+08:00 [bob] Claimed T007; set status to doing, owner to bob, and branch to feat/bob-m3-t007.
-
-- 2026-03-01T21:38:21+08:00 [alice] Claimed T001; set status to doing, owner to alice, and branch to feat/alice-m3-t001.
-- 2026-03-01T21:38:58+08:00 [ai-coordinator] Force-claimed T001 for alice (feat/alice-m3-t001) to enable conflict-free parallel coding.
-- 2026-03-01T21:38:58+08:00 [ai-coordinator] Force-claimed T007 for bob (feat/bob-m3-t007) to enable conflict-free parallel coding.
-- 2026-03-01T21:57:34+08:00 [ai-coordinator] Normalized in-flight task metadata for stable board rendering (claimed_at/branch cleanup).
-
-- 2026-03-01T22:09:01+08:00 [ai-coordinator] Reconciled stale doing tasks to todo (no live worker process): T001, T007.
-
-- 2026-03-01T22:10:42+08:00 [aih-auto] Claimed T001 (m3-t001-alice) owner=alice branch=feat/alice-m3-t001.
-
-- 2026-03-01T22:11:25+08:00 [aih-auto] Claimed T007 (m3-t007-bob) owner=bob branch=feat/bob-m3-t007.
-
-- 2026-03-01T22:11:54+08:00 [aih-auto] Claimed T001 (m3-t001-alice) owner=alice branch=feat/alice-m3-t001.
-
-- 2026-03-01T22:14:10+08:00 [ai-coordinator] Marked done by worker commits: T007@fbcebe7.
-
-- 2026-03-01T22:14:55+08:00 [ai-coordinator] Marked done by worker commits: T001@e5d0966.
-
-- 2026-03-01T22:16:27+08:00 [aih-auto] Claimed T002 (m3-t002-alice) owner=alice branch=feat/alice-m3-t002.
-
-- 2026-03-01T22:16:27+08:00 [aih-auto] Claimed T003 (m3-t003-bob) owner=bob branch=feat/bob-m3-t003.
-
-- 2026-03-01T22:16:27+08:00 [aih-auto] Claimed T004 (m3-t004-carol) owner=carol branch=feat/carol-m3-t004.
-
-- 2026-03-01T22:16:27+08:00 [aih-auto] Claimed T005 (m3-t005-dave) owner=dave branch=feat/dave-m3-t005.
-
-- 2026-03-01T22:16:53+08:00 [aih-auto] Claimed T006 (m3-t006-ivan) owner=ivan branch=feat/ivan-m3-t006.
-
-- 2026-03-01T22:16:53+08:00 [aih-auto] Claimed T008 (m3-t008-judy) owner=judy branch=feat/judy-m3-t008.
-
-- 2026-03-01T22:18:39+08:00 [aih-auto] Claimed T002 (m3-t002-alice) owner=alice branch=feat/alice-m3-t002.
-
-- 2026-03-01T22:18:39+08:00 [aih-auto] Claimed T006 (m3-t006-ivan) owner=ivan branch=feat/ivan-m3-t006.
-
-- 2026-03-01T22:18:39+08:00 [aih-auto] Claimed T008 (m3-t008-judy) owner=judy branch=feat/judy-m3-t008.
-
-- 2026-03-01T22:18:39+08:00 [aih-auto] Claimed T004 (m3-t004-carol) owner=carol branch=feat/carol-m3-t004.
-
-- 2026-03-01T22:18:39+08:00 [aih-auto] Claimed T005 (m3-t005-dave) owner=dave branch=feat/dave-m3-t005.
-
-- 2026-03-01T22:18:40+08:00 [aih-auto] Claimed T003 (m3-t003-bob) owner=bob branch=feat/bob-m3-t003.
-
-- 2026-03-01T22:36:51+08:00 [alice] Completed T002 (m3-t002-alice); set status=done, synced checklist, and recorded pr_or_commit=822715f.
-
-- 2026-03-01T22:37:15+08:00 [bob] Completed T003 (m3-t003-bob); set status=done, done_at, synced checklist, and recorded pr_or_commit=c586997.
-
-- 2026-03-01T22:37:32+08:00 [dave] Completed T005 (m3-t005-dave); set status=done, done_at, synced checklist, and recorded pr_or_commit=4ce70e1.
-- 2026-03-01T22:37:50+08:00 [judy] Completed T008 (m3-t008-judy); set status=done, done_at, synced checklist, and recorded pr_or_commit=60915f1.
-- 2026-03-01T22:38:06+08:00 [carol] Completed T004 (m3-t004-carol); set status=done, done_at, synced checklist, and recorded pr_or_commit=c1c629f.
-- 2026-03-01T22:38:31+08:00 [ivan] Completed T006 (m3-t006-ivan); set status=done, done_at, synced checklist, and recorded pr_or_commit=c1d43a7.
+- 2026-03-03T04:17:29.652Z [operator] Global reset: reinitialized all tasks to todo for fresh planning cycle (manual mode, no exec-plan session bindings).

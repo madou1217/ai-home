@@ -74,13 +74,15 @@ Keep this checklist synced with `status`:
 - id: T001
   title: Hyper-scale task 0301
   scope: Deliver scoped output for scaleout task 0301
-  status: todo
-  owner: 
-  claimed_at: 
-  done_at: 
+  status: blocked
+  owner: codex
+  claimed_at: 2026-03-02T00:16:20+08:00
+  done_at:
+  priority: P1
   depends_on: []
   branch: feat/codex-m8-007-t001
-  pr_or_commit: 
+  pr_or_commit:
+  blocker: worker_offline_no_recoverable_session
   deliverable: Complete task 0301 deliverable
   acceptance:
   - output is complete and reviewable
@@ -92,12 +94,14 @@ Keep this checklist synced with `status`:
   title: Hyper-scale task 0302
   scope: Deliver scoped output for scaleout task 0302
   status: todo
-  owner: 
-  claimed_at: 
+  owner: unassigned
+  claimed_at:
+  done_at:
   priority: P1
   depends_on: []
   branch:
-  pr_or_commit: 
+  pr_or_commit:
+  blocker:
   deliverable: Complete task 0302 deliverable
   acceptance:
   - output is complete and reviewable
@@ -109,12 +113,14 @@ Keep this checklist synced with `status`:
   title: Hyper-scale task 0303
   scope: Deliver scoped output for scaleout task 0303
   status: todo
-  owner: 
-  claimed_at: 
+  owner: unassigned
+  claimed_at:
+  done_at:
   priority: P1
   depends_on: []
   branch:
-  pr_or_commit: 
+  pr_or_commit:
+  blocker:
   deliverable: Complete task 0303 deliverable
   acceptance:
   - output is complete and reviewable
@@ -126,12 +132,14 @@ Keep this checklist synced with `status`:
   title: Hyper-scale task 0304
   scope: Deliver scoped output for scaleout task 0304
   status: todo
-  owner: 
-  claimed_at: 
+  owner: unassigned
+  claimed_at:
+  done_at:
   priority: P1
   depends_on: []
   branch:
-  pr_or_commit: 
+  pr_or_commit:
+  blocker:
   deliverable: Complete task 0304 deliverable
   acceptance:
   - output is complete and reviewable
@@ -143,12 +151,14 @@ Keep this checklist synced with `status`:
   title: Hyper-scale task 0305
   scope: Deliver scoped output for scaleout task 0305
   status: todo
-  owner: 
-  claimed_at: 
+  owner: unassigned
+  claimed_at:
+  done_at:
   priority: P1
   depends_on: []
   branch:
-  pr_or_commit: 
+  pr_or_commit:
+  blocker:
   deliverable: Complete task 0305 deliverable
   acceptance:
   - output is complete and reviewable
@@ -160,12 +170,14 @@ Keep this checklist synced with `status`:
   title: Hyper-scale task 0306
   scope: Deliver scoped output for scaleout task 0306
   status: todo
-  owner: 
-  claimed_at: 
+  owner: unassigned
+  claimed_at:
+  done_at:
   priority: P1
   depends_on: []
   branch:
-  pr_or_commit: 
+  pr_or_commit:
+  blocker:
   deliverable: Complete task 0306 deliverable
   acceptance:
   - output is complete and reviewable
@@ -177,12 +189,14 @@ Keep this checklist synced with `status`:
   title: Hyper-scale task 0307
   scope: Deliver scoped output for scaleout task 0307
   status: todo
-  owner: 
-  claimed_at: 
+  owner: unassigned
+  claimed_at:
+  done_at:
   priority: P1
   depends_on: []
   branch:
-  pr_or_commit: 
+  pr_or_commit:
+  blocker:
   deliverable: Complete task 0307 deliverable
   acceptance:
   - output is complete and reviewable
@@ -194,12 +208,14 @@ Keep this checklist synced with `status`:
   title: Hyper-scale task 0308
   scope: Deliver scoped output for scaleout task 0308
   status: todo
-  owner: 
-  claimed_at: 
+  owner: unassigned
+  claimed_at:
+  done_at:
   priority: P1
   depends_on: []
   branch:
-  pr_or_commit: 
+  pr_or_commit:
+  blocker:
   deliverable: Complete task 0308 deliverable
   acceptance:
   - output is complete and reviewable
@@ -211,12 +227,14 @@ Keep this checklist synced with `status`:
   title: Hyper-scale task 0309
   scope: Deliver scoped output for scaleout task 0309
   status: todo
-  owner: 
-  claimed_at: 
+  owner: unassigned
+  claimed_at:
+  done_at:
   priority: P1
   depends_on: []
   branch:
-  pr_or_commit: 
+  pr_or_commit:
+  blocker:
   deliverable: Complete task 0309 deliverable
   acceptance:
   - output is complete and reviewable
@@ -228,12 +246,14 @@ Keep this checklist synced with `status`:
   title: Hyper-scale task 0310
   scope: Deliver scoped output for scaleout task 0310
   status: todo
-  owner: 
-  claimed_at: 
+  owner: unassigned
+  claimed_at:
+  done_at:
   priority: P1
   depends_on: []
   branch:
-  pr_or_commit: 
+  pr_or_commit:
+  blocker:
   deliverable: Complete task 0310 deliverable
   acceptance:
   - output is complete and reviewable
@@ -245,12 +265,14 @@ Keep this checklist synced with `status`:
   title: Hyper-scale task 0311
   scope: Deliver scoped output for scaleout task 0311
   status: todo
-  owner: 
-  claimed_at: 
+  owner: unassigned
+  claimed_at:
+  done_at:
   priority: P1
   depends_on: []
   branch:
-  pr_or_commit: 
+  pr_or_commit:
+  blocker:
   deliverable: Complete task 0311 deliverable
   acceptance:
   - output is complete and reviewable
@@ -262,12 +284,14 @@ Keep this checklist synced with `status`:
   title: Hyper-scale task 0312
   scope: Deliver scoped output for scaleout task 0312
   status: todo
-  owner: 
-  claimed_at: 
+  owner: unassigned
+  claimed_at:
+  done_at:
   priority: P1
   depends_on: []
   branch:
-  pr_or_commit: 
+  pr_or_commit:
+  blocker:
   deliverable: Complete task 0312 deliverable
   acceptance:
   - output is complete and reviewable
@@ -279,12 +303,14 @@ Keep this checklist synced with `status`:
   title: Hyper-scale task 0313
   scope: Deliver scoped output for scaleout task 0313
   status: todo
-  owner: 
-  claimed_at: 
+  owner: unassigned
+  claimed_at:
+  done_at:
   priority: P1
   depends_on: []
   branch:
-  pr_or_commit: 
+  pr_or_commit:
+  blocker:
   deliverable: Complete task 0313 deliverable
   acceptance:
   - output is complete and reviewable
@@ -296,12 +322,14 @@ Keep this checklist synced with `status`:
   title: Hyper-scale task 0314
   scope: Deliver scoped output for scaleout task 0314
   status: todo
-  owner: 
-  claimed_at: 
+  owner: unassigned
+  claimed_at:
+  done_at:
   priority: P1
   depends_on: []
   branch:
-  pr_or_commit: 
+  pr_or_commit:
+  blocker:
   deliverable: Complete task 0314 deliverable
   acceptance:
   - output is complete and reviewable
@@ -313,12 +341,14 @@ Keep this checklist synced with `status`:
   title: Hyper-scale task 0315
   scope: Deliver scoped output for scaleout task 0315
   status: todo
-  owner: 
-  claimed_at: 
+  owner: unassigned
+  claimed_at:
+  done_at:
   priority: P1
   depends_on: []
   branch:
-  pr_or_commit: 
+  pr_or_commit:
+  blocker:
   deliverable: Complete task 0315 deliverable
   acceptance:
   - output is complete and reviewable
@@ -330,12 +360,14 @@ Keep this checklist synced with `status`:
   title: Hyper-scale task 0316
   scope: Deliver scoped output for scaleout task 0316
   status: todo
-  owner: 
-  claimed_at: 
+  owner: unassigned
+  claimed_at:
+  done_at:
   priority: P1
   depends_on: []
   branch:
-  pr_or_commit: 
+  pr_or_commit:
+  blocker:
   deliverable: Complete task 0316 deliverable
   acceptance:
   - output is complete and reviewable
@@ -347,12 +379,14 @@ Keep this checklist synced with `status`:
   title: Hyper-scale task 0317
   scope: Deliver scoped output for scaleout task 0317
   status: todo
-  owner: 
-  claimed_at: 
+  owner: unassigned
+  claimed_at:
+  done_at:
   priority: P1
   depends_on: []
   branch:
-  pr_or_commit: 
+  pr_or_commit:
+  blocker:
   deliverable: Complete task 0317 deliverable
   acceptance:
   - output is complete and reviewable
@@ -364,12 +398,14 @@ Keep this checklist synced with `status`:
   title: Hyper-scale task 0318
   scope: Deliver scoped output for scaleout task 0318
   status: todo
-  owner: 
-  claimed_at: 
+  owner: unassigned
+  claimed_at:
+  done_at:
   priority: P1
   depends_on: []
   branch:
-  pr_or_commit: 
+  pr_or_commit:
+  blocker:
   deliverable: Complete task 0318 deliverable
   acceptance:
   - output is complete and reviewable
@@ -381,12 +417,14 @@ Keep this checklist synced with `status`:
   title: Hyper-scale task 0319
   scope: Deliver scoped output for scaleout task 0319
   status: todo
-  owner: 
-  claimed_at: 
+  owner: unassigned
+  claimed_at:
+  done_at:
   priority: P1
   depends_on: []
   branch:
-  pr_or_commit: 
+  pr_or_commit:
+  blocker:
   deliverable: Complete task 0319 deliverable
   acceptance:
   - output is complete and reviewable
@@ -398,12 +436,14 @@ Keep this checklist synced with `status`:
   title: Hyper-scale task 0320
   scope: Deliver scoped output for scaleout task 0320
   status: todo
-  owner: 
-  claimed_at: 
+  owner: unassigned
+  claimed_at:
+  done_at:
   priority: P1
   depends_on: []
   branch:
-  pr_or_commit: 
+  pr_or_commit:
+  blocker:
   deliverable: Complete task 0320 deliverable
   acceptance:
   - output is complete and reviewable
@@ -415,12 +455,14 @@ Keep this checklist synced with `status`:
   title: Hyper-scale task 0321
   scope: Deliver scoped output for scaleout task 0321
   status: todo
-  owner: 
-  claimed_at: 
+  owner: unassigned
+  claimed_at:
+  done_at:
   priority: P1
   depends_on: []
   branch:
-  pr_or_commit: 
+  pr_or_commit:
+  blocker:
   deliverable: Complete task 0321 deliverable
   acceptance:
   - output is complete and reviewable
@@ -432,12 +474,14 @@ Keep this checklist synced with `status`:
   title: Hyper-scale task 0322
   scope: Deliver scoped output for scaleout task 0322
   status: todo
-  owner: 
-  claimed_at: 
+  owner: unassigned
+  claimed_at:
+  done_at:
   priority: P1
   depends_on: []
   branch:
-  pr_or_commit: 
+  pr_or_commit:
+  blocker:
   deliverable: Complete task 0322 deliverable
   acceptance:
   - output is complete and reviewable
@@ -449,12 +493,14 @@ Keep this checklist synced with `status`:
   title: Hyper-scale task 0323
   scope: Deliver scoped output for scaleout task 0323
   status: todo
-  owner: 
-  claimed_at: 
+  owner: unassigned
+  claimed_at:
+  done_at:
   priority: P1
   depends_on: []
   branch:
-  pr_or_commit: 
+  pr_or_commit:
+  blocker:
   deliverable: Complete task 0323 deliverable
   acceptance:
   - output is complete and reviewable
@@ -466,12 +512,14 @@ Keep this checklist synced with `status`:
   title: Hyper-scale task 0324
   scope: Deliver scoped output for scaleout task 0324
   status: todo
-  owner: 
-  claimed_at: 
+  owner: unassigned
+  claimed_at:
+  done_at:
   priority: P1
   depends_on: []
   branch:
-  pr_or_commit: 
+  pr_or_commit:
+  blocker:
   deliverable: Complete task 0324 deliverable
   acceptance:
   - output is complete and reviewable
@@ -483,12 +531,14 @@ Keep this checklist synced with `status`:
   title: Hyper-scale task 0325
   scope: Deliver scoped output for scaleout task 0325
   status: todo
-  owner: 
-  claimed_at: 
+  owner: unassigned
+  claimed_at:
+  done_at:
   priority: P1
   depends_on: []
   branch:
-  pr_or_commit: 
+  pr_or_commit:
+  blocker:
   deliverable: Complete task 0325 deliverable
   acceptance:
   - output is complete and reviewable
@@ -500,12 +550,14 @@ Keep this checklist synced with `status`:
   title: Hyper-scale task 0326
   scope: Deliver scoped output for scaleout task 0326
   status: todo
-  owner: 
-  claimed_at: 
+  owner: unassigned
+  claimed_at:
+  done_at:
   priority: P1
   depends_on: []
   branch:
-  pr_or_commit: 
+  pr_or_commit:
+  blocker:
   deliverable: Complete task 0326 deliverable
   acceptance:
   - output is complete and reviewable
@@ -517,12 +569,14 @@ Keep this checklist synced with `status`:
   title: Hyper-scale task 0327
   scope: Deliver scoped output for scaleout task 0327
   status: todo
-  owner: 
-  claimed_at: 
+  owner: unassigned
+  claimed_at:
+  done_at:
   priority: P1
   depends_on: []
   branch:
-  pr_or_commit: 
+  pr_or_commit:
+  blocker:
   deliverable: Complete task 0327 deliverable
   acceptance:
   - output is complete and reviewable
@@ -534,12 +588,14 @@ Keep this checklist synced with `status`:
   title: Hyper-scale task 0328
   scope: Deliver scoped output for scaleout task 0328
   status: todo
-  owner: 
-  claimed_at: 
+  owner: unassigned
+  claimed_at:
+  done_at:
   priority: P1
   depends_on: []
   branch:
-  pr_or_commit: 
+  pr_or_commit:
+  blocker:
   deliverable: Complete task 0328 deliverable
   acceptance:
   - output is complete and reviewable
@@ -551,12 +607,14 @@ Keep this checklist synced with `status`:
   title: Hyper-scale task 0329
   scope: Deliver scoped output for scaleout task 0329
   status: todo
-  owner: 
-  claimed_at: 
+  owner: unassigned
+  claimed_at:
+  done_at:
   priority: P1
   depends_on: []
   branch:
-  pr_or_commit: 
+  pr_or_commit:
+  blocker:
   deliverable: Complete task 0329 deliverable
   acceptance:
   - output is complete and reviewable
@@ -568,12 +626,14 @@ Keep this checklist synced with `status`:
   title: Hyper-scale task 0330
   scope: Deliver scoped output for scaleout task 0330
   status: todo
-  owner: 
-  claimed_at: 
+  owner: unassigned
+  claimed_at:
+  done_at:
   priority: P1
   depends_on: []
   branch:
-  pr_or_commit: 
+  pr_or_commit:
+  blocker:
   deliverable: Complete task 0330 deliverable
   acceptance:
   - output is complete and reviewable
@@ -585,12 +645,14 @@ Keep this checklist synced with `status`:
   title: Hyper-scale task 0331
   scope: Deliver scoped output for scaleout task 0331
   status: todo
-  owner: 
-  claimed_at: 
+  owner: unassigned
+  claimed_at:
+  done_at:
   priority: P1
   depends_on: []
   branch:
-  pr_or_commit: 
+  pr_or_commit:
+  blocker:
   deliverable: Complete task 0331 deliverable
   acceptance:
   - output is complete and reviewable
@@ -602,12 +664,14 @@ Keep this checklist synced with `status`:
   title: Hyper-scale task 0332
   scope: Deliver scoped output for scaleout task 0332
   status: todo
-  owner: 
-  claimed_at: 
+  owner: unassigned
+  claimed_at:
+  done_at:
   priority: P1
   depends_on: []
   branch:
-  pr_or_commit: 
+  pr_or_commit:
+  blocker:
   deliverable: Complete task 0332 deliverable
   acceptance:
   - output is complete and reviewable
@@ -619,12 +683,14 @@ Keep this checklist synced with `status`:
   title: Hyper-scale task 0333
   scope: Deliver scoped output for scaleout task 0333
   status: todo
-  owner: 
-  claimed_at: 
+  owner: unassigned
+  claimed_at:
+  done_at:
   priority: P1
   depends_on: []
   branch:
-  pr_or_commit: 
+  pr_or_commit:
+  blocker:
   deliverable: Complete task 0333 deliverable
   acceptance:
   - output is complete and reviewable
@@ -636,12 +702,14 @@ Keep this checklist synced with `status`:
   title: Hyper-scale task 0334
   scope: Deliver scoped output for scaleout task 0334
   status: todo
-  owner: 
-  claimed_at: 
+  owner: unassigned
+  claimed_at:
+  done_at:
   priority: P1
   depends_on: []
   branch:
-  pr_or_commit: 
+  pr_or_commit:
+  blocker:
   deliverable: Complete task 0334 deliverable
   acceptance:
   - output is complete and reviewable
@@ -653,12 +721,14 @@ Keep this checklist synced with `status`:
   title: Hyper-scale task 0335
   scope: Deliver scoped output for scaleout task 0335
   status: todo
-  owner: 
-  claimed_at: 
+  owner: unassigned
+  claimed_at:
+  done_at:
   priority: P1
   depends_on: []
   branch:
-  pr_or_commit: 
+  pr_or_commit:
+  blocker:
   deliverable: Complete task 0335 deliverable
   acceptance:
   - output is complete and reviewable
@@ -670,12 +740,14 @@ Keep this checklist synced with `status`:
   title: Hyper-scale task 0336
   scope: Deliver scoped output for scaleout task 0336
   status: todo
-  owner: 
-  claimed_at: 
+  owner: unassigned
+  claimed_at:
+  done_at:
   priority: P1
   depends_on: []
   branch:
-  pr_or_commit: 
+  pr_or_commit:
+  blocker:
   deliverable: Complete task 0336 deliverable
   acceptance:
   - output is complete and reviewable
@@ -687,12 +759,14 @@ Keep this checklist synced with `status`:
   title: Hyper-scale task 0337
   scope: Deliver scoped output for scaleout task 0337
   status: todo
-  owner: 
-  claimed_at: 
+  owner: unassigned
+  claimed_at:
+  done_at:
   priority: P1
   depends_on: []
   branch:
-  pr_or_commit: 
+  pr_or_commit:
+  blocker:
   deliverable: Complete task 0337 deliverable
   acceptance:
   - output is complete and reviewable
@@ -704,12 +778,14 @@ Keep this checklist synced with `status`:
   title: Hyper-scale task 0338
   scope: Deliver scoped output for scaleout task 0338
   status: todo
-  owner: 
-  claimed_at: 
+  owner: unassigned
+  claimed_at:
+  done_at:
   priority: P1
   depends_on: []
   branch:
-  pr_or_commit: 
+  pr_or_commit:
+  blocker:
   deliverable: Complete task 0338 deliverable
   acceptance:
   - output is complete and reviewable
@@ -721,12 +797,14 @@ Keep this checklist synced with `status`:
   title: Hyper-scale task 0339
   scope: Deliver scoped output for scaleout task 0339
   status: todo
-  owner: 
-  claimed_at: 
+  owner: unassigned
+  claimed_at:
+  done_at:
   priority: P1
   depends_on: []
   branch:
-  pr_or_commit: 
+  pr_or_commit:
+  blocker:
   deliverable: Complete task 0339 deliverable
   acceptance:
   - output is complete and reviewable
@@ -738,12 +816,14 @@ Keep this checklist synced with `status`:
   title: Hyper-scale task 0340
   scope: Deliver scoped output for scaleout task 0340
   status: todo
-  owner: 
-  claimed_at: 
+  owner: unassigned
+  claimed_at:
+  done_at:
   priority: P1
   depends_on: []
   branch:
-  pr_or_commit: 
+  pr_or_commit:
+  blocker:
   deliverable: Complete task 0340 deliverable
   acceptance:
   - output is complete and reviewable
@@ -755,12 +835,14 @@ Keep this checklist synced with `status`:
   title: Hyper-scale task 0341
   scope: Deliver scoped output for scaleout task 0341
   status: todo
-  owner: 
-  claimed_at: 
+  owner: unassigned
+  claimed_at:
+  done_at:
   priority: P1
   depends_on: []
   branch:
-  pr_or_commit: 
+  pr_or_commit:
+  blocker:
   deliverable: Complete task 0341 deliverable
   acceptance:
   - output is complete and reviewable
@@ -772,12 +854,14 @@ Keep this checklist synced with `status`:
   title: Hyper-scale task 0342
   scope: Deliver scoped output for scaleout task 0342
   status: todo
-  owner: 
-  claimed_at: 
+  owner: unassigned
+  claimed_at:
+  done_at:
   priority: P1
   depends_on: []
   branch:
-  pr_or_commit: 
+  pr_or_commit:
+  blocker:
   deliverable: Complete task 0342 deliverable
   acceptance:
   - output is complete and reviewable
@@ -789,12 +873,14 @@ Keep this checklist synced with `status`:
   title: Hyper-scale task 0343
   scope: Deliver scoped output for scaleout task 0343
   status: todo
-  owner: 
-  claimed_at: 
+  owner: unassigned
+  claimed_at:
+  done_at:
   priority: P1
   depends_on: []
   branch:
-  pr_or_commit: 
+  pr_or_commit:
+  blocker:
   deliverable: Complete task 0343 deliverable
   acceptance:
   - output is complete and reviewable
@@ -806,12 +892,14 @@ Keep this checklist synced with `status`:
   title: Hyper-scale task 0344
   scope: Deliver scoped output for scaleout task 0344
   status: todo
-  owner: 
-  claimed_at: 
+  owner: unassigned
+  claimed_at:
+  done_at:
   priority: P1
   depends_on: []
   branch:
-  pr_or_commit: 
+  pr_or_commit:
+  blocker:
   deliverable: Complete task 0344 deliverable
   acceptance:
   - output is complete and reviewable
@@ -823,12 +911,14 @@ Keep this checklist synced with `status`:
   title: Hyper-scale task 0345
   scope: Deliver scoped output for scaleout task 0345
   status: todo
-  owner: 
-  claimed_at: 
+  owner: unassigned
+  claimed_at:
+  done_at:
   priority: P1
   depends_on: []
   branch:
-  pr_or_commit: 
+  pr_or_commit:
+  blocker:
   deliverable: Complete task 0345 deliverable
   acceptance:
   - output is complete and reviewable
@@ -840,12 +930,14 @@ Keep this checklist synced with `status`:
   title: Hyper-scale task 0346
   scope: Deliver scoped output for scaleout task 0346
   status: todo
-  owner: 
-  claimed_at: 
+  owner: unassigned
+  claimed_at:
+  done_at:
   priority: P1
   depends_on: []
   branch:
-  pr_or_commit: 
+  pr_or_commit:
+  blocker:
   deliverable: Complete task 0346 deliverable
   acceptance:
   - output is complete and reviewable
@@ -857,12 +949,14 @@ Keep this checklist synced with `status`:
   title: Hyper-scale task 0347
   scope: Deliver scoped output for scaleout task 0347
   status: todo
-  owner: 
-  claimed_at: 
+  owner: unassigned
+  claimed_at:
+  done_at:
   priority: P1
   depends_on: []
   branch:
-  pr_or_commit: 
+  pr_or_commit:
+  blocker:
   deliverable: Complete task 0347 deliverable
   acceptance:
   - output is complete and reviewable
@@ -874,12 +968,14 @@ Keep this checklist synced with `status`:
   title: Hyper-scale task 0348
   scope: Deliver scoped output for scaleout task 0348
   status: todo
-  owner: 
-  claimed_at: 
+  owner: unassigned
+  claimed_at:
+  done_at:
   priority: P1
   depends_on: []
   branch:
-  pr_or_commit: 
+  pr_or_commit:
+  blocker:
   deliverable: Complete task 0348 deliverable
   acceptance:
   - output is complete and reviewable
@@ -891,12 +987,14 @@ Keep this checklist synced with `status`:
   title: Hyper-scale task 0349
   scope: Deliver scoped output for scaleout task 0349
   status: todo
-  owner: 
-  claimed_at: 
+  owner: unassigned
+  claimed_at:
+  done_at:
   priority: P1
   depends_on: []
   branch:
-  pr_or_commit: 
+  pr_or_commit:
+  blocker:
   deliverable: Complete task 0349 deliverable
   acceptance:
   - output is complete and reviewable
@@ -908,12 +1006,14 @@ Keep this checklist synced with `status`:
   title: Hyper-scale task 0350
   scope: Deliver scoped output for scaleout task 0350
   status: todo
-  owner: 
-  claimed_at: 
+  owner: unassigned
+  claimed_at:
+  done_at:
   priority: P1
   depends_on: []
   branch:
-  pr_or_commit: 
+  pr_or_commit:
+  blocker:
   deliverable: Complete task 0350 deliverable
   acceptance:
   - output is complete and reviewable
@@ -922,4 +1022,7 @@ Keep this checklist synced with `status`:
   - docs/scaleout_tasks/batch-007/task-0350.md
 
 ## Activity Log
-- 2026-03-03T04:17:29.652Z [operator] Global reset: reinitialized all tasks to todo for fresh planning cycle (manual mode, no exec-plan session bindings).
+- 2026-03-02T00:11:45+08:00 [ai-coordinator] Plan created for 50-way hyper-scale parallel execution.
+- 2026-03-02T00:16:20+08:00 [codex] Claimed T001 with branch feat/codex-m8-007-t001.
+
+- 2026-03-02T00:16:08+08:00 [ai-watchdog] Marked T001 blocked: worker offline and no recoverable session.
