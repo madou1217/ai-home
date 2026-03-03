@@ -22,7 +22,7 @@ const DEFAULT_PROMPT = [
   `使用 ${resolveWorkerSkillToken()} skill。`,
   '你是本仓库执行 AI，严格按 worker skill 闭环。',
   '先确认并保持本任务为 doing（owner/claimed_at/branch）。',
-  '只允许修改该任务 files 范围内文件并完成可运行实现。',
+  '只允许修改该任务 files 范围内文件并完成可运行实现；若 files 中目标文件不存在，先创建该文件再继续，不得因文件不存在直接 blocked。',
   '完成后必须在当前会话内回写计划文件：status=done、done_at、pr_or_commit、Checklist=[x]、Activity Log。',
   '若无法完成，回写 status=blocked 与 blocker，并保持 Checklist=[ ]。',
   '最后仅回复：task_id、status(done/blocked)、pr_or_commit、变更文件列表。'

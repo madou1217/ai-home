@@ -9,6 +9,20 @@ Ship current completed work with minimal merge risk by splitting into 4 focused 
   - `npm test`
   - `npm run plan:board`
 
+## GUI Wave2 Go/No-Go Gate
+- Smoke path checks must pass in packaged mode for:
+  - `Shell` route fallback and global error boundary recovery action.
+  - `Bootstrap` runtime readiness signal before primary view interaction.
+  - `Account` list/default switch/status rendering and failure remediation hint.
+  - `Migration` export/import action feedback with deterministic retry guidance.
+  - `Audit` query/filter/pagination stability with actionable empty/error states.
+- Required command:
+  - `node --test test/desktop.gui.smoke.e2e.test.js`
+- Go decision:
+  - All checks green and no P0/P1 regression in GUI critical paths.
+- No-Go decision:
+  - Any failure above blocks release cutover and triggers rollback policy.
+
 ## PR-1 Desktop GUI + Packaging
 - Scope:
   - `.github/workflows/desktop-release.yml`

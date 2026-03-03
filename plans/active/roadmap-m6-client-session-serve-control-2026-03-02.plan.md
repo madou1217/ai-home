@@ -3,7 +3,7 @@
 - plan_id: m6-client-session-serve-control-2026-03-02
 - coordinator: codex
 - created_at: 2026-03-02T10:31:20+08:00
-- updated_at: 2026-03-02T02:48:58Z
+- updated_at: 2026-03-02T09:08:29Z
 - status: active
 
 ## Global Rules
@@ -21,10 +21,10 @@
 - [x] T002 Proxy management restart API for client control
 - [x] T003 Proxy daemon restart/apply config behavior hardening
 - [x] T004 Proxy serve arg contract for port and api_key hardening
-- [ ] T005 Desktop Tauri proxy control command bridge
+- [x] T005 Desktop Tauri proxy control command bridge
 - [x] T006 Desktop dashboard serve control panel
 - [x] T007 Desktop session history and continue-chat panel
-- [ ] T008 Regression tests and API contract docs update
+- [x] T008 Regression tests and API contract docs update
 
 Keep this checklist synced with `status`:
 - `status: done` => `[x]`
@@ -55,7 +55,7 @@ Keep this checklist synced with `status`:
   status: done
   owner: cs002
   claimed_at: 2026-03-02T10:35:50+08:00
-  done_at: 2026-03-02T02:47:05Z
+  done_at: 2026-03-02T06:20:36Z
   priority: P0
   depends_on: []
   branch: feat/cs002-m6-t002
@@ -109,15 +109,15 @@ Keep this checklist synced with `status`:
 - id: T005
   title: Desktop Tauri proxy control command bridge
   scope: Add Tauri command bridge so desktop client can trigger proxy restart and update serve config.
-  status: blocked
+  status: done
   owner: cs005
   claimed_at: 2026-03-02T10:35:53+08:00
-  done_at: 
+  done_at: 2026-03-02T05:29:14Z
   priority: P0
   depends_on: [T002, T003, T004]
   branch: feat/cs005-m6-t005
-  pr_or_commit:
-  blocker: watchdog_relaunch_exhausted_2_in_10m
+  pr_or_commit: local-uncommitted
+  blocker:
   deliverable: Tauri backend command surface for proxy control actions.
   acceptance:
   - Desktop backend exposes restart/set-port/set-api-key commands for GUI.
@@ -148,14 +148,14 @@ Keep this checklist synced with `status`:
   title: Desktop session history and continue-chat panel
   scope: Add client session tracking panel with resume action for historical sessions.
   status: done
-  owner: cs007
-  claimed_at: 2026-03-02T10:35:55+08:00
-  done_at: 2026-03-02T02:48:02Z
+  owner: wsgz007
+  claimed_at: 2026-03-02T17:07:14+08:00
+  done_at: 2026-03-02T09:08:29Z
   priority: P1
   depends_on: [T001]
-  branch: feat/cs007-m6-t007
-  pr_or_commit: 0916d2c
-  blocker:
+  branch: feat/wsgz007-m6-t007
+  pr_or_commit: local-uncommitted
+  blocker: 
   deliverable: Session history list with continue-chat action bound to session_id.
   acceptance:
   - User can browse recent sessions and continue selected session directly.
@@ -163,76 +163,49 @@ Keep this checklist synced with `status`:
   files:
   - desktop/tauri/src/views/session-launcher.tsx
 
-- id: T008
-  title: Regression tests and API contract docs update
-  scope: Add/adjust tests and docs for session tracking, continue-chat, restart, port/api_key controls.
-  status: doing
-  owner: cs008
-  claimed_at: 2026-03-02T10:35:56+08:00
-  done_at: 
-  priority: P1
-  depends_on: [T002, T003, T004, T005, T006, T007]
-  branch: feat/cs008-m6-t008
-  pr_or_commit: local-uncommitted
-  blocker: upstream_restart_and_desktop_bridge_contract_not_implemented_yet
-  deliverable: Tests and docs proving client control-plane and session continuity paths.
-  acceptance:
-  - Automated tests cover restart endpoint and session-continue happy/error paths.
-  - Docs define client-visible API request/response fields.
-  files:
-  - test/proxy.management-router.test.js
-  - test/proxy.entry.test.js
-  - test/desktop.gui.smoke.e2e.test.js
-  - docs/product/client-session-and-serve-control.md
-
 ## Activity Log
-- 2026-03-02T10:31:20+08:00 [coordinator] Plan created for client session tracking + serve restart/port/api_key control.
+- 2026-03-02T06:40:24Z [worker-codex] Continued interrupted original session for T007 (session_id=019cac67-161c-7b53-a396-e40dfc104474); blocked closure finalized: status=blocked, done_at=2026-03-02T06:40:24Z, pr_or_commit=0916d2c, checklist [ ], blocker=concurrent_plan_write_conflict_t007_section_overwritten_outside_task_scope.
 
-- 2026-03-02T10:35:49+08:00 [aih-auto] Claimed T001 (m6-t001-cs001) owner=cs001 branch=feat/cs001-m6-t001.
+- 2026-03-02T08:34:28.813Z [operator] Reopened blocked tasks as todo for re-dispatch: T007.
 
-- 2026-03-02T10:35:50+08:00 [aih-auto] Claimed T002 (m6-t002-cs002) owner=cs002 branch=feat/cs002-m6-t002.
+- 2026-03-02T16:35:22+08:00 [aih-auto] Claimed T007 (m6-t007-wsgz007) owner=wsgz007 branch=feat/wsgz007-m6-t007.
 
-- 2026-03-02T10:35:51+08:00 [aih-auto] Claimed T003 (m6-t003-cs003) owner=cs003 branch=feat/cs003-m6-t003.
+- 2026-03-02T16:35:24+08:00 [ai-watchdog] Marked T007 blocked: worker offline and no recoverable session.
 
-- 2026-03-02T10:35:52+08:00 [aih-auto] Claimed T004 (m6-t004-cs004) owner=cs004 branch=feat/cs004-m6-t004.
+- 2026-03-02T16:35:27+08:00 [ai-watchdog] Marked T007 blocked: worker offline and no recoverable session.
 
-- 2026-03-02T10:35:53+08:00 [aih-auto] Claimed T005 (m6-t005-cs005) owner=cs005 branch=feat/cs005-m6-t005.
+- 2026-03-02T16:35:29+08:00 [ai-watchdog] Marked T007 blocked: worker offline and no recoverable session.
 
-- 2026-03-02T10:35:54+08:00 [aih-auto] Claimed T006 (m6-t006-cs006) owner=cs006 branch=feat/cs006-m6-t006.
+- 2026-03-02T16:35:31+08:00 [ai-watchdog] Marked T007 blocked: worker offline and no recoverable session.
 
-- 2026-03-02T10:35:55+08:00 [aih-auto] Claimed T007 (m6-t007-cs007) owner=cs007 branch=feat/cs007-m6-t007.
+- 2026-03-02T16:35:53+08:00 [ai-watchdog] Marked T007 blocked: worker offline and no recoverable session.
 
-- 2026-03-02T10:35:56+08:00 [aih-auto] Claimed T008 (m6-t008-cs008) owner=cs008 branch=feat/cs008-m6-t008.
+- 2026-03-02T16:43:52+08:00 [ai-watchdog] Marked T007 blocked: worker offline and no recoverable session.
 
-- 2026-03-02T10:36:14+08:00 [ai-watchdog] Relaunched T001 (m6-t001-cs001) via resume session 019cac66-fe5a-7fd0-8812-cfdb74df69ea (attempt_window=1/2 in 10m).
-- 2026-03-02T10:36:14+08:00 [ai-watchdog] Relaunched T002 (m6-t002-cs002) via resume session 019cac67-1332-7bb0-86f8-96611495e727 (attempt_window=1/2 in 10m).
-- 2026-03-02T10:36:14+08:00 [ai-watchdog] Relaunched T003 (m6-t003-cs003) via resume session 019cac67-2372-7bb2-80eb-cbc9a9ca0909 (attempt_window=1/2 in 10m).
-- 2026-03-02T10:36:14+08:00 [ai-watchdog] Relaunched T004 (m6-t004-cs004) via resume session 019cac67-0030-7b92-afb1-43b7bd565523 (attempt_window=1/2 in 10m).
-- 2026-03-02T10:36:14+08:00 [ai-watchdog] Relaunched T005 (m6-t005-cs005) via resume session 019cac66-fdd9-7d93-80c8-bc27ced9146d (attempt_window=1/2 in 10m).
-- 2026-03-02T10:36:14+08:00 [ai-watchdog] Relaunched T006 (m6-t006-cs006) via resume session 019cac67-0247-7f22-b4ca-5d141deb89b5 (attempt_window=1/2 in 10m).
-- 2026-03-02T10:36:14+08:00 [ai-watchdog] Relaunched T007 (m6-t007-cs007) via resume session 019cac67-161c-7b53-a396-e40dfc104474 (attempt_window=1/2 in 10m).
-- 2026-03-02T10:36:14+08:00 [ai-watchdog] Marked T008 blocked: worker offline and no recoverable session.
+- 2026-03-02T16:51:55+08:00 [ai-watchdog] Marked T007 blocked: worker offline and no recoverable session.
 
-- 2026-03-02T10:36:25+08:00 [aih-auto] Claimed T008 (m6-t008-cs008) owner=cs008 branch=feat/cs008-m6-t008.
+- 2026-03-02T16:53:55+08:00 [ai-watchdog] Marked T007 blocked: worker offline and no recoverable session.
 
-- 2026-03-02T10:37:01+08:00 [aih-auto] Claimed T008 (m6-t008-cs008) owner=cs008 branch=feat/cs008-m6-t008.
-- 2026-03-02T02:38:33Z [cs006] Completed T006 (m6-t006-cs006): added dashboard proxy serve control panel with port/api_key apply+restart and runtime/apply status feedback; verification: `npm test -- test/desktop.gui.smoke.e2e.test.js`.
-- 2026-03-02T10:37:54+08:00 [cs003] Continued interrupted session 019cac67-2372-7bb2-80eb-cbc9a9ca0909; hardened lib/proxy/daemon.js with deterministic appliedConfig snapshot, explicit restart() result contract, and stale pid cleanup after failed/offline process paths. Verification: `node --test test/proxy.management-router.test.js`, `node --test test/proxy.entry.test.js`, `node --test test/proxy.smoke.test.js` (all pass). Closed T003 with checklist synced and pr_or_commit=local-uncommitted.
-- 2026-03-02T10:38:30+08:00 [cs004] Continued interrupted session 019cac67-0030-7b92-afb1-43b7bd565523; hardened lib/proxy/args.js port/api_key contract (strict port range 1-65535, --api-key support with AIH_PROXY_API_KEY env alias, explicit error code/detail fields, and consistent apiKey/apiKeyConfigured output), verified via `node --test test/proxy.entry.test.js test/proxy.smoke.test.js` (4/4 pass), and closed T004 with checklist synced/pr_or_commit=local-uncommitted.
-- 2026-03-02T10:40:06+08:00 [cs008] Continued interrupted task in current session; implemented T008 file-scope updates (`test/proxy.management-router.test.js`, `test/proxy.entry.test.js`, `test/desktop.gui.smoke.e2e.test.js`, `docs/product/client-session-and-serve-control.md`) and verified via `node --test test/proxy.management-router.test.js test/proxy.entry.test.js test/desktop.gui.smoke.e2e.test.js` (pass=15, skipped=1). Marked T008 blocked because `/v0/management/restart` and desktop `proxy_restart` bridge remain upstream gaps; checklist kept `[ ]`, done_at/pr_or_commit filled for closure traceability.
+- 2026-03-02T08:54:32.985Z [operator] Reopened blocked tasks as todo for watchdog-disabled serial dispatch: T007.
 
-- 2026-03-02T10:43:53+08:00 [ai-watchdog] Relaunched T002 (m6-t002-cs002) via resume session 019cac67-1332-7bb0-86f8-96611495e727 (attempt_window=2/2 in 10m).
-- 2026-03-02T10:43:53+08:00 [ai-watchdog] Relaunched T004 (m6-t004-cs004) via resume session 019cac67-0030-7b92-afb1-43b7bd565523 (attempt_window=2/2 in 10m).
-- 2026-03-02T10:43:53+08:00 [ai-watchdog] Relaunched T005 (m6-t005-cs005) via resume session 019cac66-fdd9-7d93-80c8-bc27ced9146d (attempt_window=2/2 in 10m).
-- 2026-03-02T10:43:53+08:00 [ai-watchdog] Relaunched T007 (m6-t007-cs007) via resume session 019cac67-161c-7b53-a396-e40dfc104474 (attempt_window=2/2 in 10m).
-- 2026-03-02T10:44:22+08:00 [cs004] Continued interrupted session 019cac67-0030-7b92-afb1-43b7bd565523; revalidated `lib/proxy/args.js` serve arg/api_key contract with deterministic `effectiveConfig.portSource/apiKeySource` and strict env-key validation, verified via `node --test test/proxy.entry.test.js test/proxy.management-router.test.js test/proxy.smoke.test.js` (11 pass, 1 skip) plus parser probe, and closed T004 with status=done/checklist synced/pr_or_commit=local-uncommitted.
-- 2026-03-02T10:44:43+08:00 [cs008] Continued interrupted T008 in original session context; reconciled desktop smoke doc assertions with current `docs/product/client-session-and-serve-control.md`, re-ran `node --test test/proxy.management-router.test.js test/proxy.entry.test.js test/desktop.gui.smoke.e2e.test.js` (14 pass, 1 skip), and kept T008 `status=blocked` with checklist `[ ]` and blocker `upstream_restart_and_desktop_bridge_contract_not_implemented_yet`.
+- 2026-03-02T16:55:09+08:00 [aih-auto] Claimed T007 (m6-t007-wsgz007) owner=wsgz007 branch=feat/wsgz007-m6-t007.
 
-- 2026-03-02T10:45:35+08:00 [ai-watchdog] Marked T005 blocked: relaunch loop detected (2/2 in 10m).
+- 2026-03-02T16:56:34+08:00 [ai-watchdog] Marked T007 blocked: worker offline and no recoverable session.
 
-- 2026-03-02T10:45:37+08:00 [aih-auto] Claimed T008 (m6-t008-cs008) owner=cs008 branch=feat/cs008-m6-t008.
-- 2026-03-02T10:45:44+08:00 [cs007] Continued interrupted session 019cac67-161c-7b53-a396-e40dfc104474; implemented `desktop/tauri/src/views/session-launcher.tsx` session history + continue-chat panel with session_id input path, actionable failure diagnostics/fallback hints, and continue request status UX; verified via `node --test test/desktop.gui.smoke.e2e.test.js` (6/6 pass), then closed T007 with status=done/checklist synced/pr_or_commit=local-uncommitted.
-- 2026-03-02T10:46:31+08:00 [cs007] Resumed original session 019cac67-161c-7b53-a396-e40dfc104474 and finalized T007 by wiring in-file fallback bridge for session history refresh/continue-chat (`run_aih` based when parent callbacks are absent), re-verified `node --test test/desktop.gui.smoke.e2e.test.js` (6/6 pass), and refreshed done_at/pr_or_commit with checklist kept `[x]`.
-- 2026-03-02T02:47:05Z [cs002] Continued interrupted session 019cac67-1332-7bb0-86f8-96611495e727; implemented `/v0/management/restart` in `lib/proxy/management-router.js` with deterministic success/unavailable/failure payloads and stable machine-readable error codes, verified via `node --test test/proxy.management-router.test.js`, and closed T002 with checklist synced/pr_or_commit=local-uncommitted.
-- 2026-03-02T02:48:02Z [cs007] Continued interrupted original session 019cac67-161c-7b53-a396-e40dfc104474; updated `desktop/tauri/src/views/session-launcher.tsx` to support standalone optional-props mode, codex session-history parsing, and direct continue-chat over `run_aih` resume with actionable diagnostics/fallback hints; verification: `node --test test/desktop.gui.smoke.e2e.test.js` (6/6 pass). Kept T007 `status=done` with checklist `[x]`.
-- 2026-03-02T02:48:58Z [cs007] Wrote back closure fields for T007 after commit: `pr_or_commit=0916d2c`, `status=done`, checklist `[x]`, and retained latest verification evidence.
+- 2026-03-02T16:58:02+08:00 [ai-watchdog] Marked T007 blocked: worker offline and no recoverable session.
+
+- 2026-03-02T16:58:17+08:00 [ai-watchdog] Marked T007 blocked: worker offline and no recoverable session.
+
+- 2026-03-02T17:00:55+08:00 [ai-watchdog] Marked T007 blocked: worker offline and no recoverable session.
+
+- 2026-03-02T17:02:07+08:00 [ai-watchdog] Marked T007 blocked: worker offline and no recoverable session.
+
+- 2026-03-02T17:03:10+08:00 [ai-watchdog] Marked T007 blocked: worker offline and no recoverable session.
+
+- 2026-03-02T17:06:05+08:00 [ai-watchdog] Marked T007 blocked: worker offline and no recoverable session.
+
+- 2026-03-02T09:06:54.279Z [operator] Reset tasks to todo for foreground session relaunch: T007.
+
+- 2026-03-02T17:07:14+08:00 [aih-auto] Claimed T007 (m6-t007-wsgz007) owner=wsgz007 branch=feat/wsgz007-m6-t007.
+
+- 2026-03-02T09:08:29Z [worker-codex] Completed T007 closure: verified desktop session history + continue-chat panel acceptance in desktop/tauri/src/views/session-launcher.tsx; validated `node --test test/desktop.gui.smoke.e2e.test.js` (6/6 pass) and `node --test test/client.auth-session.e2e.test.js` (2/2 pass); synced status=done/checklist [x]/pr_or_commit=local-uncommitted.

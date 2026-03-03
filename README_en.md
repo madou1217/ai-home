@@ -119,7 +119,22 @@ Notes:
 - If `age` is missing, `aih` prints platform install commands and can auto-install interactively
 - Without `-o`, existing account directories are skipped; with `-o`, they are overwritten
 
-### 10. Local Account Proxy (OpenAI-compatible)
+### 10. Bulk import Codex accounts (refresh_token JSON)
+```bash
+# Recommended
+aih codex account import accounts --parallel 8 --limit 200
+
+# Preview only (no writes)
+aih codex account import accounts --dry-run
+
+```
+Notes:
+- Recursively scans `*.json` under the source directory
+- Accepts records containing `refresh_token` (`rt_`)
+- Automatically skips duplicate tokens
+- Supports parallel import and import limits
+
+### 11. Local Account Proxy (OpenAI-compatible)
 `aih` now includes a built-in local proxy. Default backend is `codex-local`, and it can route to `codex/gemini` by model/provider rules.
 
 ```bash
@@ -154,7 +169,7 @@ Management APIs:
 - `GET /v0/management/models`
 - `POST /v0/management/reload`
 
-### 11. Multi-AI / Subagent Task Board
+### 12. Multi-AI / Subagent Task Board
 Use this when multiple AIs work in parallel and you need to see who is doing what.
 
 ```bash
@@ -163,6 +178,15 @@ npm run plan:board
 
 # Full board (todo / doing / blocked / done)
 npm run plan:board -- --all
+
+# Live board (built-in refresh, preferred over watch -n 1)
+npm run plan:board:live
+
+# Live board + full scope
+npm run plan:board:live -- --all
+
+# JSON output for desktop/client integration
+npm run plan:board -- --json
 ```
 
 Related files:

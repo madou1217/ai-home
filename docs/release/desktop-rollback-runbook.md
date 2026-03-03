@@ -3,6 +3,13 @@
 ## Purpose
 This runbook defines when and how to roll back a desktop release across Windows, macOS, and Linux when a GA build causes critical impact.
 
+## Known Pre-Release Build Blocker Pattern
+If desktop packaging fails before release because Tauri Rust manifests are missing:
+- Symptom: build fails in `desktop/tauri/src-tauri` before bundle generation.
+- Common root cause: only UI/config files were changed, while `Cargo.toml`/`build.rs` were absent.
+- Immediate action: do not start rollout; treat as pre-release gate failure, not post-release incident.
+- Recovery owner: Packaging Owner + Desktop Eng Lead.
+
 ## Scope
 - Release channel: production desktop installers and update feeds.
 - In scope: release metadata, download endpoints, desktop update pointers, release announcement correction.

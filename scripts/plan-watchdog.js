@@ -79,12 +79,23 @@ function isRecoverableBlockedReason(blocker) {
   if (!b) return true;
   // Only auto-revive transient runtime/connectivity issues. Product/scope/
   // dependency blockers must remain blocked until coordinator replans.
+  if (b.startsWith('no_progress_session_stuck')) return true;
   if (b.startsWith('watchdog_relaunch_exhausted_')) return true;
   if (b === 'worker_offline_no_recoverable_session') return true;
   if (b === 'missing_session_binding') return true;
   if (b === 'detached_session') return true;
   if (b === 'stale_pid') return true;
   return false;
+}
+
+function isDependencyBlockerResolved(blocker, taskStatusById) {
+  const b = String(blocker || '').trim().toLowerCase();
+  if (!b.startsWith('upstream_dependencies_not_done_t')) return false;
+  const m = b.match(/upstream_dependencies_not_done_(t\d+)/);
+  if (!m) return false;
+  const depId = String(m[1] || '').toUpperCase();
+  if (!depId) return false;
+  return String(taskStatusById[depId] || '').toLowerCase() === 'done';
 }
 
 function readPlans() {
@@ -306,11 +317,18 @@ function scanAndRepair(opts) {
     const planName = path.basename(planPath);
     const parsed = parsePlanTasks(fs.readFileSync(planPath, 'utf8'));
     const lines = parsed.lines;
+    const taskStatusById = {};
+    for (const task of parsed.tasks) {
+      const taskId = String(task.id || '').toUpperCase();
+      if (!taskId) continue;
+      taskStatusById[taskId] = String(task.status || '').trim().toLowerCase();
+    }
     let changed = false;
 
     for (const t of parsed.tasks) {
       const status = String(t.status || '').trim().toLowerCase();
-      const recoverableBlocked = status === 'blocked' && opts.reviveBlocked && isRecoverableBlockedReason(t.blocker);
+      const dependencyResolved = status === 'blocked' && isDependencyBlockerResolved(t.blocker, taskStatusById);
+      const recoverableBlocked = status === 'blocked' && opts.reviveBlocked && (isRecoverableBlockedReason(t.blocker) || dependencyResolved);
       if (status !== 'doing' && !recoverableBlocked) continue;
       if (status !== 'done' && String(t.doneAt || '').trim()) {
         const ts = nowIsoUtc8();

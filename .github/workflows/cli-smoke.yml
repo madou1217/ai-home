@@ -1,0 +1,38 @@
+name: cli-smoke
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  linux-cli-smoke:
+    name: Linux CLI Smoke
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run targeted tests
+        run: node --test test/doctor.checks.test.js test/cli.session-baseline.test.js test/command-path.test.js
+
+      - name: CLI help smoke
+        run: node bin/ai-home.js --help > /dev/null
+
+      - name: CLI doctor smoke
+        run: |
+          export AIH_HOST_HOME="$RUNNER_TEMP/aih-home-smoke"
+          mkdir -p "$AIH_HOST_HOME"
+          node bin/ai-home.js doctor --json > "$RUNNER_TEMP/doctor.json"
+          node -e "const fs=require('fs'); const p=process.env.RUNNER_TEMP + '/doctor.json'; const data=JSON.parse(fs.readFileSync(p, 'utf8')); if (!data || typeof data.ok !== 'boolean') process.exit(1);"

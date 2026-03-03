@@ -7,7 +7,9 @@ const { execSync } = require('child_process');
 
 const rootDir = path.resolve(__dirname, '..');
 const plansDir = path.join(rootDir, 'plans');
-const showAll = process.argv.includes('--all');
+const argv = process.argv.slice(2);
+const showAll = argv.includes('--all');
+const jsonMode = argv.includes('--json');
 const hostHomeDir = (() => {
   if (process.env.AIH_HOST_HOME && process.env.AIH_HOST_HOME.trim()) {
     return path.resolve(process.env.AIH_HOST_HOME.trim());
@@ -60,6 +62,7 @@ function parseTasks(content) {
         title: '',
         status: '',
         owner: '',
+        blocker: '',
         branch: '',
         claimedAt: '',
         doneAt: ''
@@ -77,6 +80,7 @@ function parseTasks(content) {
     if (key === 'title') current.title = val;
     if (key === 'status') current.status = val;
     if (key === 'owner') current.owner = val;
+    if (key === 'blocker') current.blocker = val;
     if (key === 'branch') current.branch = val;
     if (key === 'claimed_at') current.claimedAt = val;
     if (key === 'done_at') current.doneAt = val;
@@ -98,14 +102,30 @@ function parseChecklist(content) {
 }
 
 function renderTable(rows) {
-  const header = ['plan', 'task', 'check', 'status', 'owner', 'task_key', 'binding_state', 'ai_type', 'account_id', 'session_id', 'pid', 'alive', 'title', 'branch', 'claimed_at'];
-  const all = [header, ...rows];
+  const header = ['plan', 'status', 'task_key', 'binding_state', 'ai_type', 'account_id', 'session_id', 'proc', 'title', 'branch', 'claimed_at'];
+  const maxWidthByColumn = {
+    plan: 30,
+    task_key: 18,
+    binding_state: 16,
+    session_id: 36,
+    title: 32,
+    branch: 24
+  };
+  const truncate = (value, colName) => {
+    const s = String(value || '');
+    const max = maxWidthByColumn[colName];
+    if (!max || s.length <= max) return s;
+    if (max <= 1) return s.slice(0, max);
+    return `${s.slice(0, max - 1)}…`;
+  };
+  const compactRows = rows.map((r) => r.map((v, i) => truncate(v, header[i])));
+  const all = [header, ...compactRows];
   const widths = header.map((_, idx) => Math.max(...all.map((r) => String(r[idx] || '').length)));
   const fmt = (r) => r.map((v, i) => String(v || '').padEnd(widths[i], ' ')).join(' | ');
 
   console.log(fmt(header));
   console.log(widths.map((w) => '-'.repeat(w)).join('-|-'));
-  rows.forEach((r) => console.log(fmt(r)));
+  compactRows.forEach((r) => console.log(fmt(r)));
 }
 
 function isPidAlive(pid) {
@@ -153,6 +173,7 @@ function readTaskSessionMap() {
 
       const cli = normalizeString(entry.cli);
       const accountId = normalizeString(entry.accountId);
+      const updatedAt = normalizeString(entry.updatedAt);
       const pidRaw = normalizeString(entry.pid);
       const pid = pidRaw && /^\d+$/.test(pidRaw) ? pidRaw : '';
       if (pidRaw && !pid) {
@@ -164,6 +185,7 @@ function readTaskSessionMap() {
         sessionId,
         cli,
         accountId,
+        updatedAt,
         pid
       });
     });
@@ -242,6 +264,7 @@ if (planFiles.length === 0) {
 }
 
 const rows = [];
+const records = [];
 const taskSessionRegistry = readTaskSessionMap();
 const runningProcessIndex = readRunningProcessIndex();
 let total = 0;
@@ -275,10 +298,12 @@ for (const absPath of planFiles) {
       const sid = binding && binding.sessionId ? binding.sessionId : '-';
       const aiType = binding && binding.cli ? binding.cli : '-';
       const accountId = binding && binding.accountId ? binding.accountId : '-';
+      const bindingUpdatedAt = binding && binding.updatedAt ? binding.updatedAt : '';
       const runtimePidByTaskKey = taskKey ? runningProcessIndex.byTaskKey.get(taskKey) : '';
       const runtimePidBySession = sid !== '-' ? runningProcessIndex.bySessionId.get(sid) : '';
-      const pid = runtimePidByTaskKey || runtimePidBySession || (binding && binding.pid ? binding.pid : '-');
-      const alive = pid !== '-' ? (isPidAlive(pid) ? 'yes' : 'no') : '-';
+      const pidRaw = runtimePidByTaskKey || runtimePidBySession || (binding && binding.pid ? binding.pid : '-');
+      const alive = pidRaw !== '-' ? (isPidAlive(pidRaw) ? 'yes' : 'no') : '-';
+      const proc = alive === 'yes' ? pidRaw : '-';
       let bindingState = '-';
       if (t.status === 'doing' || t.status === 'blocked') {
         if (!taskKey) {
@@ -292,7 +317,7 @@ for (const absPath of planFiles) {
           invalidBindingCount += 1;
         } else if (alive === 'yes') {
           bindingState = 'ATTACHED';
-        } else if (pid !== '-') {
+        } else if (pidRaw !== '-') {
           bindingState = 'STALE_PID';
           staleBindingCount += 1;
         } else {
@@ -302,28 +327,68 @@ for (const absPath of planFiles) {
       }
       rows.push([
         planName,
-        t.id,
-        checked ? '[x]' : '[ ]',
         t.status || '-',
-        t.owner || '-',
         taskKey || '-',
         bindingState,
         aiType,
         accountId,
         sid,
-        pid,
-        alive,
+        proc,
         t.title || '-',
         t.branch || '-',
         formatClaimedAtShort(t.claimedAt)
       ]);
+      records.push({
+        plan: planName,
+        task: t.id,
+        check: checked ? '[x]' : '[ ]',
+        status: t.status || '-',
+        owner: t.owner || '-',
+        task_key: taskKey || '-',
+        binding_state: bindingState,
+        ai_type: aiType,
+        account_id: accountId,
+        blocker: t.blocker || '',
+        binding_updated_at: bindingUpdatedAt || '',
+        session_id: sid,
+        pid: proc,
+        alive,
+        title: t.title || '-',
+        branch: t.branch || '-',
+        claimed_at: formatClaimedAtShort(t.claimedAt),
+        claimed_at_iso: t.claimedAt || '',
+        done_at: t.doneAt || ''
+      });
     }
   });
 }
 
+const summary = {
+  total,
+  doing,
+  blocked,
+  todo,
+  done,
+  stale_bindings: staleBindingCount,
+  invalid_bindings: invalidBindingCount,
+  registry_error: taskSessionRegistry.registryError || ''
+};
+
+if (jsonMode) {
+  const payload = {
+    generated_at: new Date().toISOString(),
+    scope: showAll ? 'all' : 'active',
+    summary,
+    tasks: records
+  };
+  // Do not force process.exit() right after write; it can truncate piped output.
+  process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
+  return;
+}
+
 console.log('AIH Subagent Task Board');
-const registryErr = taskSessionRegistry.registryError ? `, registry_error=${taskSessionRegistry.registryError}` : '';
-console.log(`summary: total=${total}, doing=${doing}, blocked=${blocked}, todo=${todo}, done=${done}, stale_bindings=${staleBindingCount}, invalid_bindings=${invalidBindingCount}${registryErr}`);
+const registryErr = summary.registry_error ? `, registry_error=${summary.registry_error}` : '';
+console.log(`summary: total=${summary.total}, doing=${summary.doing}, blocked=${summary.blocked}, todo=${summary.todo}, done=${summary.done}, stale_bindings=${summary.stale_bindings}, invalid_bindings=${summary.invalid_bindings}${registryErr}`);
 
 if (rows.length === 0) {
   console.log(showAll ? '[board] no tasks found' : '[board] no active tasks (doing/blocked)');

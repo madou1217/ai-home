@@ -3,7 +3,7 @@
 - plan_id: m3-gui-production-critical-2026-03-02
 - coordinator: codex
 - created_at: 2026-03-02T02:41:33+08:00
-- updated_at: 2026-03-02T02:48:17+08:00
+- updated_at: 2026-03-01T18:52:50Z
 - status: active
 
 ## Global Rules
@@ -20,7 +20,7 @@
 - [x] T001 Desktop backend account command reliability hardening
 - [x] T002 Desktop runtime diagnostics contract hardening
 - [x] T003 Dashboard account state and error guidance hardening
-- [ ] T004 Session launcher preflight and retry hardening
+- [x] T004 Session launcher preflight and retry hardening
 - [x] T005 GUI production regression and release gate update
 
 Keep this checklist synced with `status`:
@@ -87,14 +87,14 @@ Keep this checklist synced with `status`:
 - id: T004
   title: Session launcher preflight and retry hardening
   scope: Add launcher preflight checks, retry boundaries, and clearer failed-launch diagnostics.
-  status: doing
+  status: done
   owner: g000004
   claimed_at: 2026-03-02T02:42:31+08:00
-  done_at: 
+  done_at: 2026-03-01T18:52:50Z
   priority: P0
   depends_on: [T001, T002]
   branch: feat/g000004-m3-t004
-  pr_or_commit:
+  pr_or_commit: local-uncommitted (plan-guard blocks code commits)
   blocker:
   deliverable: Session launcher flow resilient to transient and runtime-path failures.
   acceptance:
@@ -146,3 +146,6 @@ Keep this checklist synced with `status`:
 - 2026-03-02T02:46:22+08:00 [ai-watchdog] Relaunched T003 (m3-t003-g000003) via resume session 019caab5-94ee-7e32-b67d-4f36878c478a.
 - 2026-03-02T02:46:22+08:00 [ai-watchdog] Relaunched T004 (m3-t004-g000004) via resume session 019caab5-9926-7b22-9d88-f0ec38ad68e3.
 - 2026-03-02T02:48:17+08:00 [g000003] Completed T003: hardened dashboard status contract in desktop/tauri/src/views/dashboard.tsx with deterministic reason_code mapping (AIH/CORE) and actionable packaged-mode remediation hints; verified via `node --test test/desktop.gui.smoke.e2e.test.js` (4/4 pass); code commit blocked by plan-guard while T004 remains doing.
+
+- 2026-03-02T02:52:25+08:00 [ai-watchdog] Relaunched T004 (m3-t004-g000004) via resume session 019caab5-9926-7b22-9d88-f0ec38ad68e3.
+- 2026-03-01T18:52:50Z [g000004] Resumed interrupted worker and completed T004: confirmed session launcher preflight guard (no-account reject), deterministic retry boundary (`LAUNCH_TIMEOUT_MS=15000` + `Retry Last Launch`), and classified diagnostics (timeout/bridge/account); verified via `node --test test/desktop.gui.smoke.e2e.test.js` (4/4 pass); set status=done and synced checklist.
