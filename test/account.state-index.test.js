@@ -1,0 +1,40 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+
+const { createAccountStateIndex } = require('../lib/account/state-index');
+
+function mkTmpDir() {
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'aih-account-state-'));
+}
+
+test('account state index upserts and lists merged ids deterministically', () => {
+  const root = mkTmpDir();
+  try {
+    const index = createAccountStateIndex({ aiHomeDir: root, fs });
+    index.upsertAccountState('codex', '2', { configured: true, exhausted: false, remainingPct: 12 });
+    index.upsertAccountState('codex', '1', { configured: true, exhausted: false, remainingPct: 90 });
+    index.upsertAccountState('codex', '3', { configured: true, exhausted: true, remainingPct: 0 });
+    assert.deepEqual(index.listAccountIds('codex'), ['1', '2', '3']);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('account state index chooses next candidate by remaining usage then id', () => {
+  const root = mkTmpDir();
+  try {
+    const index = createAccountStateIndex({ aiHomeDir: root, fs });
+    index.upsertAccountState('codex', '10', { configured: true, exhausted: false, remainingPct: 80 });
+    index.upsertAccountState('codex', '2', { configured: true, exhausted: false, remainingPct: 80 });
+    index.upsertAccountState('codex', '8', { configured: true, exhausted: true, remainingPct: 99 });
+    index.upsertAccountState('codex', '9', { configured: false, exhausted: false, remainingPct: 99 });
+    assert.equal(index.getNextCandidateId('codex', ''), '2');
+    assert.equal(index.getNextCandidateId('codex', '2'), '10');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
