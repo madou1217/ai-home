@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
+const { createAccountStateIndex } = require('../lib/account/state-index');
 
 const REPO_ROOT = path.resolve(__dirname, '..');
 
@@ -91,4 +92,28 @@ test('`aih ls` ignores lock-like non-numeric entries under tool profile dir', (t
   assert.equal(result.status, 0, `stdout=${result.stdout}\nstderr=${result.stderr}`);
   assert.equal(result.stdout.includes('Account ID: .aih_auto_pool.lock'), false);
   assert.equal(result.stdout.includes('Account ID: \x1b[36m1\x1b[0m'), true);
+});
+
+test('`aih ls` fast index view does not show synthetic Indexed account names', (t) => {
+  const homeDir = mkTmpDir();
+  t.after(() => fs.rmSync(homeDir, { recursive: true, force: true }));
+
+  const codexToolDir = path.join(homeDir, '.ai_home', 'profiles', 'codex');
+  fs.mkdirSync(codexToolDir, { recursive: true });
+  for (let i = 1; i <= 520; i += 1) {
+    fs.mkdirSync(path.join(codexToolDir, String(i), '.codex'), { recursive: true });
+  }
+
+  const index = createAccountStateIndex({
+    aiHomeDir: path.join(homeDir, '.ai_home'),
+    fs
+  });
+  index.upsertAccountState('codex', '1', { configured: true, apiKeyMode: false, exhausted: false, remainingPct: 100 });
+  index.upsertAccountState('codex', '2', { configured: true, apiKeyMode: true, exhausted: false, remainingPct: 0 });
+
+  const result = runCli(['ls'], homeDir);
+  assert.equal(result.status, 0, `stdout=${result.stdout}\nstderr=${result.stderr}`);
+  assert.equal(result.stdout.includes('(Indexed)'), false);
+  assert.equal(result.stdout.includes('[⚠️ Duplicate of ID'), false);
+  assert.equal(result.stdout.includes('[Usage: API Key mode]'), true);
 });
