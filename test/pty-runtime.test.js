@@ -162,8 +162,8 @@ test('runtime starts windows clipboard mirror with valid powershell script', () 
   assert.notEqual(encodedCommandIndex, -1);
   const encoded = call.args[encodedCommandIndex + 1];
   const script = Buffer.from(String(encoded || ''), 'base64').toString('utf16le');
-  assert.equal(script.includes('GetClipboardSequenceNumber'), true);
-  assert.equal(script.includes('[Aih.NativeClipboard]::GetClipboardSequenceNumber()'), true);
+  assert.equal(script.includes('ContainsImage'), true);
+  assert.equal(script.includes('$pendingImage = $false'), true);
   assert.equal(script.includes('Add-Type @"'), false);
 
   assert.throws(() => proc.emit('SIGINT'), /EXIT:0/);
