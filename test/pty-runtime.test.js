@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const EventEmitter = require('node:events');
 const { createPtyRuntime } = require('../lib/cli/services/pty/runtime');
 
-function createMockProcess(env = {}) {
+function createMockProcess(env = {}, platform = 'linux') {
   const proc = new EventEmitter();
   const rawModeCalls = [];
   const writes = [];
@@ -20,7 +20,7 @@ function createMockProcess(env = {}) {
   stdin.pause = () => {};
 
   proc.env = { ...env };
-  proc.platform = 'linux';
+  proc.platform = platform;
   proc.execPath = process.execPath;
   proc.argv = [process.execPath, '/tmp/ai-home.js'];
   proc.stdout = stdout;
@@ -34,16 +34,17 @@ function createMockProcess(env = {}) {
 }
 
 function createRuntimeHarness(env = {}, overrides = {}) {
-  const { proc, rawModeCalls, writes } = createMockProcess(env);
+  const { proc, rawModeCalls, writes } = createMockProcess(env, overrides.platform || 'linux');
   const spawns = [];
   const backgroundSpawns = [];
+  const ptyWrites = [];
   let schedulerCalls = 0;
   const pty = {
     spawn(command, args, options) {
       const spawnedProc = {
         onData(cb) { this._onData = cb; },
         onExit(cb) { this._onExit = cb; },
-        write() {},
+        write(chunk) { ptyWrites.push(chunk); },
         resize() {},
         kill() {}
       };
@@ -68,7 +69,7 @@ function createRuntimeHarness(env = {}, overrides = {}) {
     processObj: proc,
     pty,
     spawn: spawnImpl,
-    execSync: () => {},
+    execSync: overrides.execSync || (() => {}),
     resolveCliPath: () => '/usr/bin/codex',
     buildPtyLaunch: (command, args) => ({ command, args }),
     resolveWindowsBatchLaunch: (_cliName, cliBin) => ({ launchBin: cliBin, envPatch: {} }),
@@ -92,6 +93,7 @@ function createRuntimeHarness(env = {}, overrides = {}) {
     runtime,
     proc,
     writes,
+    ptyWrites,
     spawns,
     backgroundSpawns,
     rawModeCalls,
@@ -189,6 +191,39 @@ test('runtime shows usage for gemini interactive PTY as well', () => {
   };
   backgroundSpawns[0].listeners.exit?.(0);
   assert.ok(writes.some((line) => line.includes('account 2 usage remaining: 39.1%')));
+
+  assert.throws(() => proc.emit('SIGINT'), /EXIT:0/);
+});
+
+test('runtime intercepts windows ctrl+v for clipboard image and writes file path into PTY', () => {
+  const { runtime, proc, ptyWrites, rawModeCalls } = createRuntimeHarness({}, {
+    platform: 'win32',
+    execSync: () => 'C:\\Temp\\aih-image-paste\\aih_clip_20260305_120000_001.png\r\n'
+  });
+
+  runtime.runCliPtyTracked('codex', '10086', [], false);
+  proc.stdin.emit('data', Buffer.from([0x16]));
+
+  assert.equal(ptyWrites.length > 0, true);
+  assert.equal(String(ptyWrites[0]), 'C:\\Temp\\aih-image-paste\\aih_clip_20260305_120000_001.png');
+
+  assert.throws(() => proc.emit('SIGINT'), /EXIT:0/);
+  assert.deepEqual(rawModeCalls, [true, false]);
+});
+
+test('runtime keeps raw ctrl+v behavior when clipboard is not image on windows', () => {
+  const { runtime, proc, ptyWrites } = createRuntimeHarness({}, {
+    platform: 'win32',
+    execSync: () => { throw new Error('no image in clipboard'); }
+  });
+
+  runtime.runCliPtyTracked('codex', '10086', [], false);
+  const ctrlV = Buffer.from([0x16]);
+  proc.stdin.emit('data', ctrlV);
+
+  assert.equal(ptyWrites.length > 0, true);
+  assert.equal(Buffer.isBuffer(ptyWrites[0]), true);
+  assert.equal(ptyWrites[0][0], 0x16);
 
   assert.throws(() => proc.emit('SIGINT'), /EXIT:0/);
 });
