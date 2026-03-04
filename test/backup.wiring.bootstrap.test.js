@@ -44,6 +44,9 @@ test('createBackupCryptoWiring maps crypto dependencies and exports', () => {
     runAgeDecrypt: () => '',
     loadRsaPrivateKey: () => ({}),
     decryptSshRsaEnvelope: () => '',
+    isPasswordArchiveFile: () => false,
+    encryptTarWithPassword: async () => {},
+    decryptPasswordArchive: async () => {},
     buildPasswordEnvelope: () => '',
     decryptPasswordEnvelope: () => '',
     serializeEnvelope: () => '',
@@ -72,6 +75,8 @@ test('createBackupCryptoWiring maps crypto dependencies and exports', () => {
   });
 
   assert.equal(out.getSshKeys, fakeService.getSshKeys);
+  assert.equal(out.encryptTarWithPassword, fakeService.encryptTarWithPassword);
+  assert.equal(out.decryptPasswordArchive, fakeService.decryptPasswordArchive);
   assert.equal(out.decryptLegacyEnvelope, fakeService.decryptLegacyEnvelope);
   assert.equal(receivedArg.hostHomeDir, '/tmp/home');
   assert.deepEqual(receivedArg.ageSshKeyTypes, ['rsa']);
