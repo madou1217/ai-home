@@ -204,6 +204,77 @@ test('upstream passthrough skips invalid token and retries with another account 
   assert.match(String(seenHeaders.authorization || ''), /Bearer good-token/);
 });
 
+test('upstream passthrough refreshes codex token on 401 and retries same account', async () => {
+  const res = createResCapture();
+  const state = {
+    accounts: { codex: [{ id: '1', email: 'a@example.com', accessToken: 'expired-token', refreshToken: 'rt_1' }] },
+    cursors: { codex: 0 },
+    metrics: { totalFailures: 0, totalSuccess: 0, totalTimeouts: 0 }
+  };
+  let upstreamCalls = 0;
+  let forcedRefreshCalls = 0;
+
+  await handleUpstreamPassthrough({
+    options: {
+      provider: 'codex',
+      codexBaseUrl: 'https://example.com',
+      upstreamTimeoutMs: 3000,
+      maxAttempts: 1,
+      failureThreshold: 1,
+      logRequests: false
+    },
+    state,
+    req: { url: '/v1/chat/completions', headers: { 'content-type': 'application/json' } },
+    res,
+    method: 'POST',
+    bodyBuffer: Buffer.from('{"x":"y"}'),
+    routeKey: 'POST /v1/chat/completions',
+    requestStartedAt: Date.now(),
+    cooldownMs: 1000,
+    deps: {
+      chooseServerAccount: (pool) => pool[0],
+      pushMetricError: () => {},
+      writeJson: (r, code, payload) => {
+        r.statusCode = code;
+        r.setHeader('content-type', 'application/json');
+        r.end(JSON.stringify(payload));
+      },
+      refreshCodexAccessToken: async (account, opts) => {
+        if (opts && opts.force) {
+          forcedRefreshCalls += 1;
+          account.accessToken = 'fresh-token';
+          return { ok: true, refreshed: true };
+        }
+        return { ok: true, refreshed: false, reason: 'not_due' };
+      },
+      fetchWithTimeout: async (_url, init) => {
+        upstreamCalls += 1;
+        if (String(init && init.headers && init.headers.authorization || '').includes('expired-token')) {
+          return {
+            status: 401,
+            headers: new Map([['content-type', 'application/json']]),
+            arrayBuffer: async () => Buffer.from('{"error":"expired"}')
+          };
+        }
+        return {
+          status: 200,
+          headers: new Map([['content-type', 'application/json']]),
+          arrayBuffer: async () => Buffer.from('{"ok":true}')
+        };
+      },
+      markProxyAccountFailure: () => {},
+      markProxyAccountSuccess: () => {},
+      appendProxyRequestLog: () => {}
+    }
+  });
+
+  assert.equal(forcedRefreshCalls, 1);
+  assert.equal(upstreamCalls, 2);
+  assert.equal(res.statusCode, 200);
+  assert.equal(String(res.body), '{"ok":true}');
+  assert.equal(state.metrics.totalSuccess, 1);
+});
+
 test('upstream passthrough uses Gemini Code Assist adapter for oauth-personal chat completions', async () => {
   const res = createResCapture();
   const state = {
