@@ -6,11 +6,12 @@ const { createPtyRuntime } = require('../lib/cli/services/pty/runtime');
 function createMockProcess(env = {}) {
   const proc = new EventEmitter();
   const rawModeCalls = [];
+  const writes = [];
 
   const stdout = new EventEmitter();
   stdout.columns = 80;
   stdout.rows = 24;
-  stdout.write = () => {};
+  stdout.write = (chunk) => { writes.push(String(chunk || '')); };
 
   const stdin = new EventEmitter();
   stdin.isTTY = true;
@@ -20,6 +21,8 @@ function createMockProcess(env = {}) {
 
   proc.env = { ...env };
   proc.platform = 'linux';
+  proc.execPath = process.execPath;
+  proc.argv = [process.execPath, '/tmp/ai-home.js'];
   proc.stdout = stdout;
   proc.stdin = stdin;
   proc.cwd = () => '/tmp';
@@ -27,12 +30,14 @@ function createMockProcess(env = {}) {
     throw new Error(`EXIT:${code}`);
   };
 
-  return { proc, rawModeCalls };
+  return { proc, rawModeCalls, writes };
 }
 
-function createRuntimeHarness(env = {}) {
-  const { proc, rawModeCalls } = createMockProcess(env);
+function createRuntimeHarness(env = {}, overrides = {}) {
+  const { proc, rawModeCalls, writes } = createMockProcess(env);
   const spawns = [];
+  const backgroundSpawns = [];
+  let schedulerCalls = 0;
   const pty = {
     spawn(command, args, options) {
       const spawnedProc = {
@@ -47,11 +52,22 @@ function createRuntimeHarness(env = {}) {
     }
   };
 
+  const spawnImpl = overrides.spawn || (() => {
+    const listeners = {};
+    const child = {
+      on(event, cb) { listeners[event] = cb; },
+      kill() {}
+    };
+    backgroundSpawns.push({ child, listeners });
+    return child;
+  });
+
   const runtime = createPtyRuntime({
     path: require('node:path'),
     fs: { existsSync: () => false, readFileSync: () => '' },
     processObj: proc,
     pty,
+    spawn: spawnImpl,
     execSync: () => {},
     resolveCliPath: () => '/usr/bin/codex',
     buildPtyLaunch: (command, args) => ({ command, args }),
@@ -64,15 +80,23 @@ function createRuntimeHarness(env = {}) {
     stripAnsi: (s) => s,
     ensureSessionStoreLinks: () => ({ migrated: 0, linked: 0 }),
     ensureUsageSnapshot: () => null,
-    readUsageCache: () => null,
-    getUsageRemainingPercentValues: () => [],
+    readUsageCache: overrides.readUsageCache || (() => null),
+    getUsageRemainingPercentValues: overrides.getUsageRemainingPercentValues || (() => []),
     getNextAvailableId: () => null,
     markActiveAccount: () => {},
-    ensureAccountUsageRefreshScheduler: () => {},
+    ensureAccountUsageRefreshScheduler: () => { schedulerCalls += 1; },
     refreshIndexedStateForAccount: () => {}
   });
 
-  return { runtime, proc, spawns, rawModeCalls };
+  return {
+    runtime,
+    proc,
+    writes,
+    spawns,
+    backgroundSpawns,
+    rawModeCalls,
+    getSchedulerCalls: () => schedulerCalls
+  };
 }
 
 test('runtime does not inject --skip-git-repo-check by default', () => {
@@ -95,4 +119,76 @@ test('runtime injects --skip-git-repo-check only when explicitly enabled', () =>
 
   assert.throws(() => proc.emit('SIGINT'), /EXIT:0/);
   assert.deepEqual(rawModeCalls, [true, false]);
+});
+
+test('runtime does not start usage refresh scheduler in PTY mode by default', () => {
+  const { runtime, proc, getSchedulerCalls } = createRuntimeHarness();
+  runtime.runCliPtyTracked('codex', '10086', ['--version'], false);
+  assert.equal(getSchedulerCalls(), 0);
+  assert.throws(() => proc.emit('SIGINT'), /EXIT:0/);
+});
+
+test('runtime starts usage refresh scheduler only when explicitly enabled', () => {
+  const { runtime, proc, getSchedulerCalls } = createRuntimeHarness({
+    AIH_RUNTIME_ENABLE_USAGE_SCHEDULER: '1'
+  });
+  runtime.runCliPtyTracked('codex', '10086', ['--version'], false);
+  assert.equal(getSchedulerCalls(), 1);
+  assert.throws(() => proc.emit('SIGINT'), /EXIT:0/);
+});
+
+test('runtime shows usage in PTY and auto-updates after background refresh', () => {
+  const now = Date.now();
+  let cache = {
+    capturedAt: now - (6 * 60 * 1000),
+    entries: [{ remainingPct: 75.5 }]
+  };
+  const { runtime, proc, writes, backgroundSpawns } = createRuntimeHarness({}, {
+    readUsageCache: () => cache,
+    getUsageRemainingPercentValues: (snapshot) => {
+      if (!snapshot || !Array.isArray(snapshot.entries)) return [];
+      return snapshot.entries.map((x) => Number(x.remainingPct)).filter((n) => Number.isFinite(n));
+    }
+  });
+
+  runtime.runCliPtyTracked('codex', '10086', [], false);
+  assert.ok(writes.some((line) => line.includes('usage remaining: 75.5%')));
+  assert.equal(backgroundSpawns.length, 1);
+
+  cache = {
+    capturedAt: now,
+    entries: [{ remainingPct: 63.2 }]
+  };
+  backgroundSpawns[0].listeners.exit?.(0);
+  assert.ok(writes.some((line) => line.includes('usage remaining: 63.2%')));
+
+  assert.throws(() => proc.emit('SIGINT'), /EXIT:0/);
+});
+
+test('runtime shows usage for gemini interactive PTY as well', () => {
+  const now = Date.now();
+  let cache = {
+    capturedAt: now - (6 * 60 * 1000),
+    models: [{ remainingPct: 42.8 }]
+  };
+  const { runtime, proc, writes, backgroundSpawns } = createRuntimeHarness({}, {
+    readUsageCache: () => cache,
+    getUsageRemainingPercentValues: (snapshot) => {
+      if (!snapshot || !Array.isArray(snapshot.models)) return [];
+      return snapshot.models.map((x) => Number(x.remainingPct)).filter((n) => Number.isFinite(n));
+    }
+  });
+
+  runtime.runCliPtyTracked('gemini', '2', [], false);
+  assert.ok(writes.some((line) => line.includes('account 2 usage remaining: 42.8%')));
+  assert.equal(backgroundSpawns.length, 1);
+
+  cache = {
+    capturedAt: now,
+    models: [{ remainingPct: 39.1 }]
+  };
+  backgroundSpawns[0].listeners.exit?.(0);
+  assert.ok(writes.some((line) => line.includes('account 2 usage remaining: 39.1%')));
+
+  assert.throws(() => proc.emit('SIGINT'), /EXIT:0/);
 });

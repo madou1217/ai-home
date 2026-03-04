@@ -6,11 +6,13 @@ test('createPtyRuntimeDeps forwards required runtime handlers', () => {
   const resolveCliPath = () => '/bin/codex';
   const buildPtyLaunch = () => ({});
   const resolveWindowsBatchLaunch = () => ({});
+  const spawn = () => ({});
   const deps = createPtyRuntimeDeps({
     path: {},
     fs: {},
     processObj: {},
     pty: {},
+    spawn,
     execSync: () => '',
     resolveCliPath,
     buildPtyLaunch,
@@ -34,5 +36,6 @@ test('createPtyRuntimeDeps forwards required runtime handlers', () => {
   assert.equal(deps.resolveCliPath, resolveCliPath);
   assert.equal(deps.buildPtyLaunch, buildPtyLaunch);
   assert.equal(deps.resolveWindowsBatchLaunch, resolveWindowsBatchLaunch);
+  assert.equal(deps.spawn, spawn);
   assert.equal(deps.aiHomeDir, '/tmp/aih');
 });
