@@ -227,3 +227,136 @@ test('runtime keeps raw ctrl+v behavior when clipboard is not image on windows',
 
   assert.throws(() => proc.emit('SIGINT'), /EXIT:0/);
 });
+
+test('runtime intercepts windows shift+insert for clipboard image and writes file path into PTY', () => {
+  const { runtime, proc, ptyWrites } = createRuntimeHarness({}, {
+    platform: 'win32',
+    execSync: () => 'C:\\Temp\\aih-image-paste\\aih_clip_20260305_120001_001.png\r\n'
+  });
+
+  runtime.runCliPtyTracked('codex', '10086', [], false);
+  proc.stdin.emit('data', Buffer.from('\x1b[2~'));
+
+  assert.equal(ptyWrites.length > 0, true);
+  assert.equal(String(ptyWrites[0]), 'C:\\Temp\\aih-image-paste\\aih_clip_20260305_120001_001.png');
+
+  assert.throws(() => proc.emit('SIGINT'), /EXIT:0/);
+});
+
+test('runtime intercepts windows ctrl+v CSI-u sequence for clipboard image', () => {
+  const { runtime, proc, ptyWrites } = createRuntimeHarness({}, {
+    platform: 'win32',
+    execSync: () => 'C:\\Temp\\aih-image-paste\\aih_clip_20260305_120003_001.png\r\n'
+  });
+
+  runtime.runCliPtyTracked('codex', '10086', [], false);
+  proc.stdin.emit('data', Buffer.from('\x1b[118;5u'));
+
+  assert.equal(ptyWrites.length > 0, true);
+  assert.equal(String(ptyWrites[0]), 'C:\\Temp\\aih-image-paste\\aih_clip_20260305_120003_001.png');
+
+  assert.throws(() => proc.emit('SIGINT'), /EXIT:0/);
+});
+
+test('runtime intercepts empty bracketed paste envelope for clipboard image', () => {
+  const { runtime, proc, ptyWrites } = createRuntimeHarness({}, {
+    platform: 'win32',
+    execSync: () => 'C:\\Temp\\aih-image-paste\\aih_clip_20260305_120004_001.png\r\n'
+  });
+
+  runtime.runCliPtyTracked('codex', '10086', [], false);
+  proc.stdin.emit('data', Buffer.from('\x1b[200~\x1b[201~'));
+
+  assert.equal(ptyWrites.length > 0, true);
+  assert.equal(String(ptyWrites[0]), 'C:\\Temp\\aih-image-paste\\aih_clip_20260305_120004_001.png');
+
+  assert.throws(() => proc.emit('SIGINT'), /EXIT:0/);
+});
+
+test('runtime intercepts ctrl+v in WSL and normalizes windows clipboard path', () => {
+  const execCalls = [];
+  const { runtime, proc, ptyWrites } = createRuntimeHarness({
+    WSL_DISTRO_NAME: 'Ubuntu'
+  }, {
+    platform: 'linux',
+    execSync: (cmd) => {
+      execCalls.push(String(cmd));
+      if (String(cmd).startsWith('powershell.exe ') || String(cmd).startsWith('powershell ')) {
+        return 'C:\\Users\\madou\\AppData\\Local\\Temp\\aih-image-paste\\aih_clip_20260305_120000_001.png\r\n';
+      }
+      if (String(cmd).startsWith('wslpath -u ')) {
+        return '/mnt/c/Users/madou/AppData/Local/Temp/aih-image-paste/aih_clip_20260305_120000_001.png\n';
+      }
+      throw new Error(`unexpected command: ${cmd}`);
+    }
+  });
+
+  runtime.runCliPtyTracked('codex', '10086', [], false);
+  proc.stdin.emit('data', Buffer.from([0x16]));
+
+  assert.equal(ptyWrites.length > 0, true);
+  assert.equal(String(ptyWrites[0]), '/mnt/c/Users/madou/AppData/Local/Temp/aih-image-paste/aih_clip_20260305_120000_001.png');
+  assert.equal(execCalls.some((cmd) => cmd.startsWith('wslpath -u ')), true);
+
+  assert.throws(() => proc.emit('SIGINT'), /EXIT:0/);
+});
+
+test('runtime intercepts shift+insert in WSL and normalizes windows clipboard path', () => {
+  const { runtime, proc, ptyWrites } = createRuntimeHarness({
+    WSL_DISTRO_NAME: 'Ubuntu'
+  }, {
+    platform: 'linux',
+    execSync: (cmd) => {
+      if (String(cmd).startsWith('powershell.exe ') || String(cmd).startsWith('powershell ')) {
+        return 'C:\\Users\\madou\\AppData\\Local\\Temp\\aih-image-paste\\aih_clip_20260305_120002_001.png\r\n';
+      }
+      if (String(cmd).startsWith('wslpath -u ')) {
+        return '/mnt/c/Users/madou/AppData/Local/Temp/aih-image-paste/aih_clip_20260305_120002_001.png\n';
+      }
+      throw new Error(`unexpected command: ${cmd}`);
+    }
+  });
+
+  runtime.runCliPtyTracked('codex', '10086', [], false);
+  proc.stdin.emit('data', Buffer.from('\x1b[2;2~'));
+
+  assert.equal(ptyWrites.length > 0, true);
+  assert.equal(String(ptyWrites[0]), '/mnt/c/Users/madou/AppData/Local/Temp/aih-image-paste/aih_clip_20260305_120002_001.png');
+
+  assert.throws(() => proc.emit('SIGINT'), /EXIT:0/);
+});
+
+test('runtime keeps non-empty bracketed paste payload as raw input', () => {
+  const { runtime, proc, ptyWrites } = createRuntimeHarness({
+    WSL_DISTRO_NAME: 'Ubuntu'
+  }, {
+    platform: 'linux',
+    execSync: () => { throw new Error('should not call clipboard for non-empty paste payload'); }
+  });
+
+  runtime.runCliPtyTracked('codex', '10086', [], false);
+  const payload = Buffer.from('\x1b[200~hello\x1b[201~');
+  proc.stdin.emit('data', payload);
+
+  assert.equal(ptyWrites.length > 0, true);
+  assert.equal(String(ptyWrites[0]), '\x1b[200~hello\x1b[201~');
+
+  assert.throws(() => proc.emit('SIGINT'), /EXIT:0/);
+});
+
+test('runtime keeps raw ctrl+v behavior on non-WSL linux', () => {
+  const { runtime, proc, ptyWrites } = createRuntimeHarness({}, {
+    platform: 'linux',
+    execSync: () => { throw new Error('should not call clipboard on non-wsl linux'); }
+  });
+
+  runtime.runCliPtyTracked('codex', '10086', [], false);
+  const ctrlV = Buffer.from([0x16]);
+  proc.stdin.emit('data', ctrlV);
+
+  assert.equal(ptyWrites.length > 0, true);
+  assert.equal(Buffer.isBuffer(ptyWrites[0]), true);
+  assert.equal(ptyWrites[0][0], 0x16);
+
+  assert.throws(() => proc.emit('SIGINT'), /EXIT:0/);
+});
