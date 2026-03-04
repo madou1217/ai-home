@@ -79,6 +79,30 @@ test('resolveProxyConfig bypasses loopback hosts by default', () => {
   assert.equal(result.url, '');
 });
 
+test('getProxyDispatcher tries to install undici once, then gracefully falls back on failure', () => {
+  let requireCalls = 0;
+  let installCalls = 0;
+  __private.setUndiciHooksForTest({
+    requireFn: () => {
+      requireCalls += 1;
+      throw new Error('module_not_found');
+    },
+    installFn: () => {
+      installCalls += 1;
+      return false;
+    }
+  });
+
+  const first = __private.getProxyDispatcher('http://127.0.0.1:7890');
+  const second = __private.getProxyDispatcher('http://127.0.0.1:7890');
+  assert.equal(first, null);
+  assert.equal(second, null);
+  assert.equal(requireCalls, 1);
+  assert.equal(installCalls, 1);
+
+  __private.setUndiciHooksForTest({});
+});
+
 test('fetchWithTimeout retries direct when env proxy is unreachable', async (t) => {
   const calls = [];
   t.mock.method(global, 'fetch', async (_url, init) => {
