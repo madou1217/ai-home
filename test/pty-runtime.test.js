@@ -258,6 +258,21 @@ test('runtime intercepts windows ctrl+v CSI-u sequence for clipboard image', () 
   assert.throws(() => proc.emit('SIGINT'), /EXIT:0/);
 });
 
+test('runtime intercepts windows ctrl+v CSI-u extended sequence for clipboard image', () => {
+  const { runtime, proc, ptyWrites } = createRuntimeHarness({}, {
+    platform: 'win32',
+    execSync: () => 'C:\\Temp\\aih-image-paste\\aih_clip_20260305_120005_001.png\r\n'
+  });
+
+  runtime.runCliPtyTracked('codex', '10086', [], false);
+  proc.stdin.emit('data', Buffer.from('\x1b[118;5:1u'));
+
+  assert.equal(ptyWrites.length > 0, true);
+  assert.equal(String(ptyWrites[0]), 'C:\\Temp\\aih-image-paste\\aih_clip_20260305_120005_001.png');
+
+  assert.throws(() => proc.emit('SIGINT'), /EXIT:0/);
+});
+
 test('runtime intercepts empty bracketed paste envelope for clipboard image', () => {
   const { runtime, proc, ptyWrites } = createRuntimeHarness({}, {
     platform: 'win32',
