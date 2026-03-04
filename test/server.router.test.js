@@ -12,7 +12,7 @@ test('resolveRequestProvider respects explicit mode and model hint', () => {
   assert.equal(resolveRequestProvider({ provider: 'codex' }, { model: 'gemini-2.5-flash' }), 'codex');
   assert.equal(resolveRequestProvider({ provider: 'gemini' }, { model: 'gpt-4o-mini' }), 'gemini');
   assert.equal(resolveRequestProvider({ provider: 'auto' }, { model: 'gemini-2.5-pro' }), 'gemini');
-  assert.equal(resolveRequestProvider({ provider: 'auto' }, { model: 'gpt-4.1' }), 'codex');
+  assert.equal(resolveRequestProvider({ provider: 'auto' }, { model: 'gpt-dynamic' }), 'codex');
   assert.equal(resolveRequestProvider({ provider: 'auto' }, {}), 'codex');
 });
 

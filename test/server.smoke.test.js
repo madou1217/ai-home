@@ -84,7 +84,7 @@ async function startMockUpstream(t) {
       res.setHeader('content-type', 'application/json; charset=utf-8');
       res.end(JSON.stringify({
         object: 'list',
-        data: [{ id: 'gpt-4.1', object: 'model', created: 0, owned_by: 'openai' }]
+        data: [{ id: 'gpt-dynamic', object: 'model', created: 0, owned_by: 'openai' }]
       }));
       return;
     }
@@ -186,7 +186,7 @@ test('server serve forwards upstream unsupported endpoint errors and records fai
       'content-type': 'application/json'
     },
     body: JSON.stringify({
-      model: 'gpt-4.1',
+      model: 'gpt-dynamic',
       messages: [{ role: 'user', content: 'hello' }]
     })
   });

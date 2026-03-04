@@ -16,6 +16,6 @@ test('extractRequestSessionKey falls back to previous_response_id', () => {
 });
 
 test('extractRequestSessionKey returns empty string when no session signal exists', () => {
-  const key = extractRequestSessionKey({}, { model: 'gpt-4.1', messages: [] });
+  const key = extractRequestSessionKey({}, { model: 'gpt-dynamic', messages: [] });
   assert.equal(key, '');
 });
