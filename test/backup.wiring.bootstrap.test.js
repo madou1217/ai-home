@@ -1,0 +1,105 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const {
+  createBackupRestoreWiring,
+  createBackupCryptoWiring,
+  createBackupHelperWiring
+} = require('../lib/cli/bootstrap/backup-wiring');
+
+test('createBackupRestoreWiring maps restore dependencies', () => {
+  let receivedArg = null;
+  const printRestoreDetails = () => {};
+  const restoreProfilesFromExtractedBackup = () => {};
+
+  const out = createBackupRestoreWiring({
+    fs: {},
+    path: {},
+    fse: {},
+    ensureDir: () => {},
+    profilesDir: '/tmp/profiles',
+    checkStatus: () => ({ configured: true })
+  }, {
+    createBackupRestoreService: (arg) => {
+      receivedArg = arg;
+      return { printRestoreDetails, restoreProfilesFromExtractedBackup };
+    }
+  });
+
+  assert.equal(out.printRestoreDetails, printRestoreDetails);
+  assert.equal(out.restoreProfilesFromExtractedBackup, restoreProfilesFromExtractedBackup);
+  assert.equal(receivedArg.profilesDir, '/tmp/profiles');
+});
+
+test('createBackupCryptoWiring maps crypto dependencies and exports', () => {
+  let receivedArg = null;
+  const fakeService = {
+    getSshKeys: () => [],
+    getLikelyRsaSshPrivateKeys: () => [],
+    hasAgeBinary: () => true,
+    tryAutoInstallAge: () => false,
+    getAgeCompatibleSshPublicKeys: () => [],
+    getAgeCompatibleSshPrivateKeys: () => [],
+    isAgeArmoredData: () => false,
+    runAgeEncrypt: () => '',
+    runAgeDecrypt: () => '',
+    loadRsaPrivateKey: () => ({}),
+    decryptSshRsaEnvelope: () => '',
+    buildPasswordEnvelope: () => '',
+    decryptPasswordEnvelope: () => '',
+    serializeEnvelope: () => '',
+    parseEnvelope: () => ({}),
+    decryptLegacyEnvelope: () => ''
+  };
+
+  const out = createBackupCryptoWiring({
+    fs: {},
+    path: {},
+    crypto: {},
+    spawnSync: () => ({}),
+    execSync: () => '',
+    commandExists: () => true,
+    askYesNo: () => true,
+    processObj: {},
+    hostHomeDir: '/tmp/home',
+    exportMagic: 'm',
+    exportVersion: 1,
+    ageSshKeyTypes: ['rsa']
+  }, {
+    createBackupCryptoService: (arg) => {
+      receivedArg = arg;
+      return fakeService;
+    }
+  });
+
+  assert.equal(out.getSshKeys, fakeService.getSshKeys);
+  assert.equal(out.decryptLegacyEnvelope, fakeService.decryptLegacyEnvelope);
+  assert.equal(receivedArg.hostHomeDir, '/tmp/home');
+  assert.deepEqual(receivedArg.ageSshKeyTypes, ['rsa']);
+});
+
+test('createBackupHelperWiring maps helper dependencies and exports', () => {
+  let receivedArg = null;
+  const out = createBackupHelperWiring({
+    fs: {},
+    path: {},
+    processObj: {},
+    aiHomeDir: '/tmp/aih',
+    cliConfigs: {}
+  }, {
+    createBackupHelperService: (arg) => {
+      receivedArg = arg;
+      return {
+        ensureAesSuffix: (s) => s,
+        defaultExportName: () => 'x',
+        parseExportArgs: () => ({}),
+        parseImportArgs: () => ({}),
+        renderStageProgress: () => '',
+        expandSelectorsToPaths: () => []
+      };
+    }
+  });
+
+  assert.equal(typeof out.ensureAesSuffix, 'function');
+  assert.equal(typeof out.expandSelectorsToPaths, 'function');
+  assert.equal(receivedArg.aiHomeDir, '/tmp/aih');
+});

@@ -1,0 +1,85 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const { runCliRootRouter } = require('../lib/cli/commands/root/router');
+
+function createHarness(overrides = {}) {
+  const events = [];
+  let exitCode = null;
+
+  const deps = {
+    processObj: {
+      exit: (code) => {
+        exitCode = code;
+        events.push(`exit:${code}`);
+      },
+      stdout: { write: (s) => events.push(`stdout:${s}`) },
+      stderr: { write: (s) => events.push(`stderr:${s}`) }
+    },
+    consoleImpl: {
+      log: (msg) => events.push(`log:${String(msg)}`),
+      error: (msg) => events.push(`error:${String(msg)}`)
+    },
+    fs: {},
+    buildUsageProbePayload: () => ({ ok: true }),
+    showHelp: () => events.push('showHelp'),
+    showLsHelp: () => events.push('showLsHelp'),
+    listProfiles: () => events.push('listProfiles'),
+    runGlobalAccountImport: async () => ({ providers: [], failedProviders: [] }),
+    parseCodexBulkImportArgs: () => ({}),
+    importCodexTokensFromOutput: async () => ({}),
+    refreshAccountStateIndexForProvider: () => events.push('refreshIndex'),
+    runDevCommand: async () => 0,
+    devContext: {},
+    runBackupCommand: () => false,
+    backupContext: {},
+    runServerEntry: async () => 0,
+    serverEntryContext: {},
+    runAiCliCommandRouter: (cmd) => events.push(`ai:${cmd}`),
+    aiCliContext: {}
+  };
+
+  Object.assign(deps, overrides);
+  return { deps, events, getExitCode: () => exitCode };
+}
+
+test('runCliRootRouter handles help command first', async () => {
+  const h = createHarness();
+  await runCliRootRouter(['--help'], h.deps);
+  assert.equal(h.getExitCode(), 0);
+  assert.deepEqual(h.events.slice(0, 2), ['showHelp', 'exit:0']);
+});
+
+test('runCliRootRouter gives backup command priority before fallback router', async () => {
+  const h = createHarness({
+    runBackupCommand: (cmd) => {
+      h.events.push(`backup:${cmd}`);
+      return true;
+    },
+    runServerEntry: async () => {
+      h.events.push('serverEntry');
+      return 0;
+    }
+  });
+
+  await runCliRootRouter(['backup', 'export'], h.deps);
+  assert.equal(h.events.includes('backup:backup'), true);
+  assert.equal(h.events.includes('serverEntry'), false);
+  assert.equal(h.events.some((e) => e.startsWith('ai:')), false);
+});
+
+test('runCliRootRouter routes server command after backup check', async () => {
+  const h = createHarness({
+    runBackupCommand: () => false,
+    runServerEntry: async () => 7
+  });
+
+  await runCliRootRouter(['server', 'start'], h.deps);
+  assert.equal(h.getExitCode(), 7);
+});
+
+test('runCliRootRouter falls back to ai cli router for unknown root commands', async () => {
+  const h = createHarness();
+  await runCliRootRouter(['codex', '10086'], h.deps);
+  assert.equal(h.events.includes('ai:codex'), true);
+  assert.equal(h.getExitCode(), null);
+});
