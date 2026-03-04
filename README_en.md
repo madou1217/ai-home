@@ -136,7 +136,7 @@ Notes:
 - Concurrency is auto-sized to local CPU parallelism (macOS / Windows / Linux)
 
 ### 11. Local Account Server (OpenAI-compatible)
-`aih` now includes a built-in local server. Default backend is `openai-upstream` (direct upstream gateway, no local `codex exec`), and it can route to `codex/gemini` by model/provider rules.
+`aih` now includes a built-in local server. Default backend is `openai-upstream` (direct upstream gateway, no local `codex exec`).
 
 ```bash
 # Start background server (default 127.0.0.1:8317)
@@ -151,6 +151,9 @@ aih server stop
 In clients (e.g. Cherry Studio), use:
 - `base_url`: `http://127.0.0.1:8317/v1`
 - `api_key`: `dummy`
+
+Management auth (optional):
+- `AIH_SERVER_MANAGEMENT_KEY`: auth key for `/v0/management/*` APIs (the only supported env key; legacy prefixes are removed).
 
 Advanced (optional):
 ```bash
@@ -169,3 +172,14 @@ Management APIs:
 - `GET /v0/management/accounts`
 - `GET /v0/management/models`
 - `POST /v0/management/reload`
+- `POST /v0/management/state-index/upsert`
+- `POST /v0/management/state-index/set-exhausted`
+- `POST /v0/management/state-index/prune-missing`
+
+State index write policy:
+- Single-writer model: CLI no longer writes `account_state.db` directly.
+- All state-index writes are delegated to server management APIs to reduce SQLite lock contention.
+
+Windows note (`aih codex usages`):
+- `.cmd/.bat` launch path is now handled for Codex usage probes.
+- If you still see no usage snapshot, run `codex login` in that sandbox once and retry `aih codex usages`.

@@ -137,7 +137,7 @@ aih codex account import accounts/codex --dry-run
 - 并发默认按本机 CPU 线程自动设置（macOS / Windows / Linux）
 
 ### 11. 本地账号能力代理（OpenAI 兼容）
-`aih` 现在内置本地 server。默认后端为 `openai-upstream`（直连上游网关，不再依赖本地 `codex exec`），可按模型路由到 `codex/gemini`。
+`aih` 现在内置本地 server。默认后端为 `openai-upstream`（直连上游网关，不再依赖本地 `codex exec`）。
 
 ```bash
 # 启动后台 server（默认 127.0.0.1:8317）
@@ -152,6 +152,9 @@ aih server stop
 在调用方里填写：
 - `base_url`: `http://127.0.0.1:8317/v1`
 - `api_key`: `dummy`
+
+管理鉴权（可选）：
+- `AIH_SERVER_MANAGEMENT_KEY`：用于 `/v0/management/*` 接口鉴权（仅此变量，已不兼容旧前缀）。
 
 高级可选：
 ```bash
@@ -170,3 +173,13 @@ aih server autostart uninstall
 - `GET /v0/management/accounts`
 - `GET /v0/management/models`
 - `POST /v0/management/reload`
+- `POST /v0/management/state-index/upsert`
+- `POST /v0/management/state-index/set-exhausted`
+- `POST /v0/management/state-index/prune-missing`
+
+状态索引写入策略：
+- 采用单写者模型：CLI 不再直接写 `account_state.db`，统一由 server 通过 management API 执行写入，降低 SQLite 锁冲突。
+
+Windows 说明（`aih codex usages`）：
+- 已兼容 `codex.cmd/.bat` 启动方式。
+- 若仍提示无 usage 快照，先在对应沙箱执行一次 `codex login`，再重试 `aih codex usages`。

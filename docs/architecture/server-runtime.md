@@ -32,13 +32,15 @@ Keep server behavior implemented in one place only, so CLI entry changes do not 
 - `lib/server/server.js`
   - HTTP server runtime.
   - request handling, health/readiness, auth checks, management + v1 routing.
+  - owns `account_state.db` mutation lifecycle (single-writer).
 
 - `lib/server/*` (others)
-  - provider routing, local/upstream endpoints, metrics, management payloads, args parsing helpers.
+  - upstream routing, metrics, management payloads, args parsing helpers.
 
 ## Contribution Rules
 
 - If behavior is visible at server runtime, change `lib/server/*`, not `lib/cli/app.js`.
+- Do not add direct SQLite writes in CLI paths; use `/v0/management/state-index/*`.
 - If adding a new `aih server` action, implement command semantics in `lib/server/command-handler.js`.
 - If adding startup wiring dependencies, update `lib/server/entry.js` and its tests.
 - Keep smoke coverage in `test/server.smoke.test.js` for user-visible HTTP behavior.
