@@ -139,6 +139,36 @@ test('runtime starts usage refresh scheduler only when explicitly enabled', () =
   assert.throws(() => proc.emit('SIGINT'), /EXIT:0/);
 });
 
+test('runtime starts windows clipboard mirror with valid powershell script', () => {
+  const spawnCalls = [];
+  const { runtime, proc } = createRuntimeHarness({
+    AIH_RUNTIME_SHOW_USAGE: '0'
+  }, {
+    platform: 'win32',
+    spawn: (cmd, args) => {
+      spawnCalls.push({ cmd, args });
+      return {
+        on() {},
+        kill() {}
+      };
+    }
+  });
+
+  runtime.runCliPtyTracked('codex', '10086', [], false);
+
+  assert.equal(spawnCalls.length > 0, true);
+  const call = spawnCalls[0];
+  const encodedCommandIndex = Array.isArray(call.args) ? call.args.indexOf('-EncodedCommand') : -1;
+  assert.notEqual(encodedCommandIndex, -1);
+  const encoded = call.args[encodedCommandIndex + 1];
+  const script = Buffer.from(String(encoded || ''), 'base64').toString('utf16le');
+  assert.equal(script.includes('GetClipboardSequenceNumber'), true);
+  assert.equal(script.includes('[Aih.NativeClipboard]::GetClipboardSequenceNumber()'), true);
+  assert.equal(script.includes('Add-Type @"'), false);
+
+  assert.throws(() => proc.emit('SIGINT'), /EXIT:0/);
+});
+
 test('runtime shows usage in PTY and auto-updates after background refresh', () => {
   const now = Date.now();
   let cache = {
