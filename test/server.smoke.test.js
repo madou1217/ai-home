@@ -48,8 +48,6 @@ async function startProxy(t, extraArgs = []) {
     'serve',
     '--port',
     String(port),
-    '--backend',
-    'openai-upstream',
     '--provider',
     'codex',
     ...extraArgs
@@ -79,12 +77,11 @@ async function startMockUpstream(t) {
   const server = http.createServer(async (req, res) => {
     const method = String(req.method || 'GET').toUpperCase();
     const pathname = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`).pathname;
-    if (method === 'GET' && pathname === '/v1/models') {
+    if (method === 'GET' && pathname === '/models') {
       res.statusCode = 200;
       res.setHeader('content-type', 'application/json; charset=utf-8');
       res.end(JSON.stringify({
-        object: 'list',
-        data: [{ id: 'gpt-dynamic', object: 'model', created: 0, owned_by: 'openai' }]
+        models: [{ slug: 'gpt-dynamic', supported_in_api: true, visibility: 'list' }]
       }));
       return;
     }
@@ -104,7 +101,7 @@ async function startMockUpstream(t) {
 
 test('server serve exposes health/models/metrics', async (t) => {
   const upstream = await startMockUpstream(t);
-  const { port, getStderr } = await startProxy(t, ['--upstream', upstream]);
+  const { port, getStderr } = await startProxy(t, ['--codex-base-url', upstream]);
   const ready = await waitForHealth(port, 12000);
   assert.equal(ready, true, `server did not become healthy: ${getStderr()}`);
 
@@ -135,7 +132,7 @@ test('server serve exposes health/models/metrics', async (t) => {
 test('server serve enforces client and management keys when configured', async (t) => {
   const upstream = await startMockUpstream(t);
   const { port, getStderr } = await startProxy(t, [
-    '--upstream', upstream,
+    '--codex-base-url', upstream,
     '--client-key', 'client-secret',
     '--management-key', 'mgmt-secret'
   ]);
@@ -175,7 +172,7 @@ test('server serve enforces client and management keys when configured', async (
 test('server serve forwards upstream unsupported endpoint errors and records failures', async (t) => {
   const deadUpstreamPort = await getFreePort();
   const upstream = `http://127.0.0.1:${deadUpstreamPort}`;
-  const { port, getStderr } = await startProxy(t, ['--upstream', upstream]);
+  const { port, getStderr } = await startProxy(t, ['--codex-base-url', upstream]);
   const ready = await waitForHealth(port, 12000);
   assert.equal(ready, true, `server did not become healthy: ${getStderr()}`);
 

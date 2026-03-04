@@ -136,7 +136,12 @@ Notes:
 - Concurrency is auto-sized to local CPU parallelism (macOS / Windows / Linux)
 
 ### 11. Local Account Server (OpenAI-compatible)
-`aih` now includes a built-in local server. Default backend is `openai-upstream` (direct upstream gateway, no local `codex exec`).
+`aih` now includes a built-in local server with provider-specific adapter routes:
+- `codexBaseUrl` (default `https://chatgpt.com/backend-api/codex`)
+- `geminiBaseUrl` (default `https://generativelanguage.googleapis.com/v1beta/openai`)
+- `claudeBaseUrl` (default `https://api.anthropic.com/v1`)
+
+Note: when a Gemini account uses `oauth-personal` (Google sign-in from Gemini CLI), the server automatically switches to the Gemini Code Assist route (`cloudcode-pa.googleapis.com`) instead of raw OpenAI-compatible passthrough.
 
 ```bash
 # Start background server (default 127.0.0.1:8317)

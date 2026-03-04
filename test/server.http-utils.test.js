@@ -1,6 +1,10 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { fetchWithTimeout, __private } = require('../lib/server/http-utils');
+const {
+  fetchWithTimeout,
+  fetchGeminiCodeAssistChatCompletion,
+  __private
+} = require('../lib/server/http-utils');
 
 async function withEnv(patch, fn) {
   const keys = Object.keys(patch);
@@ -102,4 +106,84 @@ test('fetchWithTimeout retries direct when env proxy is unreachable', async (t) 
   });
 
   assert.deepEqual(calls, [true, false]);
+});
+
+test('fetchGeminiCodeAssistChatCompletion maps OpenAI tools/tool_choice to Gemini and returns tool_calls', async (t) => {
+  const fetchCalls = [];
+  t.mock.method(global, 'fetch', async (url, init) => {
+    const safeUrl = String(url || '');
+    fetchCalls.push({ url: safeUrl, body: String(init && init.body || '') });
+    if (safeUrl.includes(':loadCodeAssist')) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ cloudaicompanionProject: 'projects/test-project' })
+      };
+    }
+    if (safeUrl.includes(':generateContent')) {
+      const requestBody = JSON.parse(String(init && init.body || '{}'));
+      assert.equal(requestBody.request.tools[0].functionDeclarations[0].name, 'mcp__CherryHub__list');
+      assert.equal(
+        requestBody.request.toolConfig.functionCallingConfig.allowedFunctionNames[0],
+        'mcp__CherryHub__list'
+      );
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          traceId: 'trace-1',
+          modelVersion: 'gemini-2.5-pro',
+          candidates: [{
+            finishReason: 'UNEXPECTED_TOOL_CALL',
+            content: {
+              parts: [{
+                functionCall: {
+                  name: 'mcp__CherryHub__list',
+                  args: { limit: 10 }
+                }
+              }]
+            }
+          }],
+          usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 2, totalTokenCount: 3 }
+        })
+      };
+    }
+    throw new Error(`unexpected_url_${safeUrl}`);
+  });
+
+  const result = await fetchGeminiCodeAssistChatCompletion(
+    {
+      geminiBaseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai'
+    },
+    {
+      provider: 'gemini',
+      authType: 'oauth-personal',
+      accessToken: 'token-1'
+    },
+    {
+      model: 'gemini-2.5-pro',
+      messages: [{ role: 'user', content: 'hi' }],
+      tools: [{
+        type: 'function',
+        function: {
+          name: 'mcp__CherryHub__list',
+          description: 'list tools',
+          parameters: { type: 'object', properties: { limit: { type: 'number' } } }
+        }
+      }],
+      tool_choice: {
+        type: 'function',
+        function: { name: 'mcp__CherryHub__list' }
+      }
+    },
+    800
+  );
+
+  assert.equal(fetchCalls.length, 2);
+  assert.match(fetchCalls[0].url, /cloudcode-pa\.googleapis\.com\/v1internal:loadCodeAssist/);
+  assert.match(fetchCalls[1].url, /cloudcode-pa\.googleapis\.com\/v1internal:generateContent/);
+  assert.equal(result.choices[0].finish_reason, 'tool_calls');
+  assert.equal(result.choices[0].message.content, null);
+  assert.equal(result.choices[0].message.tool_calls[0].function.name, 'mcp__CherryHub__list');
+  assert.equal(result.usage.total_tokens, 3);
 });

@@ -55,7 +55,8 @@ test('management router reload endpoint returns deterministic payload', async ()
   const state = {
     accounts: {
       codex: [{ id: '1' }],
-      gemini: [{ id: '2' }]
+      gemini: [{ id: '2' }],
+      claude: []
     }
   };
   const handled = await handleManagementRequest({
@@ -72,7 +73,8 @@ test('management router reload endpoint returns deterministic payload', async ()
       writeJson: (r, code, payload) => { r.statusCode = code; r.end(JSON.stringify(payload)); },
       loadServerRuntimeAccounts: () => ({
         codex: [{ id: '11' }, { id: '12' }],
-        gemini: [{ id: '21' }]
+        gemini: [{ id: '21' }],
+        claude: []
       }),
       applyReloadState: (s, runtimeAccounts) => {
         s.accounts = runtimeAccounts;
@@ -92,7 +94,8 @@ test('management router reload endpoint returns deterministic payload', async ()
     reloaded: 3,
     providers: {
       codex: 2,
-      gemini: 1
+      gemini: 1,
+      claude: 0
     }
   });
 });
@@ -123,7 +126,8 @@ test('management router supports reload and cooldown clear contracts', async () 
   const state = {
     accounts: {
       codex: [{ cooldownUntil: 123, consecutiveFailures: 3 }],
-      gemini: [{ cooldownUntil: 456, consecutiveFailures: 2 }]
+      gemini: [{ cooldownUntil: 456, consecutiveFailures: 2 }],
+      claude: [{ cooldownUntil: 789, consecutiveFailures: 4 }]
     }
   };
   const jsonWriter = (r, code, payload) => {
@@ -146,11 +150,13 @@ test('management router supports reload and cooldown clear contracts', async () 
       writeJson: jsonWriter,
       loadServerRuntimeAccounts: () => ({
         codex: [{ id: 'c1' }],
-        gemini: [{ id: 'g1' }, { id: 'g2' }]
+        gemini: [{ id: 'g1' }, { id: 'g2' }],
+        claude: []
       }),
       applyReloadState: (s, runtime) => {
         s.accounts.codex = runtime.codex.slice();
         s.accounts.gemini = runtime.gemini.slice();
+        s.accounts.claude = runtime.claude.slice();
       },
       fs: {},
       getToolAccountIds: () => [],
@@ -164,7 +170,7 @@ test('management router supports reload and cooldown clear contracts', async () 
   assert.deepEqual(JSON.parse(reloadRes.body), {
     ok: true,
     reloaded: 3,
-    providers: { codex: 1, gemini: 2 }
+    providers: { codex: 1, gemini: 2, claude: 0 }
   });
 
   const clearRes = createResCapture();
@@ -189,6 +195,7 @@ test('management router supports reload and cooldown clear contracts', async () 
   assert.equal(state.accounts.codex[0].consecutiveFailures, 0);
   assert.equal(state.accounts.gemini[0].cooldownUntil, 0);
   assert.equal(state.accounts.gemini[0].consecutiveFailures, 0);
+  assert.equal(state.accounts.claude[0], undefined);
 });
 
 test('management restart endpoint returns deterministic payload', async () => {

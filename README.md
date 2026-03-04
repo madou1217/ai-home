@@ -137,7 +137,12 @@ aih codex account import accounts/codex --dry-run
 - 并发默认按本机 CPU 线程自动设置（macOS / Windows / Linux）
 
 ### 11. 本地账号能力代理（OpenAI 兼容）
-`aih` 现在内置本地 server。默认后端为 `openai-upstream`（直连上游网关，不再依赖本地 `codex exec`）。
+`aih` 现在内置本地 server，默认使用 provider 专属适配链路：
+- `codexBaseUrl`（默认 `https://chatgpt.com/backend-api/codex`）
+- `geminiBaseUrl`（默认 `https://generativelanguage.googleapis.com/v1beta/openai`）
+- `claudeBaseUrl`（默认 `https://api.anthropic.com/v1`）
+
+补充：当 Gemini 账号是 `oauth-personal`（Gemini CLI 的 Google 登录）时，server 会自动走 Gemini Code Assist 链路（`cloudcode-pa.googleapis.com`），不再按 OpenAI 兼容 URL 直通。
 
 ```bash
 # 启动后台 server（默认 127.0.0.1:8317）
