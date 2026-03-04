@@ -195,3 +195,9 @@ Optional toggles:
 - `AIH_RUNTIME_AUTO_SWITCH=0` disable runtime threshold auto-switch
 - `AIH_RUNTIME_THRESHOLD_CHECK_MS=<ms>` set threshold polling interval (default 60000, minimum 30000)
 - `AIH_CODEX_AUTO_SKIP_REPO_CHECK=0` disable auto `--skip-git-repo-check` injection
+
+Mock command for integration testing:
+```bash
+aih dev mock-usage codex 888 --remaining 4 --duration-sec 60
+```
+This temporarily writes a low-remaining usage snapshot for `codex#888`, waits 60s, then restores and re-checks.

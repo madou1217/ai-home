@@ -195,3 +195,9 @@ TTY 智能体验（Codex）：
 - `AIH_RUNTIME_AUTO_SWITCH=0` 关闭运行中阈值自动切号
 - `AIH_RUNTIME_THRESHOLD_CHECK_MS=<毫秒>` 设置阈值检查周期（默认 60000，最小 30000）
 - `AIH_CODEX_AUTO_SKIP_REPO_CHECK=0` 关闭自动注入 `--skip-git-repo-check`
+
+联调用 mock 命令：
+```bash
+aih dev mock-usage codex 888 --remaining 4 --duration-sec 60
+```
+会临时把 `codex#888` usage 快照写到低阈值，持续 60s 后自动回退并回读校验。
