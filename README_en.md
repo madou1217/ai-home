@@ -183,3 +183,15 @@ State index write policy:
 Windows note (`aih codex usages`):
 - `.cmd/.bat` launch path is now handled for Codex usage probes.
 - If you still see no usage snapshot, run `codex login` in that sandbox once and retry `aih codex usages`.
+
+TTY smart UX (Codex):
+- Interactive keys (up/down selection and confirm) are passed through via native PTY.
+- Runtime threshold auto-switch (enabled by default, interactive sessions only):
+  - When current account usage reaches threshold (`threshold_pct` in `~/.ai_home/usage-config.json`), `aih` prints a TTY notice and hot-swaps to the next eligible account.
+  - Session storage stays shared via session-store links to preserve continuity as much as possible.
+- `aih` injects `--skip-git-repo-check` for Codex by default to reduce first-open project confirmation prompts.
+
+Optional toggles:
+- `AIH_RUNTIME_AUTO_SWITCH=0` disable runtime threshold auto-switch
+- `AIH_RUNTIME_THRESHOLD_CHECK_MS=<ms>` set threshold polling interval (default 60000, minimum 30000)
+- `AIH_CODEX_AUTO_SKIP_REPO_CHECK=0` disable auto `--skip-git-repo-check` injection

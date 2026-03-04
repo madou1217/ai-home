@@ -183,3 +183,15 @@ aih server autostart uninstall
 Windows 说明（`aih codex usages`）：
 - 已兼容 `codex.cmd/.bat` 启动方式。
 - 若仍提示无 usage 快照，先在对应沙箱执行一次 `codex login`，再重试 `aih codex usages`。
+
+TTY 智能体验（Codex）：
+- 交互键（上下选择/确认）走原生 PTY 透传，`aih` 不拦截。
+- 运行中自动阈值切号（默认开启，交互会话生效）：
+  - 当当前账号 usage 达到阈值（读 `~/.ai_home/usage-config.json` 的 `threshold_pct`）时，会在 TTY 通知后自动热切到下一个可用账号。
+  - 会话存储保持共享（通过 session store 链接），尽量保证 session 连续。
+- 默认会为 `codex` 注入 `--skip-git-repo-check`，减少首次项目确认提示。
+
+可选开关：
+- `AIH_RUNTIME_AUTO_SWITCH=0` 关闭运行中阈值自动切号
+- `AIH_RUNTIME_THRESHOLD_CHECK_MS=<毫秒>` 设置阈值检查周期（默认 60000，最小 30000）
+- `AIH_CODEX_AUTO_SKIP_REPO_CHECK=0` 关闭自动注入 `--skip-git-repo-check`
