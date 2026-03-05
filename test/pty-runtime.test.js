@@ -1,6 +1,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const EventEmitter = require('node:events');
+const fsBase = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const { createPtyRuntime } = require('../lib/cli/services/pty/runtime');
 
 function createMockProcess(env = {}, platform = 'linux') {
@@ -35,6 +38,20 @@ function createMockProcess(env = {}, platform = 'linux') {
 
 function createRuntimeHarness(env = {}, overrides = {}) {
   const { proc, rawModeCalls, writes } = createMockProcess(env, overrides.platform || 'linux');
+  proc.pid = Number(overrides.pid || 10001);
+  const lockRoot = fsBase.mkdtempSync(path.join(os.tmpdir(), 'aih-pty-lock-'));
+  const alivePids = overrides.alivePids instanceof Set ? overrides.alivePids : null;
+  proc.kill = (pid, signal) => {
+    if (signal === 0) {
+      const safePid = Number(pid);
+      if (alivePids) {
+        if (alivePids.has(safePid)) return;
+      } else if (safePid === proc.pid) {
+        return;
+      }
+    }
+    throw new Error('ESRCH');
+  };
   const spawns = [];
   const backgroundSpawns = [];
   const ptyWrites = [];
@@ -63,9 +80,23 @@ function createRuntimeHarness(env = {}, overrides = {}) {
     return child;
   });
 
+  const fsImpl = {
+    existsSync: (target) => {
+      const normalized = String(target || '');
+      if (normalized.endsWith('.aih_env.json')) return false;
+      return fsBase.existsSync(normalized);
+    },
+    readFileSync: fsBase.readFileSync.bind(fsBase),
+    mkdirSync: fsBase.mkdirSync.bind(fsBase),
+    openSync: fsBase.openSync.bind(fsBase),
+    writeFileSync: fsBase.writeFileSync.bind(fsBase),
+    closeSync: fsBase.closeSync.bind(fsBase),
+    unlinkSync: fsBase.unlinkSync.bind(fsBase)
+  };
+
   const runtime = createPtyRuntime({
     path: require('node:path'),
-    fs: { existsSync: () => false, readFileSync: () => '' },
+    fs: fsImpl,
     processObj: proc,
     pty,
     spawn: spawnImpl,
@@ -75,7 +106,7 @@ function createRuntimeHarness(env = {}, overrides = {}) {
     resolveWindowsBatchLaunch: (_cliName, cliBin) => ({ launchBin: cliBin, envPatch: {} }),
     readUsageConfig: () => ({}),
     cliConfigs: { codex: { pkg: '@openai/codex', loginArgs: ['login'] } },
-    aiHomeDir: '/tmp/.ai_home',
+    aiHomeDir: overrides.aiHomeDir || lockRoot,
     getProfileDir: () => '/tmp/.ai_home/profiles/codex/10086',
     askYesNo: () => false,
     stripAnsi: (s) => s,
@@ -97,7 +128,8 @@ function createRuntimeHarness(env = {}, overrides = {}) {
     spawns,
     backgroundSpawns,
     rawModeCalls,
-    getSchedulerCalls: () => schedulerCalls
+    getSchedulerCalls: () => schedulerCalls,
+    lockRoot
   };
 }
 
@@ -187,6 +219,78 @@ test('runtime starts windows clipboard mirror when explicitly enabled', () => {
   assert.equal(script.includes('ContainsImage'), true);
   assert.equal(script.includes('$pendingImage = $false'), true);
   assert.equal(script.includes('Add-Type @"'), false);
+
+  assert.throws(() => proc.emit('SIGINT'), /EXIT:0/);
+});
+
+test('runtime enforces single clipboard mirror process across multiple windows PTY instances', () => {
+  const sharedHome = fsBase.mkdtempSync(path.join(os.tmpdir(), 'aih-pty-shared-'));
+  const alivePids = new Set([11001, 11002]);
+  const spawnCalls = [];
+  const spawnImpl = (cmd, args) => {
+    spawnCalls.push({ cmd, args });
+    return {
+      on() {},
+      kill() {}
+    };
+  };
+
+  const h1 = createRuntimeHarness({
+    AIH_RUNTIME_SHOW_USAGE: '0',
+    AIH_WINDOWS_IMAGE_CLIPBOARD_MIRROR: '1'
+  }, {
+    platform: 'win32',
+    aiHomeDir: sharedHome,
+    pid: 11001,
+    alivePids,
+    spawn: spawnImpl
+  });
+  const h2 = createRuntimeHarness({
+    AIH_RUNTIME_SHOW_USAGE: '0',
+    AIH_WINDOWS_IMAGE_CLIPBOARD_MIRROR: '1'
+  }, {
+    platform: 'win32',
+    aiHomeDir: sharedHome,
+    pid: 11002,
+    alivePids,
+    spawn: spawnImpl
+  });
+
+  h1.runtime.runCliPtyTracked('codex', '10086', [], false);
+  h2.runtime.runCliPtyTracked('codex', '10087', [], false);
+
+  assert.equal(spawnCalls.length, 1);
+
+  assert.throws(() => h1.proc.emit('SIGINT'), /EXIT:0/);
+  assert.throws(() => h2.proc.emit('SIGINT'), /EXIT:0/);
+});
+
+test('runtime recovers stale clipboard mirror lock owned by dead process', () => {
+  const sharedHome = fsBase.mkdtempSync(path.join(os.tmpdir(), 'aih-pty-stale-'));
+  const lockDir = path.join(sharedHome, 'runtime-locks');
+  const lockPath = path.join(lockDir, 'windows-clipboard-mirror.lock');
+  fsBase.mkdirSync(lockDir, { recursive: true });
+  fsBase.writeFileSync(lockPath, `${JSON.stringify({ pid: 999999, createdAt: Date.now() - 30_000 })}\n`, 'utf8');
+
+  const spawnCalls = [];
+  const { runtime, proc } = createRuntimeHarness({
+    AIH_RUNTIME_SHOW_USAGE: '0',
+    AIH_WINDOWS_IMAGE_CLIPBOARD_MIRROR: '1'
+  }, {
+    platform: 'win32',
+    aiHomeDir: sharedHome,
+    pid: 31001,
+    spawn: (cmd, args) => {
+      spawnCalls.push({ cmd, args });
+      return {
+        on() {},
+        kill() {}
+      };
+    }
+  });
+
+  runtime.runCliPtyTracked('codex', '10086', [], false);
+  assert.equal(spawnCalls.length, 1);
 
   assert.throws(() => proc.emit('SIGINT'), /EXIT:0/);
 });
