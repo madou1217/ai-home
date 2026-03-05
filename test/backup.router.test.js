@@ -3,12 +3,23 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { EventEmitter } = require('node:events');
 const fse = require('fs-extra');
 const { __private } = require('../lib/cli/commands/backup/router');
 
 function writeJson(filePath, payload) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, JSON.stringify(payload));
+}
+
+function createSpawnStub(handler) {
+  return (command, args) => {
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    process.nextTick(() => handler({ command, args, child }));
+    return child;
+  };
 }
 
 test('resolveImportSourceRoot prefers accounts/ root when present', () => {
@@ -97,7 +108,8 @@ test('ensureArchiveExtractedByHash reuses cached extraction for same archive has
       processImpl: { platform: 'linux' },
       cryptoImpl: require('node:crypto'),
       zipPath,
-      aiHomeDir
+      aiHomeDir,
+      spawnImpl: createSpawnStub(({ child }) => child.emit('close', 1))
     });
     const second = await __private.ensureArchiveExtractedByHash({
       fs,
@@ -108,7 +120,8 @@ test('ensureArchiveExtractedByHash reuses cached extraction for same archive has
       processImpl: { platform: 'linux' },
       cryptoImpl: require('node:crypto'),
       zipPath,
-      aiHomeDir
+      aiHomeDir,
+      spawnImpl: createSpawnStub(({ child }) => child.emit('close', 1))
     });
 
     assert.equal(first.cacheHit, false);
@@ -136,28 +149,29 @@ test('resolveBundled7zipPath picks first existing bundled binary candidate', () 
   assert.equal(resolved, '/ok/7za');
 });
 
-test('tryExtractZipWith7z falls back to bundled binary after system commands fail', () => {
+test('tryExtractZipWith7z falls back to bundled binary after system commands fail', async () => {
   const commands = [];
-  const ok = __private.tryExtractZipWith7z({
-    execSync: (cmd) => {
-      const text = String(cmd || '');
-      commands.push(text);
-      if (text.startsWith('7z ') || text.startsWith('7za ') || text.includes('Program Files\\7-Zip')) {
-        throw new Error('system 7z not found');
-      }
-      if (text.includes('bundle\\7za.exe')) return;
-      throw new Error(`unexpected command: ${text}`);
-    },
+  const ok = await __private.tryExtractZipWith7z({
     zipPath: 'C:\\tmp\\a.zip',
     extractDir: 'C:\\tmp\\out',
     processImpl: { platform: 'win32' },
-    bundled7zPath: 'C:\\bundle\\7za.exe'
+    bundled7zPath: 'C:\\bundle\\7za.exe',
+    spawnImpl: createSpawnStub(({ command, child }) => {
+      commands.push(String(command || ''));
+      if (String(command || '').includes('bundle\\7za.exe')) {
+        child.stdout.emit('data', '17%');
+        child.stdout.emit('data', '100%');
+        child.emit('close', 0);
+        return;
+      }
+      child.emit('close', 1);
+    })
   });
 
   assert.equal(ok, true);
   assert.equal(commands.length, 4);
-  assert.equal(commands[0].startsWith('7z x '), true);
-  assert.equal(commands[1].startsWith('7za x '), true);
-  assert.equal(commands[2].includes('Program Files\\7-Zip\\7z.exe'), true);
-  assert.equal(commands[3].includes('bundle\\7za.exe'), true);
+  assert.equal(commands[0], '7z');
+  assert.equal(commands[1], '7za');
+  assert.equal(commands[2], 'C:\\Program Files\\7-Zip\\7z.exe');
+  assert.equal(commands[3], 'C:\\bundle\\7za.exe');
 });

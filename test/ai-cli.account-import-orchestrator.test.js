@@ -50,3 +50,38 @@ test('runGlobalAccountImport scans accounts/<provider> and invokes supported imp
   assert.deepEqual(result.providers, ['codex']);
   assert.deepEqual(result.failedProviders, []);
 });
+
+test('runGlobalAccountImport reports provider progress callback', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aih-global-import-'));
+  const accountsRoot = path.join(root, 'accounts');
+  const codexDir = path.join(accountsRoot, 'codex');
+  fs.mkdirSync(codexDir, { recursive: true });
+
+  const progressEvents = [];
+  await runGlobalAccountImport([accountsRoot, '--dry-run'], {
+    fs,
+    log: () => {},
+    error: () => {},
+    onProviderProgress: (processed, total, provider) => {
+      progressEvents.push({ processed, total, provider });
+    },
+    parseCodexBulkImportArgs: (args) => ({
+      sourceDir: String(args[0] || ''),
+      dryRun: true,
+      parallel: 1,
+      limit: 0
+    }),
+    importCodexTokensFromOutput: async () => ({
+      dryRun: true,
+      scannedFiles: 0,
+      parsedLines: 0,
+      imported: 0,
+      duplicates: 0,
+      invalid: 0
+    })
+  });
+
+  assert.deepEqual(progressEvents, [
+    { processed: 1, total: 1, provider: 'codex' }
+  ]);
+});
