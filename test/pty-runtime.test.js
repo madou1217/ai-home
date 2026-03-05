@@ -129,7 +129,8 @@ function createRuntimeHarness(env = {}, overrides = {}) {
     backgroundSpawns,
     rawModeCalls,
     getSchedulerCalls: () => schedulerCalls,
-    lockRoot
+    lockRoot,
+    aiHomeDir: overrides.aiHomeDir || lockRoot
   };
 }
 
@@ -218,6 +219,7 @@ test('runtime starts windows clipboard mirror when explicitly enabled', () => {
   const script = Buffer.from(String(encoded || ''), 'base64').toString('utf16le');
   assert.equal(script.includes('ContainsImage'), true);
   assert.equal(script.includes('$pendingImage = $false'), true);
+  assert.equal(script.includes('AddDays(-1)'), true);
   assert.equal(script.includes('Add-Type @"'), false);
 
   assert.throws(() => proc.emit('SIGINT'), /EXIT:0/);
@@ -295,6 +297,26 @@ test('runtime recovers stale clipboard mirror lock owned by dead process', () =>
   assert.throws(() => proc.emit('SIGINT'), /EXIT:0/);
 });
 
+test('runtime releases clipboard mirror lock when all mirror spawn candidates fail', () => {
+  const sharedHome = fsBase.mkdtempSync(path.join(os.tmpdir(), 'aih-pty-failed-spawn-'));
+  const lockPath = path.join(sharedHome, 'runtime-locks', 'windows-clipboard-mirror.lock');
+  const { runtime, proc } = createRuntimeHarness({
+    AIH_RUNTIME_SHOW_USAGE: '0',
+    AIH_WINDOWS_IMAGE_CLIPBOARD_MIRROR: '1'
+  }, {
+    platform: 'win32',
+    aiHomeDir: sharedHome,
+    pid: 41001,
+    spawn: () => { throw new Error('spawn failed'); }
+  });
+
+  runtime.runCliPtyTracked('codex', '10086', [], false);
+  assert.equal(fsBase.existsSync(lockPath), false);
+
+  assert.throws(() => proc.emit('SIGINT'), /EXIT:0/);
+  assert.equal(fsBase.existsSync(lockPath), false);
+});
+
 test('runtime shows usage in PTY and auto-updates after background refresh', () => {
   const now = Date.now();
   let cache = {
@@ -352,9 +374,13 @@ test('runtime shows usage for gemini interactive PTY as well', () => {
 });
 
 test('runtime intercepts windows ctrl+v for clipboard image and writes file path into PTY', () => {
+  let capturedCommand = '';
   const { runtime, proc, ptyWrites, rawModeCalls } = createRuntimeHarness({}, {
     platform: 'win32',
-    execSync: () => 'C:\\Temp\\aih-image-paste\\aih_clip_20260305_120000_001.png\r\n'
+    execSync: (cmd) => {
+      capturedCommand = String(cmd || '');
+      return 'C:\\Temp\\aih-image-paste\\aih_clip_20260305_120000_001.png\r\n';
+    }
   });
 
   runtime.runCliPtyTracked('codex', '10086', [], false);
@@ -362,6 +388,10 @@ test('runtime intercepts windows ctrl+v for clipboard image and writes file path
 
   assert.equal(ptyWrites.length > 0, true);
   assert.equal(String(ptyWrites[0]), 'C:\\Temp\\aih-image-paste\\aih_clip_20260305_120000_001.png');
+  const match = capturedCommand.match(/-EncodedCommand\s+([A-Za-z0-9+/=]+)/);
+  assert.ok(match && match[1]);
+  const script = Buffer.from(String(match[1] || ''), 'base64').toString('utf16le');
+  assert.equal(script.includes('AddDays(-1)'), true);
 
   assert.throws(() => proc.emit('SIGINT'), /EXIT:0/);
   assert.deepEqual(rawModeCalls, [true, false]);
