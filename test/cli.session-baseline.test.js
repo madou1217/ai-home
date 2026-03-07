@@ -103,6 +103,11 @@ test('`aih ls` fast index view does not show synthetic Indexed account names', (
   for (let i = 1; i <= 520; i += 1) {
     fs.mkdirSync(path.join(codexToolDir, String(i), '.codex'), { recursive: true });
   }
+  fs.writeFileSync(
+    path.join(codexToolDir, '2', '.aih_env.json'),
+    JSON.stringify({ OPENAI_API_KEY: 'sk-test-api-key-0002' }),
+    'utf8'
+  );
 
   const index = createAccountStateIndex({
     aiHomeDir: path.join(homeDir, '.ai_home'),
@@ -115,5 +120,5 @@ test('`aih ls` fast index view does not show synthetic Indexed account names', (
   assert.equal(result.status, 0, `stdout=${result.stdout}\nstderr=${result.stderr}`);
   assert.equal(result.stdout.includes('(Indexed)'), false);
   assert.equal(result.stdout.includes('[⚠️ Duplicate of ID'), false);
-  assert.equal(result.stdout.includes('[Usage: API Key mode]'), true);
+  assert.equal(result.stdout.includes('[Remaining: API Key mode]'), true);
 });

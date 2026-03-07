@@ -38,14 +38,35 @@ async function waitForHealth(port, timeoutMs = 10000) {
   return false;
 }
 
+function seedCodexTestAccount(homeDir) {
+  const codexDir = path.join(homeDir, '.ai_home', 'profiles', 'codex', '1', '.codex');
+  fs.mkdirSync(codexDir, { recursive: true });
+  fs.writeFileSync(path.join(codexDir, 'auth.json'), JSON.stringify({
+    last_refresh: new Date().toISOString(),
+    tokens: {
+      access_token: 'test_access_token',
+      id_token: 'test_id_token',
+      refresh_token: 'rt_test_refresh_token',
+      account_id: 'acct_test_1'
+    }
+  }, null, 2));
+}
+
 async function startProxy(t, extraArgs = []) {
   const port = await getFreePort();
   const cliPath = path.join(process.cwd(), 'bin', 'ai-home.js');
   const testHome = fs.mkdtempSync(path.join(os.tmpdir(), 'aih-smoke-'));
+  seedCodexTestAccount(testHome);
+  const env = { ...process.env };
+  Object.keys(env).forEach((key) => {
+    if (/^AIH_SERVER_/i.test(key)) delete env[key];
+  });
   const child = spawn(process.execPath, [
     cliPath,
     'server',
     'serve',
+    '--host',
+    '127.0.0.1',
     '--port',
     String(port),
     '--provider',
@@ -54,8 +75,19 @@ async function startProxy(t, extraArgs = []) {
   ], {
     stdio: ['ignore', 'pipe', 'pipe'],
     env: {
-      ...process.env,
-      AIH_HOME: testHome
+      ...env,
+      AIH_HOME: testHome,
+      AIH_HOST_HOME: testHome,
+      HOME: testHome,
+      AIH_SERVER_HOST: '127.0.0.1',
+      AIH_SERVER_PROXY_URL: '',
+      AIH_SERVER_NO_PROXY: '127.0.0.1,localhost',
+      HTTPS_PROXY: '',
+      https_proxy: '',
+      HTTP_PROXY: '',
+      http_proxy: '',
+      NO_PROXY: '127.0.0.1,localhost',
+      no_proxy: '127.0.0.1,localhost'
     }
   });
 

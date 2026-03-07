@@ -84,6 +84,36 @@ test('runCliRootRouter falls back to ai cli router for unknown root commands', a
   assert.equal(h.getExitCode(), null);
 });
 
+test('runCliRootRouter maps bare account id to unique tool router', async () => {
+  const calls = [];
+  const h = createHarness({
+    fs: {
+      existsSync: (target) => String(target).includes('/profiles/codex/123')
+    },
+    aiCliContext: {
+      PROFILES_DIR: '/tmp/profiles'
+    },
+    runAiCliCommandRouter: (cmd, args) => calls.push({ cmd, args })
+  });
+  await runCliRootRouter(['123'], h.deps);
+  assert.deepEqual(calls, [{ cmd: 'codex', args: ['codex', '123'] }]);
+});
+
+test('runCliRootRouter maps usage id shorthand to unique tool router', async () => {
+  const calls = [];
+  const h = createHarness({
+    fs: {
+      existsSync: (target) => String(target).includes('/profiles/codex/456')
+    },
+    aiCliContext: {
+      PROFILES_DIR: '/tmp/profiles'
+    },
+    runAiCliCommandRouter: (cmd, args) => calls.push({ cmd, args })
+  });
+  await runCliRootRouter(['usage', '456', '--no-cache'], h.deps);
+  assert.deepEqual(calls, [{ cmd: 'codex', args: ['codex', 'usage', '456', '--no-cache'] }]);
+});
+
 test('runCliRootRouter __usage-probe prefers async payload builder and writes newline-delimited json', async () => {
   const h = createHarness({
     buildUsageProbePayload: () => ({ source: 'sync' }),
