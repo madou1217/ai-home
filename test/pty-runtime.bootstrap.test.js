@@ -25,6 +25,7 @@ test('createPtyRuntimeDeps forwards required runtime handlers', () => {
     stripAnsi: (s) => s,
     ensureSessionStoreLinks: () => {},
     ensureUsageSnapshot: async () => ({}),
+    ensureUsageSnapshotAsync: async () => ({}),
     readUsageCache: () => null,
     getUsageRemainingPercentValues: () => [],
     getNextAvailableId: () => 1,
@@ -38,4 +39,5 @@ test('createPtyRuntimeDeps forwards required runtime handlers', () => {
   assert.equal(deps.resolveWindowsBatchLaunch, resolveWindowsBatchLaunch);
   assert.equal(deps.spawn, spawn);
   assert.equal(deps.aiHomeDir, '/tmp/aih');
+  assert.equal(typeof deps.ensureUsageSnapshotAsync, 'function');
 });

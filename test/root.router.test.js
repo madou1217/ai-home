@@ -83,3 +83,13 @@ test('runCliRootRouter falls back to ai cli router for unknown root commands', a
   assert.equal(h.events.includes('ai:codex'), true);
   assert.equal(h.getExitCode(), null);
 });
+
+test('runCliRootRouter __usage-probe prefers async payload builder and writes newline-delimited json', async () => {
+  const h = createHarness({
+    buildUsageProbePayload: () => ({ source: 'sync' }),
+    buildUsageProbePayloadAsync: async () => ({ source: 'async', ok: true })
+  });
+  await runCliRootRouter(['__usage-probe', 'codex', '1'], h.deps);
+  assert.equal(h.getExitCode(), 0);
+  assert.equal(h.events.some((event) => event === 'stdout:{"source":"async","ok":true}\n'), true);
+});

@@ -112,6 +112,7 @@ function createRuntimeHarness(env = {}, overrides = {}) {
     stripAnsi: (s) => s,
     ensureSessionStoreLinks: () => ({ migrated: 0, linked: 0 }),
     ensureUsageSnapshot: () => null,
+    ensureUsageSnapshotAsync: overrides.ensureUsageSnapshotAsync || (async () => null),
     readUsageCache: overrides.readUsageCache || (() => null),
     getUsageRemainingPercentValues: overrides.getUsageRemainingPercentValues || (() => []),
     getNextAvailableId: () => null,
@@ -151,6 +152,33 @@ test('runtime injects --skip-git-repo-check only when explicitly enabled', () =>
   runtime.runCliPtyTracked('codex', '10086', ['--version'], false);
   assert.equal(spawns.length, 1);
   assert.deepEqual(spawns[0].args, ['--skip-git-repo-check', '--version']);
+
+  assert.throws(() => proc.emit('SIGINT'), /EXIT:0/);
+  assert.deepEqual(rawModeCalls, [true, false]);
+});
+
+test('runtime forwards login flags when running login flow', () => {
+  const { runtime, proc, spawns, rawModeCalls } = createRuntimeHarness();
+  runtime.runCliPtyTracked('codex', '10086', ['--no-browser'], true);
+  assert.equal(spawns.length, 1);
+  assert.deepEqual(spawns[0].args, ['login', '--device-auth']);
+
+  assert.throws(() => proc.emit('SIGINT'), /EXIT:0/);
+  assert.deepEqual(rawModeCalls, [true, false]);
+});
+
+test('runtime mirrors proxy env vars across lower/upper case for CLI compatibility', () => {
+  const { runtime, proc, spawns, rawModeCalls } = createRuntimeHarness({
+    https_proxy: 'http://127.0.0.1:6152',
+    no_proxy: 'localhost,127.0.0.1'
+  });
+  runtime.runCliPtyTracked('codex', '10086', ['--version'], false);
+  assert.equal(spawns.length, 1);
+  const env = spawns[0].options.env || {};
+  assert.equal(env.https_proxy, 'http://127.0.0.1:6152');
+  assert.equal(env.HTTPS_PROXY, 'http://127.0.0.1:6152');
+  assert.equal(env.no_proxy, 'localhost,127.0.0.1');
+  assert.equal(env.NO_PROXY, 'localhost,127.0.0.1');
 
   assert.throws(() => proc.emit('SIGINT'), /EXIT:0/);
   assert.deepEqual(rawModeCalls, [true, false]);
@@ -317,14 +345,23 @@ test('runtime releases clipboard mirror lock when all mirror spawn candidates fa
   assert.equal(fsBase.existsSync(lockPath), false);
 });
 
-test('runtime shows usage in PTY and auto-updates after background refresh', () => {
+test('runtime shows usage in PTY and auto-updates after direct no-cache refresh', async () => {
   const now = Date.now();
   let cache = {
     capturedAt: now - (6 * 60 * 1000),
     entries: [{ remainingPct: 75.5 }]
   };
-  const { runtime, proc, writes, backgroundSpawns } = createRuntimeHarness({}, {
+  let refreshCalls = 0;
+  const { runtime, proc, writes } = createRuntimeHarness({}, {
     readUsageCache: () => cache,
+    ensureUsageSnapshotAsync: async () => {
+      refreshCalls += 1;
+      cache = {
+        capturedAt: now,
+        entries: [{ remainingPct: 63.2 }]
+      };
+      return cache;
+    },
     getUsageRemainingPercentValues: (snapshot) => {
       if (!snapshot || !Array.isArray(snapshot.entries)) return [];
       return snapshot.entries.map((x) => Number(x.remainingPct)).filter((n) => Number.isFinite(n));
@@ -333,26 +370,30 @@ test('runtime shows usage in PTY and auto-updates after background refresh', () 
 
   runtime.runCliPtyTracked('codex', '10086', [], false);
   assert.ok(writes.some((line) => line.includes('usage remaining: 75.5%')));
-  assert.equal(backgroundSpawns.length, 1);
-
-  cache = {
-    capturedAt: now,
-    entries: [{ remainingPct: 63.2 }]
-  };
-  backgroundSpawns[0].listeners.exit?.(0);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(refreshCalls >= 1, true);
   assert.ok(writes.some((line) => line.includes('usage remaining: 63.2%')));
 
   assert.throws(() => proc.emit('SIGINT'), /EXIT:0/);
 });
 
-test('runtime shows usage for gemini interactive PTY as well', () => {
+test('runtime shows usage for gemini interactive PTY as well', async () => {
   const now = Date.now();
   let cache = {
     capturedAt: now - (6 * 60 * 1000),
     models: [{ remainingPct: 42.8 }]
   };
-  const { runtime, proc, writes, backgroundSpawns } = createRuntimeHarness({}, {
+  let refreshCalls = 0;
+  const { runtime, proc, writes } = createRuntimeHarness({}, {
     readUsageCache: () => cache,
+    ensureUsageSnapshotAsync: async () => {
+      refreshCalls += 1;
+      cache = {
+        capturedAt: now,
+        models: [{ remainingPct: 39.1 }]
+      };
+      return cache;
+    },
     getUsageRemainingPercentValues: (snapshot) => {
       if (!snapshot || !Array.isArray(snapshot.models)) return [];
       return snapshot.models.map((x) => Number(x.remainingPct)).filter((n) => Number.isFinite(n));
@@ -361,16 +402,53 @@ test('runtime shows usage for gemini interactive PTY as well', () => {
 
   runtime.runCliPtyTracked('gemini', '2', [], false);
   assert.ok(writes.some((line) => line.includes('account 2 usage remaining: 42.8%')));
-  assert.equal(backgroundSpawns.length, 1);
-
-  cache = {
-    capturedAt: now,
-    models: [{ remainingPct: 39.1 }]
-  };
-  backgroundSpawns[0].listeners.exit?.(0);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(refreshCalls >= 1, true);
   assert.ok(writes.some((line) => line.includes('account 2 usage remaining: 39.1%')));
 
   assert.throws(() => proc.emit('SIGINT'), /EXIT:0/);
+});
+
+test('runtime resumes usage refresh after idle when user input returns', async () => {
+  const realNow = Date.now;
+  let now = 1_700_000_000_000;
+  Date.now = () => now;
+  try {
+    let cache = {
+      capturedAt: now - (6 * 60 * 1000),
+      entries: [{ remainingPct: 70 }]
+    };
+    let refreshCalls = 0;
+    const { runtime, proc } = createRuntimeHarness({}, {
+      readUsageCache: () => cache,
+      ensureUsageSnapshotAsync: async () => {
+        refreshCalls += 1;
+        cache = {
+          capturedAt: now,
+          entries: [{ remainingPct: 66 }]
+        };
+        return cache;
+      },
+      getUsageRemainingPercentValues: (snapshot) => {
+        if (!snapshot || !Array.isArray(snapshot.entries)) return [];
+        return snapshot.entries.map((x) => Number(x.remainingPct)).filter((n) => Number.isFinite(n));
+      }
+    });
+
+    runtime.runCliPtyTracked('codex', '10086', [], false);
+    await new Promise((resolve) => setImmediate(resolve));
+    const beforeResume = refreshCalls;
+    assert.equal(beforeResume >= 1, true);
+
+    now += 360_001;
+    proc.stdin.emit('data', Buffer.from('x'));
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(refreshCalls > beforeResume, true);
+
+    assert.throws(() => proc.emit('SIGINT'), /EXIT:0/);
+  } finally {
+    Date.now = realNow;
+  }
 });
 
 test('runtime intercepts windows ctrl+v for clipboard image and writes file path into PTY', () => {

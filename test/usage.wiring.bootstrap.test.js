@@ -20,7 +20,8 @@ test('createUsageWiring composes cache/snapshot/runtime/presenter services deter
     fs: {},
     path: {},
     spawnSync: () => ({}),
-    processObj: {},
+    fetchImpl: () => Promise.resolve({ ok: true }),
+    processObj: { env: {} },
     resolveCliPath: () => '/bin/codex',
     getProfileDir: () => '/tmp/profile',
     getToolConfigDir: () => '/tmp/tool',
@@ -92,8 +93,10 @@ test('createUsageWiring composes cache/snapshot/runtime/presenter services deter
 
   assert.equal(calls.cacheArg.usageSnapshotSchemaVersion, 2);
   assert.equal(calls.snapshotArg.readUsageCache, fakeReadUsageCache);
+  assert.equal(typeof calls.snapshotArg.fetchImpl, 'function');
   assert.equal(calls.runtimeArg.ensureUsageSnapshot, fakeEnsureUsageSnapshot);
   assert.equal(calls.presenterArg.getToolAccountIds, fakeGetToolAccountIds);
+  assert.deepEqual(calls.presenterArg.processObj, { env: {} });
   assert.equal(calls.presenterArg.isExhausted, fakeIsExhausted);
   assert.equal(calls.presenterArg.getMinRemainingPctFromCache, fakeGetMinRemainingPctFromCache);
 });
