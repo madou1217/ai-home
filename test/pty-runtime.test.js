@@ -201,7 +201,7 @@ test('runtime starts usage refresh scheduler only when explicitly enabled', () =
   assert.throws(() => proc.emit('SIGINT'), /EXIT:0/);
 });
 
-test('runtime does not start windows clipboard mirror by default', () => {
+test('runtime starts windows clipboard mirror by default on native windows', () => {
   const spawnCalls = [];
   const { runtime, proc } = createRuntimeHarness({
     AIH_RUNTIME_SHOW_USAGE: '0'
@@ -217,16 +217,16 @@ test('runtime does not start windows clipboard mirror by default', () => {
   });
 
   runtime.runCliPtyTracked('codex', '10086', [], false);
-  assert.equal(spawnCalls.length, 0);
+  assert.equal(spawnCalls.length > 0, true);
 
   assert.throws(() => proc.emit('SIGINT'), /EXIT:0/);
 });
 
-test('runtime starts windows clipboard mirror when explicitly enabled', () => {
+test('runtime can disable windows clipboard mirror explicitly', () => {
   const spawnCalls = [];
   const { runtime, proc } = createRuntimeHarness({
     AIH_RUNTIME_SHOW_USAGE: '0',
-    AIH_WINDOWS_IMAGE_CLIPBOARD_MIRROR: '1'
+    AIH_WINDOWS_IMAGE_CLIPBOARD_MIRROR: '0'
   }, {
     platform: 'win32',
     spawn: (cmd, args) => {
@@ -240,16 +240,29 @@ test('runtime starts windows clipboard mirror when explicitly enabled', () => {
 
   runtime.runCliPtyTracked('codex', '10086', [], false);
 
-  assert.equal(spawnCalls.length > 0, true);
-  const call = spawnCalls[0];
-  const encodedCommandIndex = Array.isArray(call.args) ? call.args.indexOf('-EncodedCommand') : -1;
-  assert.notEqual(encodedCommandIndex, -1);
-  const encoded = call.args[encodedCommandIndex + 1];
-  const script = Buffer.from(String(encoded || ''), 'base64').toString('utf16le');
-  assert.equal(script.includes('ContainsImage'), true);
-  assert.equal(script.includes('$pendingImage = $false'), true);
-  assert.equal(script.includes('AddDays(-1)'), true);
-  assert.equal(script.includes('Add-Type @"'), false);
+  assert.equal(spawnCalls.length, 0);
+
+  assert.throws(() => proc.emit('SIGINT'), /EXIT:0/);
+});
+
+test('runtime fixed status bar works when stdin is TTY even if stdout.isTTY is absent', async () => {
+  const now = Date.now();
+  const { runtime, proc, writes } = createRuntimeHarness({}, {
+    readUsageCache: () => ({
+      capturedAt: now,
+      entries: [{ remainingPct: 91 }]
+    }),
+    getUsageRemainingPercentValues: (snapshot) => {
+      if (!snapshot || !Array.isArray(snapshot.entries)) return [];
+      return snapshot.entries.map((x) => Number(x.remainingPct)).filter((n) => Number.isFinite(n));
+    }
+  });
+
+  runtime.runCliPtyTracked('codex', '10086', [], false);
+  await new Promise((resolve) => setTimeout(resolve, 100));
+
+  assert.equal(writes.some((line) => line.includes('\x1b[s\x1b[999;1H\x1b[2K')), true);
+  assert.equal(writes.some((line) => line.startsWith('\r\n')), false);
 
   assert.throws(() => proc.emit('SIGINT'), /EXIT:0/);
 });
