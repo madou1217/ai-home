@@ -607,8 +607,77 @@ test('runtime shows only working status when json file is missing', async () => 
 
   runtime.runCliPtyTracked('codex', '10086', [], false);
   await new Promise((resolve) => setTimeout(resolve, 1000));
-  assert.ok(writes.some((line) => line.includes('working.')));
+  assert.ok(writes.some((line) => line.includes('working...')));
   assert.equal(writes.some((line) => line.includes('先把当前问题落地。') || line.includes('先休息，明天再战。') || line.includes('先慢慢开机。')), false);
+
+  assert.throws(() => proc.emit('SIGINT'), /EXIT:0/);
+});
+
+test('runtime keeps working prefix width stable while comfort message stays the same', async () => {
+  const realNow = Date.now;
+  let now = 1_700_000_456_000;
+  Date.now = () => now;
+  try {
+    const comfortJson = JSON.stringify({
+      dawn: ['稳定文案'],
+      morning: ['稳定文案'],
+      noon: ['稳定文案'],
+      afternoon: ['稳定文案'],
+      evening: ['稳定文案'],
+      night: ['稳定文案']
+    });
+    const { runtime, proc, writes } = createRuntimeHarness({}, {
+      fs: {
+        readFileSync: (target, encoding) => {
+          const normalized = String(target || '');
+          if (normalized.endsWith('working-comfort-messages.json')) {
+            return comfortJson;
+          }
+          return fsBase.readFileSync(target, encoding);
+        }
+      },
+      readUsageCache: () => ({
+        capturedAt: now,
+        entries: [{ remainingPct: 88 }]
+      }),
+      getUsageRemainingPercentValues: (snapshot) => {
+        if (!snapshot || !Array.isArray(snapshot.entries)) return [];
+        return snapshot.entries.map((x) => Number(x.remainingPct)).filter((n) => Number.isFinite(n));
+      }
+    });
+
+    runtime.runCliPtyTracked('codex', '10086', [], false);
+    await new Promise((resolve) => setTimeout(resolve, 2200));
+    const workingLines = writes.filter((line) => line.includes('working... 稳定文案'));
+
+    assert.equal(workingLines.length >= 2, true);
+    assert.equal(workingLines.some((line) => line.includes('working. 稳定文案') || line.includes('working.. 稳定文案')), false);
+
+    assert.throws(() => proc.emit('SIGINT'), /EXIT:0/);
+  } finally {
+    Date.now = realNow;
+  }
+});
+
+test('runtime prefers powershell.exe first for windows clipboard image paste', () => {
+  const execCalls = [];
+  const { runtime, proc, ptyWrites } = createRuntimeHarness({}, {
+    platform: 'win32',
+    execSync: (cmd) => {
+      execCalls.push(String(cmd || ''));
+      if (String(cmd || '').startsWith('powershell.exe ')) {
+        return 'C:\\Temp\\aih-image-paste\\aih_clip_20260308_120000_001.png\r\n';
+      }
+      throw new Error('unexpected fallback');
+    }
+  });
+
+  runtime.runCliPtyTracked('codex', '10086', [], false);
+  proc.stdin.emit('data', Buffer.from([0x16]));
+
+  assert.equal(execCalls.length >= 1, true);
+  assert.equal(execCalls[0].startsWith('powershell.exe '), true);
+  assert.equal(String(ptyWrites[0]), 'C:\\Temp\\aih-image-paste\\aih_clip_20260308_120000_001.png');
 
   assert.throws(() => proc.emit('SIGINT'), /EXIT:0/);
 });

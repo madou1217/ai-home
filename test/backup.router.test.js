@@ -5,7 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { EventEmitter } = require('node:events');
 const fse = require('fs-extra');
-const { __private } = require('../lib/cli/commands/backup/router');
+const { __private, runBackupCommand } = require('../lib/cli/commands/backup/router');
 
 function writeJson(filePath, payload) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -174,4 +174,47 @@ test('tryExtractZipWith7z falls back to bundled binary after system commands fai
   assert.equal(commands[1], '7za');
   assert.equal(commands[2], 'C:\\Program Files\\7-Zip\\7z.exe');
   assert.equal(commands[3], 'C:\\bundle\\7za.exe');
+});
+
+test('runBackupCommand routes export cliproxyapi codex to filesystem exporter', async () => {
+  const events = [];
+  let exitCode = null;
+
+  const handled = await runBackupCommand('export', ['export', 'cliproxyapi', 'codex'], {
+    fs,
+    path,
+    os,
+    fse,
+    execSync: () => {},
+    readline: {},
+    consoleImpl: {
+      log: (msg) => events.push(`log:${msg}`),
+      error: (msg) => events.push(`error:${msg}`)
+    },
+    processImpl: {
+      exit: (code) => { exitCode = code; }
+    },
+    ensureAesSuffix: (value) => value,
+    defaultExportName: () => 'x.zip',
+    parseExportArgs: () => ({ targetFile: 'ignored.zip', selectors: [] }),
+    parseImportArgs: () => ({}),
+    expandSelectorsToPaths: () => [],
+    renderStageProgress: () => {},
+    exportCliproxyapiCodexAuths: () => ({
+      authDir: '/tmp/cliproxyapi-auths',
+      configPath: '/tmp/cliproxyapi-config.yaml',
+      scanned: 3,
+      exported: 2,
+      skippedMissing: 1,
+      skippedInvalid: 0,
+      dedupedSource: 4,
+      dedupedTarget: 5
+    })
+  });
+
+  assert.equal(handled, true);
+  assert.equal(exitCode, 0);
+  assert.equal(events.some((entry) => entry.includes('Exported codex auth files for CLIProxyAPI')), true);
+  assert.equal(events.some((entry) => entry.includes('auth-dir=/tmp/cliproxyapi-auths')), true);
+  assert.equal(events.some((entry) => entry.includes('scanned=3 exported=2 missing=1 invalid=0 deduped_source=4 deduped_target=5')), true);
 });

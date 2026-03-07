@@ -3,7 +3,8 @@ const assert = require('node:assert/strict');
 const {
   createBackupRestoreWiring,
   createBackupCryptoWiring,
-  createBackupHelperWiring
+  createBackupHelperWiring,
+  createBackupExportWiring
 } = require('../lib/cli/bootstrap/backup-wiring');
 
 test('createBackupRestoreWiring maps restore dependencies', () => {
@@ -107,4 +108,27 @@ test('createBackupHelperWiring maps helper dependencies and exports', () => {
   assert.equal(typeof out.ensureAesSuffix, 'function');
   assert.equal(typeof out.expandSelectorsToPaths, 'function');
   assert.equal(receivedArg.aiHomeDir, '/tmp/aih');
+});
+
+test('createBackupExportWiring maps CLIProxyAPI export service', () => {
+  let receivedArg = null;
+  const out = createBackupExportWiring({
+    fs: {},
+    path: {},
+    aiHomeDir: '/tmp/aih',
+    hostHomeDir: '/tmp/home',
+    BufferImpl: Buffer
+  }, {
+    createCliproxyapiExportService: (arg) => {
+      receivedArg = arg;
+      return {
+        exportCliproxyapiCodexAuths: () => ({ exported: 1 })
+      };
+    }
+  });
+
+  assert.equal(typeof out.exportCliproxyapiCodexAuths, 'function');
+  assert.equal(receivedArg.aiHomeDir, '/tmp/aih');
+  assert.equal(receivedArg.hostHomeDir, '/tmp/home');
+  assert.equal(receivedArg.BufferImpl, Buffer);
 });

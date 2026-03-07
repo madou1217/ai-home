@@ -48,6 +48,7 @@ test('createRootCommandContexts builds all root command contexts', () => {
     parseImportArgs: () => ({}),
     expandSelectorsToPaths: () => [],
     renderStageProgress: () => '',
+    exportCliproxyapiCodexAuths: () => ({}),
     restoreProfilesFromExtractedBackup: () => ({}),
     getLikelyRsaSshPrivateKeys: () => [],
     printRestoreDetails: () => {},
@@ -96,6 +97,7 @@ test('createRootCommandContexts builds all root command contexts', () => {
   assert.equal(typeof contexts.aiCliContext, 'object');
   assert.equal(contexts.devContext.usageConstants.schemaVersion, 2);
   assert.equal(contexts.aiCliContext.HOST_HOME_DIR, '/tmp');
+  assert.equal(typeof contexts.backupContext.exportCliproxyapiCodexAuths, 'function');
 });
 
 test('createRootRouterDeps keeps exact handler references', () => {
@@ -175,6 +177,7 @@ test('createRootDispatchWiring composes contexts and router deps in one call', (
     parseImportArgs: () => ({}),
     expandSelectorsToPaths: () => [],
     renderStageProgress: () => '',
+    exportCliproxyapiCodexAuths: () => ({}),
     restoreProfilesFromExtractedBackup: () => ({}),
     getLikelyRsaSshPrivateKeys: () => [],
     printRestoreDetails: () => {},
