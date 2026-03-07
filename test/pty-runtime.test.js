@@ -93,6 +93,7 @@ function createRuntimeHarness(env = {}, overrides = {}) {
     closeSync: fsBase.closeSync.bind(fsBase),
     unlinkSync: fsBase.unlinkSync.bind(fsBase)
   };
+  Object.assign(fsImpl, overrides.fs || {});
 
   const runtime = createPtyRuntime({
     path: require('node:path'),
@@ -369,7 +370,7 @@ test('runtime shows usage in PTY and auto-updates after direct no-cache refresh'
   });
 
   runtime.runCliPtyTracked('codex', '10086', [], false);
-  assert.ok(writes.some((line) => line.includes('usage remaining: 75.5%')));
+  assert.ok(writes.some((line) => line.includes('usage remaining refreshing:')));
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(refreshCalls >= 1, true);
   assert.ok(writes.some((line) => line.includes('usage remaining: 63.2%')));
@@ -401,7 +402,7 @@ test('runtime shows usage for gemini interactive PTY as well', async () => {
   });
 
   runtime.runCliPtyTracked('gemini', '2', [], false);
-  assert.ok(writes.some((line) => line.includes('account 2 usage remaining: 42.8%')));
+  assert.ok(writes.some((line) => line.includes('account 2 usage remaining refreshing:')));
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(refreshCalls >= 1, true);
   assert.ok(writes.some((line) => line.includes('account 2 usage remaining: 39.1%')));
@@ -449,6 +450,167 @@ test('runtime resumes usage refresh after idle when user input returns', async (
   } finally {
     Date.now = realNow;
   }
+});
+
+test('runtime animates sleeping status while usage refresh is paused by idle', async () => {
+  const realNow = Date.now;
+  let now = 1_700_000_000_000;
+  Date.now = () => now;
+  try {
+    const { runtime, proc, writes } = createRuntimeHarness({}, {
+      readUsageCache: () => ({
+        capturedAt: now,
+        entries: [{ remainingPct: 70 }]
+      }),
+      getUsageRemainingPercentValues: (snapshot) => {
+        if (!snapshot || !Array.isArray(snapshot.entries)) return [];
+        return snapshot.entries.map((x) => Number(x.remainingPct)).filter((n) => Number.isFinite(n));
+      }
+    });
+
+    runtime.runCliPtyTracked('codex', '10086', [], false);
+    now += 360_001;
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+
+    const idleLines = writes.filter((line) => line.includes('sleeping...'));
+    const uniqueIdleLines = new Set(idleLines);
+    assert.equal(idleLines.length >= 2, true);
+    assert.equal(uniqueIdleLines.size >= 2, true);
+
+    assert.throws(() => proc.emit('SIGINT'), /EXIT:0/);
+  } finally {
+    Date.now = realNow;
+  }
+});
+
+test('runtime keeps working comfort message stable within the same rotation window', async () => {
+  const realNow = Date.now;
+  let now = 1_700_000_123_000;
+  Date.now = () => now;
+  try {
+    const comfortJson = JSON.stringify({
+      dawn: ['文案A', '文案B'],
+      morning: ['文案A', '文案B'],
+      noon: ['文案A', '文案B'],
+      afternoon: ['文案A', '文案B'],
+      evening: ['文案A', '文案B'],
+      night: ['文案A', '文案B']
+    });
+    const { runtime, proc, writes } = createRuntimeHarness({}, {
+      fs: {
+        readFileSync: (target, encoding) => {
+          const normalized = String(target || '');
+          if (normalized.endsWith('working-comfort-messages.json')) {
+            return comfortJson;
+          }
+          return fsBase.readFileSync(target, encoding);
+        }
+      },
+      readUsageCache: () => ({
+        capturedAt: now,
+        entries: [{ remainingPct: 88 }]
+      }),
+      getUsageRemainingPercentValues: (snapshot) => {
+        if (!snapshot || !Array.isArray(snapshot.entries)) return [];
+        return snapshot.entries.map((x) => Number(x.remainingPct)).filter((n) => Number.isFinite(n));
+      }
+    });
+
+    runtime.runCliPtyTracked('codex', '10086', [], false);
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    const firstMessage = writes.some((line) => line.includes('文案A')) ? '文案A' : '文案B';
+    const secondMessage = firstMessage === '文案A' ? '文案B' : '文案A';
+    const checkpoint = writes.length;
+
+    now += 30_000;
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    const nextWrites = writes.slice(checkpoint);
+
+    assert.equal(nextWrites.some((line) => line.includes(firstMessage)), true);
+    assert.equal(nextWrites.some((line) => line.includes(secondMessage)), false);
+
+    assert.throws(() => proc.emit('SIGINT'), /EXIT:0/);
+  } finally {
+    Date.now = realNow;
+  }
+});
+
+test('runtime hot-reloads working comfort messages from json without restarting PTY', async () => {
+  let comfortJson = JSON.stringify({
+    dawn: ['旧文案'],
+    morning: ['旧文案'],
+    noon: ['旧文案'],
+    afternoon: ['旧文案'],
+    evening: ['旧文案'],
+    night: ['旧文案']
+  });
+  const now = Date.now();
+  const { runtime, proc, writes } = createRuntimeHarness({}, {
+    fs: {
+      readFileSync: (target, encoding) => {
+        const normalized = String(target || '');
+        if (normalized.endsWith('working-comfort-messages.json')) {
+          return comfortJson;
+        }
+        return fsBase.readFileSync(target, encoding);
+      }
+    },
+    readUsageCache: () => ({
+      capturedAt: now,
+      entries: [{ remainingPct: 88 }]
+    }),
+    getUsageRemainingPercentValues: (snapshot) => {
+      if (!snapshot || !Array.isArray(snapshot.entries)) return [];
+      return snapshot.entries.map((x) => Number(x.remainingPct)).filter((n) => Number.isFinite(n));
+    }
+  });
+
+  runtime.runCliPtyTracked('codex', '10086', [], false);
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+  assert.ok(writes.some((line) => line.includes('旧文案')));
+
+  comfortJson = JSON.stringify({
+    dawn: ['新文案'],
+    morning: ['新文案'],
+    noon: ['新文案'],
+    afternoon: ['新文案'],
+    evening: ['新文案'],
+    night: ['新文案']
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 1200));
+  assert.ok(writes.some((line) => line.includes('新文案')));
+
+  assert.throws(() => proc.emit('SIGINT'), /EXIT:0/);
+});
+
+test('runtime shows only working status when json file is missing', async () => {
+  const now = Date.now();
+  const { runtime, proc, writes } = createRuntimeHarness({}, {
+    fs: {
+      existsSync: (target) => {
+        const normalized = String(target || '');
+        if (normalized.endsWith('.aih_env.json')) return false;
+        if (normalized.endsWith('working-comfort-messages.json')) return false;
+        return fsBase.existsSync(normalized);
+      }
+    },
+    readUsageCache: () => ({
+      capturedAt: now,
+      entries: [{ remainingPct: 88 }]
+    }),
+    getUsageRemainingPercentValues: (snapshot) => {
+      if (!snapshot || !Array.isArray(snapshot.entries)) return [];
+      return snapshot.entries.map((x) => Number(x.remainingPct)).filter((n) => Number.isFinite(n));
+    }
+  });
+
+  runtime.runCliPtyTracked('codex', '10086', [], false);
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+  assert.ok(writes.some((line) => line.includes('working.')));
+  assert.equal(writes.some((line) => line.includes('先把当前问题落地。') || line.includes('先休息，明天再战。') || line.includes('先慢慢开机。')), false);
+
+  assert.throws(() => proc.emit('SIGINT'), /EXIT:0/);
 });
 
 test('runtime intercepts windows ctrl+v for clipboard image and writes file path into PTY', () => {
