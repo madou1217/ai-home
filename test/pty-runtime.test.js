@@ -201,7 +201,7 @@ test('runtime starts usage refresh scheduler only when explicitly enabled', () =
   assert.throws(() => proc.emit('SIGINT'), /EXIT:0/);
 });
 
-test('runtime starts windows clipboard mirror by default on native windows', () => {
+test('runtime does not start windows clipboard mirror by default on native windows', () => {
   const spawnCalls = [];
   const { runtime, proc } = createRuntimeHarness({
     AIH_RUNTIME_SHOW_USAGE: '0'
@@ -217,7 +217,35 @@ test('runtime starts windows clipboard mirror by default on native windows', () 
   });
 
   runtime.runCliPtyTracked('codex', '10086', [], false);
+  assert.equal(spawnCalls.length, 0);
+
+  assert.throws(() => proc.emit('SIGINT'), /EXIT:0/);
+});
+
+test('runtime starts windows clipboard mirror only when explicitly enabled on native windows', () => {
+  const spawnCalls = [];
+  const { runtime, proc } = createRuntimeHarness({
+    AIH_RUNTIME_SHOW_USAGE: '0',
+    AIH_WINDOWS_IMAGE_CLIPBOARD_MIRROR: '1'
+  }, {
+    platform: 'win32',
+    spawn: (cmd, args) => {
+      spawnCalls.push({ cmd, args });
+      return {
+        on() {},
+        kill() {}
+      };
+    }
+  });
+
+  runtime.runCliPtyTracked('codex', '10086', [], false);
+
   assert.equal(spawnCalls.length > 0, true);
+  const encoded = String(spawnCalls[0].args[3] || '');
+  const script = Buffer.from(encoded, 'base64').toString('utf16le');
+  assert.equal(script.includes('GetForegroundWindow'), true);
+  assert.equal(script.includes('GetWindowThreadProcessId'), true);
+  assert.equal(script.includes('$ownerPid = 10001'), true);
 
   assert.throws(() => proc.emit('SIGINT'), /EXIT:0/);
 });
