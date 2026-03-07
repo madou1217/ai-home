@@ -58,7 +58,14 @@ test('exportCliproxyapiCodexAuths flattens codex auths into CLIProxyAPI auth-dir
       BufferImpl: Buffer
     });
 
-    const result = service.exportCliproxyapiCodexAuths();
+    const progress = [];
+    const result = service.exportCliproxyapiCodexAuths({
+      onProgress: (event) => progress.push({
+        scanned: event.scanned,
+        status: event.status,
+        email: event.email || ''
+      })
+    });
     assert.equal(result.scanned, 3);
     assert.equal(result.exported, 1);
     assert.equal(result.skippedInvalid, 1);
@@ -66,8 +73,9 @@ test('exportCliproxyapiCodexAuths flattens codex auths into CLIProxyAPI auth-dir
     assert.equal(result.dedupedSource, 0);
     assert.equal(result.dedupedTarget, 0);
     assert.equal(result.authDir, authDir);
+    assert.deepEqual(progress.map((item) => item.status), ['start', 'exported', 'invalid', 'missing', 'done']);
 
-    const exportedPath = path.join(authDir, 'codex-aih-101.json');
+    const exportedPath = path.join(authDir, 'worker@example.com.json');
     assert.equal(fs.existsSync(exportedPath), true);
     const exported = JSON.parse(fs.readFileSync(exportedPath, 'utf8'));
     assert.deepEqual(exported, {
@@ -111,7 +119,7 @@ test('exportCliproxyapiCodexAuths falls back to default ~/.cli-proxy-api auth-di
 
     assert.equal(result.configPath, '');
     assert.equal(result.authDir, path.join(hostHomeDir, '.cli-proxy-api'));
-    assert.equal(fs.existsSync(path.join(result.authDir, 'codex-aih-201.json')), true);
+    assert.equal(fs.existsSync(path.join(result.authDir, 'fallback@example.com.json')), true);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -163,13 +171,49 @@ test('exportCliproxyapiCodexAuths dedupes by account identity across source and 
 
     assert.equal(result.exported, 1);
     assert.equal(result.dedupedSource, 1);
-    assert.equal(result.dedupedTarget, 1);
-    assert.equal(fs.existsSync(path.join(authDir, 'existing-user-file.json')), true);
+    assert.equal(result.dedupedTarget, 2);
+    assert.equal(fs.existsSync(path.join(authDir, 'same@example.com.json')), true);
+    assert.equal(fs.existsSync(path.join(authDir, 'existing-user-file.json')), false);
     assert.equal(fs.existsSync(path.join(authDir, 'codex-aih-999.json')), false);
 
-    const exported = JSON.parse(fs.readFileSync(path.join(authDir, 'existing-user-file.json'), 'utf8'));
+    const exported = JSON.parse(fs.readFileSync(path.join(authDir, 'same@example.com.json'), 'utf8'));
     assert.equal(exported.account_id, 'acct-same');
     assert.equal(exported.refresh_token, 'rt_same');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('exportCliproxyapiCodexAuths skips non-OAuth or email-missing accounts', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aih-cliproxyapi-export-'));
+  try {
+    const aiHomeDir = path.join(root, '.ai_home');
+    const hostHomeDir = path.join(root, 'home');
+    writeJson(path.join(aiHomeDir, 'profiles', 'codex', '401', '.codex', 'auth.json'), {
+      auth_mode: 'api_key',
+      OPENAI_API_KEY: 'sk-test',
+      tokens: {}
+    });
+    writeJson(path.join(aiHomeDir, 'profiles', 'codex', '402', '.codex', 'auth.json'), {
+      tokens: {
+        id_token: makeJwt({ sub: 'no-email' }),
+        access_token: makeJwt({ exp: 1777000000 }),
+        refresh_token: 'rt_missing_email',
+        account_id: 'acct-402'
+      }
+    });
+
+    const service = createCliproxyapiExportService({
+      fs,
+      path,
+      aiHomeDir,
+      hostHomeDir,
+      BufferImpl: Buffer
+    });
+    const result = service.exportCliproxyapiCodexAuths();
+
+    assert.equal(result.exported, 0);
+    assert.equal(result.skippedInvalid, 2);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

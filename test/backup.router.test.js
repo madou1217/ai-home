@@ -178,6 +178,7 @@ test('tryExtractZipWith7z falls back to bundled binary after system commands fai
 
 test('runBackupCommand routes export cliproxyapi codex to filesystem exporter', async () => {
   const events = [];
+  const progressEvents = [];
   let exitCode = null;
 
   const handled = await runBackupCommand('export', ['export', 'cliproxyapi', 'codex'], {
@@ -199,8 +200,26 @@ test('runBackupCommand routes export cliproxyapi codex to filesystem exporter', 
     parseExportArgs: () => ({ targetFile: 'ignored.zip', selectors: [] }),
     parseImportArgs: () => ({}),
     expandSelectorsToPaths: () => [],
-    renderStageProgress: () => {},
-    exportCliproxyapiCodexAuths: () => ({
+    renderStageProgress: (...args) => { progressEvents.push(args); },
+    exportCliproxyapiCodexAuths: ({ onProgress }) => {
+      onProgress({
+        total: 3,
+        scanned: 1,
+        exported: 1,
+        skippedMissing: 0,
+        skippedInvalid: 0,
+        status: 'exported',
+        email: 'worker@example.com'
+      });
+      onProgress({
+        total: 3,
+        scanned: 3,
+        exported: 2,
+        skippedMissing: 1,
+        skippedInvalid: 0,
+        status: 'done'
+      });
+      return ({
       authDir: '/tmp/cliproxyapi-auths',
       configPath: '/tmp/cliproxyapi-config.yaml',
       scanned: 3,
@@ -209,12 +228,14 @@ test('runBackupCommand routes export cliproxyapi codex to filesystem exporter', 
       skippedInvalid: 0,
       dedupedSource: 4,
       dedupedTarget: 5
-    })
+      });
+    }
   });
 
   assert.equal(handled, true);
   assert.equal(exitCode, 0);
-  assert.equal(events.some((entry) => entry.includes('Exported codex auth files for CLIProxyAPI')), true);
+  assert.equal(progressEvents.length >= 2, true);
+  assert.equal(events.some((entry) => entry.includes('Exported codex OAuth auth files for CLIProxyAPI')), true);
   assert.equal(events.some((entry) => entry.includes('auth-dir=/tmp/cliproxyapi-auths')), true);
   assert.equal(events.some((entry) => entry.includes('scanned=3 exported=2 missing=1 invalid=0 deduped_source=4 deduped_target=5')), true);
 });
