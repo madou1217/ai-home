@@ -227,3 +227,95 @@ test('runUnifiedImport imports provider-fixed zip when extracted root is direct 
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('runUnifiedImport keeps updating progress after cached zip extraction during import stage', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aih-unified-import-cache-progress-'));
+  try {
+    const zipPath = path.join(root, '2222.zip');
+    const zipExtractDir = path.join(root, 'zip-extract');
+    fs.writeFileSync(zipPath, 'fake-zip');
+    fs.mkdirSync(path.join(zipExtractDir, 'accounts', 'codex', '10001'), { recursive: true });
+
+    const progress = [];
+    const service = createUnifiedImportService({
+      fs,
+      path,
+      os,
+      fse: require('fs-extra'),
+      execSync: () => {},
+      spawnImpl: () => {},
+      processImpl: { platform: 'linux' },
+      cryptoImpl: require('node:crypto'),
+      aiHomeDir: path.join(root, '.ai_home'),
+      cliConfigs: { codex: {} },
+      parseCodexBulkImportArgs: () => ({}),
+      importCodexTokensFromOutput: async (optionsArg) => {
+        if (typeof optionsArg.onProgress === 'function') {
+          optionsArg.onProgress({ totalFiles: 20, scannedFiles: 1, status: 'queued' });
+          optionsArg.onProgress({ totalFiles: 20, scannedFiles: 10, status: 'imported' });
+          optionsArg.onProgress({ totalFiles: 20, scannedFiles: 20, status: 'done' });
+        }
+        return {
+          sourceDir: optionsArg.sourceDir,
+          scannedFiles: 20,
+          parsedLines: 20,
+          imported: 20,
+          duplicates: 0,
+          invalid: 0,
+          failed: 0,
+          dryRun: false
+        };
+      },
+      ensureArchiveExtractedByHashImpl: async ({ onHashProgress, onExtractProgress }) => {
+        onHashProgress(10, 10);
+        onExtractProgress(100);
+        return {
+          extractDir: zipExtractDir,
+          cacheHit: true,
+          hash: 'deadbeefdead'
+        };
+      },
+      runGlobalAccountImport: async (args, opts) => {
+        if (typeof opts.onImporterProgress === 'function') {
+          opts.onImporterProgress('codex', { totalFiles: 20, scannedFiles: 1, status: 'queued' });
+          opts.onImporterProgress('codex', { totalFiles: 20, scannedFiles: 10, status: 'imported' });
+          opts.onImporterProgress('codex', { totalFiles: 20, scannedFiles: 20, status: 'done' });
+        }
+        if (typeof opts.onProviderProgress === 'function') {
+          opts.onProviderProgress(1, 1, 'codex');
+        }
+        return {
+          providers: ['codex'],
+          failedProviders: [],
+          providerResults: [{
+            provider: 'codex',
+            imported: 20,
+            duplicates: 0,
+            invalid: 0,
+            failed: 0
+          }]
+        };
+      },
+      importCliproxyapiCodexAuths: async () => ({
+        imported: 0,
+        duplicates: 0,
+        invalid: 0,
+        failed: 0
+      })
+    });
+
+    await service.runUnifiedImport([zipPath], {
+      provider: 'codex',
+      log: () => {},
+      error: () => {},
+      renderStageProgress: (_prefix, current, total, label) => progress.push({ current, total, label })
+    });
+
+    assert.equal(progress.some((entry) => String(entry.label).includes('using cached extraction deadbeefdead')), true);
+    assert.equal(progress.some((entry) => String(entry.label).includes('importing codex queued 1/20')), true);
+    assert.equal(progress.some((entry) => String(entry.label).includes('importing codex imported 10/20')), true);
+    assert.equal(progress.some((entry) => String(entry.label).includes('importing codex done 20/20')), true);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
