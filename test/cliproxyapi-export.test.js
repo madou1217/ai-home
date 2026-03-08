@@ -73,7 +73,7 @@ test('exportCliproxyapiCodexAuths flattens codex auths into CLIProxyAPI auth-dir
     assert.equal(result.dedupedSource, 0);
     assert.equal(result.dedupedTarget, 0);
     assert.equal(result.authDir, authDir);
-    assert.deepEqual(progress.map((item) => item.status), ['start', 'exported', 'invalid', 'missing', 'done']);
+    assert.deepEqual(progress.map((item) => item.status), ['start', 'invalid', 'missing', 'exported', 'done']);
 
     const exportedPath = path.join(authDir, 'worker@example.com.json');
     assert.equal(fs.existsSync(exportedPath), true);
@@ -184,6 +184,68 @@ test('exportCliproxyapiCodexAuths dedupes by account identity across source and 
   }
 });
 
+test('exportCliproxyapiCodexAuths dedupes by email first and keeps the later-expiring credential', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aih-cliproxyapi-export-'));
+  try {
+    const aiHomeDir = path.join(root, '.ai_home');
+    const hostHomeDir = path.join(root, 'home');
+    const authDir = path.join(hostHomeDir, '.cli-proxy-api');
+    fs.mkdirSync(authDir, { recursive: true });
+
+    writeJson(path.join(aiHomeDir, 'profiles', 'codex', '401', '.codex', 'auth.json'), {
+      auth_mode: 'chatgpt',
+      OPENAI_API_KEY: null,
+      tokens: {
+        id_token: makeJwt({ email: 'same@example.com', exp: 1772000000 }),
+        access_token: makeJwt({ exp: 1772500000 }),
+        refresh_token: 'rt_source_old',
+        account_id: 'acct-source-old'
+      },
+      last_refresh: '2026-03-08T09:00:00.000Z'
+    });
+
+    writeJson(path.join(aiHomeDir, 'profiles', 'codex', '402', '.codex', 'auth.json'), {
+      auth_mode: 'chatgpt',
+      OPENAI_API_KEY: null,
+      tokens: {
+        id_token: makeJwt({ email: 'same@example.com', exp: 1775000000 }),
+        access_token: makeJwt({ exp: 1775500000 }),
+        refresh_token: 'rt_source_new',
+        account_id: 'acct-source-new'
+      },
+      last_refresh: '2026-03-08T12:00:00.000Z'
+    });
+
+    writeJson(path.join(authDir, 'same@example.com.json'), {
+      type: 'codex',
+      email: 'same@example.com',
+      id_token: makeJwt({ email: 'same@example.com', exp: 1773000000 }),
+      access_token: makeJwt({ exp: 1773500000 }),
+      refresh_token: 'rt_target_mid',
+      account_id: 'acct-target-mid',
+      last_refresh: '2026-03-08T10:00:00.000Z',
+      expired: new Date(1773500000 * 1000).toISOString()
+    });
+
+    const service = createCliproxyapiExportService({
+      fs,
+      path,
+      aiHomeDir,
+      hostHomeDir,
+      BufferImpl: Buffer
+    });
+    const result = service.exportCliproxyapiCodexAuths();
+
+    assert.equal(result.exported, 1);
+    assert.equal(result.dedupedSource, 1);
+    const exported = JSON.parse(fs.readFileSync(path.join(authDir, 'same@example.com.json'), 'utf8'));
+    assert.equal(exported.refresh_token, 'rt_source_new');
+    assert.equal(exported.account_id, 'acct-source-new');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('exportCliproxyapiCodexAuths skips non-OAuth or email-missing accounts', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aih-cliproxyapi-export-'));
   try {
@@ -271,6 +333,58 @@ test('importCliproxyapiCodexAuths imports codex oauth auth files from local CLIP
     assert.equal(result.duplicates, 1);
     assert.equal(result.invalid, 0);
     assert.equal(fs.existsSync(path.join(aiHomeDir, 'profiles', 'codex', '2', '.codex', 'auth.json')), true);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('importCliproxyapiCodexAuths updates same-email account when incoming credential expires later', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aih-cliproxyapi-import-'));
+  try {
+    const aiHomeDir = path.join(root, '.ai_home');
+    const hostHomeDir = path.join(root, 'home');
+    const authDir = path.join(hostHomeDir, '.cli-proxy-api');
+    fs.mkdirSync(authDir, { recursive: true });
+
+    writeJson(path.join(authDir, 'worker@example.com.json'), {
+      type: 'codex',
+      email: 'worker@example.com',
+      id_token: makeJwt({ email: 'worker@example.com', exp: 1775000000 }),
+      access_token: makeJwt({ exp: 1775500000 }),
+      refresh_token: 'rt_worker_new',
+      account_id: 'acct-worker-new',
+      last_refresh: '2026-03-08T12:00:00.000Z',
+      expired: new Date(1775500000 * 1000).toISOString()
+    });
+
+    writeJson(path.join(aiHomeDir, 'profiles', 'codex', '1', '.codex', 'auth.json'), {
+      auth_mode: 'chatgpt',
+      OPENAI_API_KEY: null,
+      tokens: {
+        id_token: makeJwt({ email: 'worker@example.com', exp: 1772000000 }),
+        access_token: makeJwt({ exp: 1772500000 }),
+        refresh_token: 'rt_worker_old',
+        account_id: 'acct-worker-old'
+      },
+      last_refresh: '2026-03-08T09:00:00.000Z'
+    });
+
+    const service = createCliproxyapiExportService({
+      fs,
+      path,
+      aiHomeDir,
+      hostHomeDir,
+      BufferImpl: Buffer
+    });
+    const result = service.importCliproxyapiCodexAuths();
+
+    assert.equal(result.imported, 1);
+    assert.equal(result.duplicates, 0);
+    assert.deepEqual(result.importedIds, ['1']);
+    assert.equal(fs.existsSync(path.join(aiHomeDir, 'profiles', 'codex', '2')), false);
+    const updated = JSON.parse(fs.readFileSync(path.join(aiHomeDir, 'profiles', 'codex', '1', '.codex', 'auth.json'), 'utf8'));
+    assert.equal(updated.tokens.refresh_token, 'rt_worker_new');
+    assert.equal(updated.tokens.account_id, 'acct-worker-new');
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
