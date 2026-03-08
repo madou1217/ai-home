@@ -163,6 +163,79 @@ test('runUnifiedImport auto-discovers nested zip files and provider folders unde
   }
 });
 
+test('runUnifiedImport does not mistake a provider-named container directory for an importable provider root', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aih-unified-import-provider-container-'));
+  try {
+    const containerDir = path.join(root, 'codex');
+    const zipOne = path.join(containerDir, '1001.zip');
+    const zipTwo = path.join(containerDir, '1002.zip');
+    const extractOne = path.join(root, 'extract-1001');
+    const extractTwo = path.join(root, 'extract-1002');
+    fs.mkdirSync(containerDir, { recursive: true });
+    fs.writeFileSync(zipOne, 'fake-zip-1');
+    fs.writeFileSync(zipTwo, 'fake-zip-2');
+    fs.mkdirSync(path.join(extractOne, 'accounts', 'codex', '3001', '.codex'), { recursive: true });
+    fs.mkdirSync(path.join(extractTwo, 'accounts', 'codex', '3002', '.codex'), { recursive: true });
+    fs.writeFileSync(path.join(extractOne, 'accounts', 'codex', '3001', '.codex', 'auth.json'), '{"tokens":{"refresh_token":"rt_one"}}');
+    fs.writeFileSync(path.join(extractTwo, 'accounts', 'codex', '3002', '.codex', 'auth.json'), '{"tokens":{"refresh_token":"rt_two"}}');
+
+    const calls = [];
+    const service = createUnifiedImportService({
+      fs,
+      path,
+      os,
+      fse: require('fs-extra'),
+      execSync: () => {},
+      spawnImpl: () => {},
+      processImpl: { platform: 'linux' },
+      cryptoImpl: require('node:crypto'),
+      aiHomeDir: path.join(root, '.ai_home'),
+      cliConfigs: { codex: { globalDir: '.codex' } },
+      parseCodexBulkImportArgs: () => ({}),
+      importCodexTokensFromOutput: async () => ({}),
+      ensureArchiveExtractedByHashImpl: async ({ zipPath }) => ({
+        extractDir: zipPath === zipOne ? extractOne : extractTwo,
+        cacheHit: false
+      }),
+      runGlobalAccountImport: async (args) => {
+        calls.push(args[0]);
+        return {
+          providers: ['codex'],
+          failedProviders: [],
+          providerResults: [{
+            provider: 'codex',
+            imported: 1,
+            duplicates: 0,
+            invalid: 0,
+            failed: 0
+          }]
+        };
+      },
+      importCliproxyapiCodexAuths: async () => ({
+        imported: 0,
+        duplicates: 0,
+        invalid: 0,
+        failed: 0
+      })
+    });
+
+    const result = await service.runUnifiedImport([containerDir], {
+      provider: 'codex',
+      log: () => {},
+      error: () => {}
+    });
+
+    assert.equal(result.failedSources.length, 0);
+    assert.equal(result.sourceCount, 2);
+    assert.deepEqual(calls, [
+      path.join(extractOne, 'accounts'),
+      path.join(extractTwo, 'accounts')
+    ]);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('runUnifiedImport imports provider-fixed zip when extracted root is direct account directory layout', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aih-unified-import-provider-zip-'));
   try {
@@ -234,7 +307,8 @@ test('runUnifiedImport keeps updating progress after cached zip extraction durin
     const zipPath = path.join(root, '2222.zip');
     const zipExtractDir = path.join(root, 'zip-extract');
     fs.writeFileSync(zipPath, 'fake-zip');
-    fs.mkdirSync(path.join(zipExtractDir, 'accounts', 'codex', '10001'), { recursive: true });
+    fs.mkdirSync(path.join(zipExtractDir, 'accounts', 'codex', '10001', '.codex'), { recursive: true });
+    fs.writeFileSync(path.join(zipExtractDir, 'accounts', 'codex', '10001', '.codex', 'auth.json'), '{"tokens":{"refresh_token":"rt_cached"}}');
 
     const progress = [];
     const service = createUnifiedImportService({
