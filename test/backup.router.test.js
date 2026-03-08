@@ -296,6 +296,50 @@ test('runBackupCommand routes export cliproxyapi codex to filesystem exporter', 
   assert.equal(events.some((entry) => entry.includes('scanned=3 exported=2 missing=1 invalid=0 deduped_source=4 deduped_target=5')), true);
 });
 
+test('runBackupCommand generic export reports collecting progress while staging credential files', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aih-backup-export-'));
+  const progressEvents = [];
+  let exitCode = null;
+  try {
+    const aiHomeDir = path.join(root, '.ai_home');
+    writeJson(path.join(aiHomeDir, 'profiles', 'codex', '1', '.codex', 'auth.json'), { refresh_token: 'rt_1' });
+    writeJson(path.join(aiHomeDir, 'profiles', 'codex', '2', '.codex', 'auth.json'), { refresh_token: 'rt_2' });
+
+    const handled = await runBackupCommand('export', ['export', path.join(root, 'backup.zip')], {
+      fs,
+      path,
+      os,
+      fse,
+      execSync: () => {},
+      readline: {},
+      consoleImpl: {
+        log: () => {},
+        error: () => {}
+      },
+      processImpl: {
+        exit: (code) => { exitCode = code; },
+        platform: 'linux'
+      },
+      ensureAesSuffix: (value) => value,
+      defaultExportName: () => path.join(root, 'backup.zip'),
+      parseExportArgs: () => ({ targetFile: path.join(root, 'backup.zip'), selectors: [] }),
+      parseImportArgs: () => ({}),
+      expandSelectorsToPaths: () => ['profiles'],
+      renderStageProgress: (...args) => { progressEvents.push(args); },
+      aiHomeDir
+    });
+
+    assert.equal(handled, true);
+    assert.equal(exitCode, 0);
+    assert.equal(
+      progressEvents.some((entry) => String(entry[3] || '').includes('Collecting credential files 2/2 accounts=2 files=2')),
+      true
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('runBackupCommand routes import sources to unified import executor', async () => {
   const progressEvents = [];
   let exitCode = null;
