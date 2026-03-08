@@ -24,7 +24,8 @@ function createHarness() {
       fs: {},
       parseCodexBulkImportArgs: () => ({}),
       importCodexTokensFromOutput: async () => ({}),
-      refreshAccountStateIndexForProvider: () => {}
+      refreshAccountStateIndexForProvider: () => {},
+      renderStageProgress: () => {}
     }
   };
 }
@@ -50,11 +51,11 @@ test('runRootAccountCommand runs global import and refreshes providers', async (
   const h = createHarness();
   const refreshed = [];
   const seenImportArgs = [];
-  h.deps.runGlobalAccountImport = async (args) => {
+  h.deps.runUnifiedImport = async (args) => {
     seenImportArgs.push(...args);
     return {
       providers: ['codex', 'gemini'],
-      failedProviders: []
+      failedSources: []
     };
   };
   h.deps.refreshAccountStateIndexForProvider = (provider, opts) => {
@@ -72,9 +73,9 @@ test('runRootAccountCommand runs global import and refreshes providers', async (
 
 test('runRootAccountCommand exits 1 when import has failed providers', async () => {
   const h = createHarness();
-  h.deps.runGlobalAccountImport = async () => ({
+  h.deps.runUnifiedImport = async () => ({
     providers: ['codex'],
-    failedProviders: ['gemini']
+    failedSources: [{ source: 'cliproxyapi', error: 'boom' }]
   });
 
   await runRootAccountCommand(['account', 'import'], h.deps);

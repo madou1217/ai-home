@@ -218,3 +218,60 @@ test('exportCliproxyapiCodexAuths skips non-OAuth or email-missing accounts', ()
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('importCliproxyapiCodexAuths imports codex oauth auth files from local CLIProxyAPI auth-dir', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aih-cliproxyapi-import-'));
+  try {
+    const aiHomeDir = path.join(root, '.ai_home');
+    const hostHomeDir = path.join(root, 'home');
+    const authDir = path.join(hostHomeDir, '.cli-proxy-api');
+    fs.mkdirSync(authDir, { recursive: true });
+
+    writeJson(path.join(authDir, 'worker@example.com.json'), {
+      type: 'codex',
+      email: 'worker@example.com',
+      id_token: makeJwt({ email: 'worker@example.com', exp: 1773000000 }),
+      access_token: makeJwt({ exp: 1774000000 }),
+      refresh_token: 'rt_worker',
+      account_id: 'acct-worker',
+      last_refresh: '2026-03-08T08:00:00.000Z'
+    });
+    writeJson(path.join(authDir, 'dupe@example.com.json'), {
+      type: 'codex',
+      email: 'dupe@example.com',
+      id_token: makeJwt({ email: 'dupe@example.com', exp: 1773000001 }),
+      access_token: makeJwt({ exp: 1774000001 }),
+      refresh_token: 'rt_dupe',
+      account_id: 'acct-dupe',
+      last_refresh: '2026-03-08T08:00:01.000Z'
+    });
+    writeJson(path.join(aiHomeDir, 'profiles', 'codex', '1', '.codex', 'auth.json'), {
+      auth_mode: 'chatgpt',
+      OPENAI_API_KEY: null,
+      tokens: {
+        id_token: makeJwt({ email: 'dupe@example.com', exp: 1773000001 }),
+        access_token: makeJwt({ exp: 1774000001 }),
+        refresh_token: 'rt_dupe',
+        account_id: 'acct-dupe'
+      },
+      last_refresh: '2026-03-08T08:00:01.000Z'
+    });
+
+    const service = createCliproxyapiExportService({
+      fs,
+      path,
+      aiHomeDir,
+      hostHomeDir,
+      BufferImpl: Buffer
+    });
+    const result = service.importCliproxyapiCodexAuths();
+
+    assert.equal(result.scanned, 2);
+    assert.equal(result.imported, 1);
+    assert.equal(result.duplicates, 1);
+    assert.equal(result.invalid, 0);
+    assert.equal(fs.existsSync(path.join(aiHomeDir, 'profiles', 'codex', '2', '.codex', 'auth.json')), true);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

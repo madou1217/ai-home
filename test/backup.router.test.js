@@ -239,3 +239,40 @@ test('runBackupCommand routes export cliproxyapi codex to filesystem exporter', 
   assert.equal(events.some((entry) => entry.includes('auth-dir=/tmp/cliproxyapi-auths')), true);
   assert.equal(events.some((entry) => entry.includes('scanned=3 exported=2 missing=1 invalid=0 deduped_source=4 deduped_target=5')), true);
 });
+
+test('runBackupCommand routes import sources to unified import executor', async () => {
+  const progressEvents = [];
+  let exitCode = null;
+  const calls = [];
+
+  const handled = await runBackupCommand('import', ['import', 'cliproxyapi', '/tmp/a.zip'], {
+    fs,
+    path,
+    os,
+    fse,
+    execSync: () => {},
+    readline: {},
+    consoleImpl: {
+      log: () => {},
+      error: () => {}
+    },
+    processImpl: {
+      exit: (code) => { exitCode = code; }
+    },
+    renderStageProgress: (...args) => { progressEvents.push(args); },
+    runUnifiedImport: async (args, opts) => {
+      calls.push({ args, opts });
+      return {
+        providers: ['codex'],
+        failedSources: []
+      };
+    }
+  });
+
+  assert.equal(handled, true);
+  assert.equal(exitCode, 0);
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].args, ['cliproxyapi', '/tmp/a.zip']);
+  assert.equal(typeof calls[0].opts.renderStageProgress, 'function');
+  assert.equal(progressEvents.length, 0);
+});

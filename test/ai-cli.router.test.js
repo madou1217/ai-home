@@ -209,3 +209,52 @@ test('`aih codex <id> usage --no-cache` forwards noCache query option', async ()
   }]);
   assert.deepEqual(exits, [0]);
 });
+
+test('`aih codex import` routes through unified import with fixed provider', async () => {
+  const exits = [];
+  const calls = [];
+  const refreshed = [];
+  runAiCliCommandRouter('codex', ['codex', 'import', 'folder1', 'zip1.zip', 'cliproxyapi'], {
+    processImpl: { exit: (code) => exits.push(code) },
+    fs: { existsSync: () => true },
+    renderStageProgress: () => {},
+    refreshAccountStateIndexForProvider: (provider, opts) => refreshed.push({ provider, opts }),
+    runUnifiedImport: async (args, opts) => {
+      calls.push({ args, opts });
+      return {
+        providers: ['codex'],
+        failedSources: []
+      };
+    }
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].args, ['folder1', 'zip1.zip', 'cliproxyapi']);
+  assert.equal(calls[0].opts.provider, 'codex');
+  assert.equal(calls[0].opts.log, console.log);
+  assert.equal(calls[0].opts.error, console.error);
+  assert.equal(typeof calls[0].opts.renderStageProgress, 'function');
+  assert.deepEqual(refreshed, [{ provider: 'codex', opts: { refreshSnapshot: false } }]);
+  assert.deepEqual(exits, [0]);
+});
+
+test('`aih codex account import` is a compatibility alias of unified import', async () => {
+  const exits = [];
+  const calls = [];
+  runAiCliCommandRouter('codex', ['codex', 'account', 'import', 'cliproxyapi'], {
+    processImpl: { exit: (code) => exits.push(code) },
+    fs: { existsSync: () => true },
+    renderStageProgress: () => {},
+    refreshAccountStateIndexForProvider: () => {},
+    runUnifiedImport: async (args, opts) => {
+      calls.push({ args, provider: opts.provider });
+      return {
+        providers: ['codex'],
+        failedSources: []
+      };
+    }
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(calls, [{ args: ['cliproxyapi'], provider: 'codex' }]);
+  assert.deepEqual(exits, [0]);
+});
