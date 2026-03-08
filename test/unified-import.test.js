@@ -450,3 +450,77 @@ test('runUnifiedImport keeps updating progress after cached zip extraction durin
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('runUnifiedImport limits zip prepare concurrency even when jobs is very high', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aih-unified-import-zip-limit-'));
+  try {
+    const containerDir = path.join(root, 'codexes');
+    fs.mkdirSync(containerDir, { recursive: true });
+    const zipPaths = [];
+    for (let i = 0; i < 20; i += 1) {
+      const zipPath = path.join(containerDir, `${1000 + i}.zip`);
+      zipPaths.push(zipPath);
+      fs.writeFileSync(zipPath, `fake-${i}`);
+    }
+
+    let activePrepares = 0;
+    let peakPrepares = 0;
+    const progress = [];
+    const service = createUnifiedImportService({
+      fs,
+      path,
+      os,
+      fse: require('fs-extra'),
+      execSync: () => {},
+      spawnImpl: () => {},
+      processImpl: { platform: 'win32' },
+      cryptoImpl: require('node:crypto'),
+      aiHomeDir: path.join(root, '.ai_home'),
+      cliConfigs: { codex: { globalDir: '.codex' } },
+      parseCodexBulkImportArgs: parseCodexArgsForTest,
+      importCodexTokensFromOutput: async (optionsArg) => ({
+        sourceDir: optionsArg.sourceDir,
+        imported: 1,
+        duplicates: 0,
+        invalid: 0,
+        failed: 0,
+        dryRun: false
+      }),
+      ensureArchiveExtractedByHashImpl: async ({ zipPath }) => {
+        activePrepares += 1;
+        peakPrepares = Math.max(peakPrepares, activePrepares);
+        const extractDir = path.join(root, path.basename(zipPath, '.zip'));
+        fs.mkdirSync(path.join(extractDir, '1', '.codex'), { recursive: true });
+        fs.writeFileSync(path.join(extractDir, '1', '.codex', 'auth.json'), '{"refresh_token":"rt_limit"}');
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        activePrepares -= 1;
+        return {
+          extractDir,
+          cacheHit: false
+        };
+      },
+      runGlobalAccountImport: async () => ({ providers: [], failedProviders: [], providerResults: [] }),
+      importCliproxyapiCodexAuths: async () => ({
+        imported: 0,
+        duplicates: 0,
+        invalid: 0,
+        failed: 0
+      })
+    });
+
+    const result = await service.runUnifiedImport([containerDir, '-j', '1000'], {
+      provider: 'codex',
+      log: () => {},
+      error: () => {},
+      renderStageProgress: (_prefix, current, total, label) => progress.push({ current, total, label })
+    });
+
+    assert.equal(result.failedSources.length, 0);
+    assert.equal(result.sourceCount, 20);
+    assert.equal(peakPrepares <= 8, true);
+    assert.equal(progress.some((entry) => String(entry.label).includes('prep=')), true);
+    assert.equal(progress.some((entry) => String(entry.label).includes('queued=')), true);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
