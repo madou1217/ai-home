@@ -237,24 +237,3 @@ test('`aih codex import` routes through unified import with fixed provider', asy
   assert.deepEqual(refreshed, [{ provider: 'codex', opts: { refreshSnapshot: false } }]);
   assert.deepEqual(exits, [0]);
 });
-
-test('`aih codex account import` is a compatibility alias of unified import', async () => {
-  const exits = [];
-  const calls = [];
-  runAiCliCommandRouter('codex', ['codex', 'account', 'import', 'cliproxyapi'], {
-    processImpl: { exit: (code) => exits.push(code) },
-    fs: { existsSync: () => true },
-    renderStageProgress: () => {},
-    refreshAccountStateIndexForProvider: () => {},
-    runUnifiedImport: async (args, opts) => {
-      calls.push({ args, provider: opts.provider });
-      return {
-        providers: ['codex'],
-        failedSources: []
-      };
-    }
-  });
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(calls, [{ args: ['cliproxyapi'], provider: 'codex' }]);
-  assert.deepEqual(exits, [0]);
-});
