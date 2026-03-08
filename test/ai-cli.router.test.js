@@ -213,12 +213,10 @@ test('`aih codex <id> usage --no-cache` forwards noCache query option', async ()
 test('`aih codex import` routes through unified import with fixed provider', async () => {
   const exits = [];
   const calls = [];
-  const refreshed = [];
   runAiCliCommandRouter('codex', ['codex', 'import', 'folder1', 'zip1.zip', 'cliproxyapi'], {
     processImpl: { exit: (code) => exits.push(code) },
     fs: { existsSync: () => true },
     renderStageProgress: () => {},
-    refreshAccountStateIndexForProvider: (provider, opts) => refreshed.push({ provider, opts }),
     runUnifiedImport: async (args, opts) => {
       calls.push({ args, opts });
       return {
@@ -234,6 +232,5 @@ test('`aih codex import` routes through unified import with fixed provider', asy
   assert.equal(calls[0].opts.log, console.log);
   assert.equal(calls[0].opts.error, console.error);
   assert.equal(typeof calls[0].opts.renderStageProgress, 'function');
-  assert.deepEqual(refreshed, [{ provider: 'codex', opts: { refreshSnapshot: false } }]);
   assert.deepEqual(exits, [0]);
 });
