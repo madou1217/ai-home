@@ -296,6 +296,43 @@ test('runBackupCommand routes export cliproxyapi codex to filesystem exporter', 
   assert.equal(events.some((entry) => entry.includes('scanned=3 exported=2 missing=1 invalid=0 deduped_source=4 deduped_target=5')), true);
 });
 
+test('runBackupCommand rejects extra args after export cliproxyapi codex', async () => {
+  const events = [];
+  let exitCode = null;
+  let called = false;
+
+  const handled = await runBackupCommand('export', ['export', 'cliproxyapi', 'codex', 'extra'], {
+    fs,
+    path,
+    os,
+    fse,
+    execSync: () => {},
+    readline: {},
+    consoleImpl: {
+      log: (msg) => events.push(`log:${msg}`),
+      error: (msg) => events.push(`error:${msg}`)
+    },
+    processImpl: {
+      exit: (code) => { exitCode = code; }
+    },
+    ensureAesSuffix: (value) => value,
+    defaultExportName: () => 'x.zip',
+    parseExportArgs: () => ({ targetFile: 'ignored.zip', selectors: [] }),
+    parseImportArgs: () => ({}),
+    expandSelectorsToPaths: () => [],
+    renderStageProgress: () => {},
+    exportCliproxyapiCodexAuths: () => {
+      called = true;
+      return {};
+    }
+  });
+
+  assert.equal(handled, true);
+  assert.equal(exitCode, 1);
+  assert.equal(called, false);
+  assert.equal(events.some((entry) => entry.includes('Invalid CLIProxyAPI export syntax')), true);
+});
+
 test('runBackupCommand generic export reports collecting progress while staging credential files', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aih-backup-export-'));
   const progressEvents = [];
