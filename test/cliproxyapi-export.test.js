@@ -73,7 +73,7 @@ test('exportCliproxyapiCodexAuths flattens codex auths into CLIProxyAPI auth-dir
     assert.equal(result.dedupedSource, 0);
     assert.equal(result.dedupedTarget, 0);
     assert.equal(result.authDir, authDir);
-    assert.deepEqual(progress.map((item) => item.status), ['start', 'invalid', 'missing', 'exported', 'done']);
+    assert.deepEqual(progress.map((item) => item.status), ['start', 'invalid', 'missing', 'apply_start', 'exported', 'done']);
 
     const exportedPath = path.join(authDir, 'worker@example.com.json');
     assert.equal(fs.existsSync(exportedPath), true);
