@@ -135,6 +135,62 @@ test('ensureArchiveExtractedByHash reuses cached extraction for same archive has
   }
 });
 
+test('ensureArchiveExtractedByHash falls back to copy when moveSync hits EPERM on windows-like filesystems', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aih-backup-router-eperm-'));
+  try {
+    const aiHomeDir = path.join(root, '.ai_home');
+    fs.mkdirSync(aiHomeDir, { recursive: true });
+    const zipPath = path.join(root, '中文.zip');
+    fs.writeFileSync(zipPath, 'fake-zip-content');
+
+    let copyFallbacks = 0;
+    const fseWithEpermMove = {
+      ensureDirSync: (...args) => fse.ensureDirSync(...args),
+      removeSync: (...args) => fse.removeSync(...args),
+      moveSync: () => {
+        const err = new Error('operation not permitted');
+        err.code = 'EPERM';
+        throw err;
+      },
+      copySync: (...args) => {
+        copyFallbacks += 1;
+        return fse.copySync(...args);
+      }
+    };
+
+    const execSync = (cmd) => {
+      const text = String(cmd || '');
+      if (text.startsWith('7z ') || text.startsWith('7za ')) {
+        throw new Error('7z unavailable in test');
+      }
+      const m = text.match(/-d "([^"]+)"/);
+      if (!m) throw new Error(`unexpected command: ${text}`);
+      const outDir = m[1];
+      fs.mkdirSync(path.join(outDir, 'accounts', 'codex', '1', '.codex'), { recursive: true });
+      fs.writeFileSync(path.join(outDir, 'accounts', 'codex', '1', '.codex', 'auth.json'), '{"ok":true}');
+    };
+
+    const extracted = await __private.ensureArchiveExtractedByHash({
+      fs,
+      path,
+      os,
+      fse: fseWithEpermMove,
+      execSync,
+      processImpl: { platform: 'linux' },
+      cryptoImpl: require('node:crypto'),
+      zipPath,
+      aiHomeDir,
+      spawnImpl: createSpawnStub(({ child }) => child.emit('close', 1))
+    });
+
+    assert.equal(copyFallbacks, 1);
+    assert.equal(extracted.cacheHit, false);
+    assert.equal(fs.existsSync(path.join(extracted.extractDir, 'accounts', 'codex', '1', '.codex', 'auth.json')), true);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('resolveBundled7zipPath picks first existing bundled binary candidate', () => {
   const fakeFs = {
     existsSync: (candidate) => String(candidate).includes('/ok/7za')

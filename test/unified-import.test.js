@@ -5,6 +5,15 @@ const os = require('node:os');
 const path = require('node:path');
 const { createUnifiedImportService } = require('../lib/cli/services/import/unified-import');
 
+function parseCodexArgsForTest(args) {
+  const items = Array.isArray(args) ? args : [];
+  return {
+    sourceDir: items[0],
+    parallel: Number(items[2] || 1),
+    dryRun: items.includes('--dry-run')
+  };
+}
+
 test('parseUnifiedImportArgs supports mixed sources and provider prefix', () => {
   const service = createUnifiedImportService({
     fs,
@@ -49,7 +58,7 @@ test('runUnifiedImport imports mixed directory and cliproxyapi sources with prog
       cryptoImpl: require('node:crypto'),
       aiHomeDir: path.join(root, '.ai_home'),
       cliConfigs: { codex: {} },
-      parseCodexBulkImportArgs: () => ({}),
+      parseCodexBulkImportArgs: parseCodexArgsForTest,
       importCodexTokensFromOutput: async () => ({}),
       runGlobalAccountImport: async (args) => ({
         providers: ['codex'],
@@ -112,7 +121,7 @@ test('runUnifiedImport auto-discovers nested zip files and provider folders unde
       aiHomeDir: path.join(root, '.ai_home'),
       cliConfigs: { codex: {} },
       getDefaultParallelism: () => 4,
-      parseCodexBulkImportArgs: () => ({}),
+      parseCodexBulkImportArgs: parseCodexArgsForTest,
       importCodexTokensFromOutput: async () => ({}),
       ensureArchiveExtractedByHashImpl: async ({ zipPath, onHashProgress, onExtractProgress }) => {
         onHashProgress(10, 10);
@@ -191,26 +200,23 @@ test('runUnifiedImport does not mistake a provider-named container directory for
       cryptoImpl: require('node:crypto'),
       aiHomeDir: path.join(root, '.ai_home'),
       cliConfigs: { codex: { globalDir: '.codex' } },
-      parseCodexBulkImportArgs: () => ({}),
-      importCodexTokensFromOutput: async () => ({}),
+      parseCodexBulkImportArgs: parseCodexArgsForTest,
+      importCodexTokensFromOutput: async (optionsArg) => {
+        calls.push(optionsArg.sourceDir);
+        return {
+          sourceDir: optionsArg.sourceDir,
+          imported: 1,
+          duplicates: 0,
+          invalid: 0,
+          failed: 0,
+          dryRun: false
+        };
+      },
       ensureArchiveExtractedByHashImpl: async ({ zipPath }) => ({
         extractDir: zipPath === zipOne ? extractOne : extractTwo,
         cacheHit: false
       }),
-      runGlobalAccountImport: async (args) => {
-        calls.push(args[0]);
-        return {
-          providers: ['codex'],
-          failedProviders: [],
-          providerResults: [{
-            provider: 'codex',
-            imported: 1,
-            duplicates: 0,
-            invalid: 0,
-            failed: 0
-          }]
-        };
-      },
+      runGlobalAccountImport: async () => ({ providers: [], failedProviders: [], providerResults: [] }),
       importCliproxyapiCodexAuths: async () => ({
         imported: 0,
         duplicates: 0,
@@ -228,8 +234,8 @@ test('runUnifiedImport does not mistake a provider-named container directory for
     assert.equal(result.failedSources.length, 0);
     assert.equal(result.sourceCount, 2);
     assert.deepEqual(calls, [
-      path.join(extractOne, 'accounts'),
-      path.join(extractTwo, 'accounts')
+      path.join(extractOne, 'accounts', 'codex'),
+      path.join(extractTwo, 'accounts', 'codex')
     ]);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
@@ -257,26 +263,23 @@ test('runUnifiedImport imports provider-fixed zip when extracted root is direct 
       cryptoImpl: require('node:crypto'),
       aiHomeDir: path.join(root, '.ai_home'),
       cliConfigs: { codex: {} },
-      parseCodexBulkImportArgs: () => ({}),
-      importCodexTokensFromOutput: async () => ({}),
+      parseCodexBulkImportArgs: parseCodexArgsForTest,
+      importCodexTokensFromOutput: async (optionsArg) => {
+        calls.push(optionsArg.sourceDir);
+        return {
+          sourceDir: optionsArg.sourceDir,
+          imported: 1,
+          duplicates: 0,
+          invalid: 0,
+          failed: 0,
+          dryRun: false
+        };
+      },
       ensureArchiveExtractedByHashImpl: async () => ({
         extractDir: zipExtractDir,
         cacheHit: false
       }),
-      runGlobalAccountImport: async (args) => {
-        calls.push(args[0]);
-        return {
-          providers: ['codex'],
-          failedProviders: [],
-          providerResults: [{
-            provider: 'codex',
-            imported: 1,
-            duplicates: 0,
-            invalid: 0,
-            failed: 0
-          }]
-        };
-      },
+      runGlobalAccountImport: async () => ({ providers: [], failedProviders: [], providerResults: [] }),
       importCliproxyapiCodexAuths: async () => ({
         imported: 0,
         duplicates: 0,
@@ -295,7 +298,61 @@ test('runUnifiedImport imports provider-fixed zip when extracted root is direct 
     assert.equal(result.sourceResults.length, 1);
     assert.equal(result.sourceResults[0].imported, 1);
     assert.equal(calls.length, 1);
-    assert.equal(calls[0].includes('__aih_import_root'), true);
+    assert.equal(calls[0], zipExtractDir);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('runUnifiedImport imports provider-fixed directory without requiring nested provider folder', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aih-unified-import-provider-dir-'));
+  try {
+    const sourceDir = path.join(root, 'plain-folder');
+    fs.mkdirSync(path.join(sourceDir, '20001', '.codex'), { recursive: true });
+    fs.writeFileSync(path.join(sourceDir, '20001', '.codex', 'auth.json'), '{"refresh_token":"rt_dir"}');
+
+    const calls = [];
+    const service = createUnifiedImportService({
+      fs,
+      path,
+      os,
+      fse: require('fs-extra'),
+      execSync: () => {},
+      spawnImpl: () => {},
+      processImpl: { platform: 'linux' },
+      cryptoImpl: require('node:crypto'),
+      aiHomeDir: path.join(root, '.ai_home'),
+      cliConfigs: { codex: { globalDir: '.codex' } },
+      parseCodexBulkImportArgs: parseCodexArgsForTest,
+      importCodexTokensFromOutput: async (optionsArg) => {
+        calls.push(optionsArg.sourceDir);
+        return {
+          sourceDir: optionsArg.sourceDir,
+          imported: 1,
+          duplicates: 0,
+          invalid: 0,
+          failed: 0,
+          dryRun: false
+        };
+      },
+      runGlobalAccountImport: async () => ({ providers: [], failedProviders: [], providerResults: [] }),
+      importCliproxyapiCodexAuths: async () => ({
+        imported: 0,
+        duplicates: 0,
+        invalid: 0,
+        failed: 0
+      })
+    });
+
+    const result = await service.runUnifiedImport([sourceDir], {
+      provider: 'codex',
+      log: () => {},
+      error: () => {}
+    });
+
+    assert.equal(result.failedSources.length, 0);
+    assert.equal(result.sourceResults.length, 1);
+    assert.equal(calls[0], sourceDir);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -322,7 +379,7 @@ test('runUnifiedImport keeps updating progress after cached zip extraction durin
       cryptoImpl: require('node:crypto'),
       aiHomeDir: path.join(root, '.ai_home'),
       cliConfigs: { codex: {} },
-      parseCodexBulkImportArgs: () => ({}),
+      parseCodexBulkImportArgs: parseCodexArgsForTest,
       importCodexTokensFromOutput: async (optionsArg) => {
         if (typeof optionsArg.onProgress === 'function') {
           optionsArg.onProgress({ totalFiles: 20, scannedFiles: 1, status: 'queued' });
