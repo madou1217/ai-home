@@ -524,3 +524,71 @@ test('runUnifiedImport limits zip prepare concurrency even when jobs is very hig
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('runUnifiedImport reuses one fixed-provider import session across multiple zip sources', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aih-unified-import-session-'));
+  try {
+    const containerDir = path.join(root, 'codexes');
+    const zipOne = path.join(containerDir, '1001.zip');
+    const zipTwo = path.join(containerDir, '1002.zip');
+    const extractOne = path.join(root, 'extract-1');
+    const extractTwo = path.join(root, 'extract-2');
+    fs.mkdirSync(containerDir, { recursive: true });
+    fs.writeFileSync(zipOne, 'fake-1');
+    fs.writeFileSync(zipTwo, 'fake-2');
+    fs.mkdirSync(path.join(extractOne, '1', '.codex'), { recursive: true });
+    fs.mkdirSync(path.join(extractTwo, '2', '.codex'), { recursive: true });
+    fs.writeFileSync(path.join(extractOne, '1', '.codex', 'auth.json'), '{"refresh_token":"rt_s1"}');
+    fs.writeFileSync(path.join(extractTwo, '2', '.codex', 'auth.json'), '{"refresh_token":"rt_s2"}');
+
+    const sessions = [];
+    const service = createUnifiedImportService({
+      fs,
+      path,
+      os,
+      fse: require('fs-extra'),
+      execSync: () => {},
+      spawnImpl: () => {},
+      processImpl: { platform: 'linux' },
+      cryptoImpl: require('node:crypto'),
+      aiHomeDir: path.join(root, '.ai_home'),
+      cliConfigs: { codex: { globalDir: '.codex' } },
+      parseCodexBulkImportArgs: parseCodexArgsForTest,
+      importCodexTokensFromOutput: async (optionsArg) => {
+        sessions.push(optionsArg.importSession);
+        return {
+          sourceDir: optionsArg.sourceDir,
+          imported: 1,
+          duplicates: 0,
+          invalid: 0,
+          failed: 0,
+          dryRun: false
+        };
+      },
+      ensureArchiveExtractedByHashImpl: async ({ zipPath }) => ({
+        extractDir: zipPath === zipOne ? extractOne : extractTwo,
+        cacheHit: false
+      }),
+      runGlobalAccountImport: async () => ({ providers: [], failedProviders: [], providerResults: [] }),
+      importCliproxyapiCodexAuths: async () => ({
+        imported: 0,
+        duplicates: 0,
+        invalid: 0,
+        failed: 0
+      })
+    });
+
+    const result = await service.runUnifiedImport([containerDir], {
+      provider: 'codex',
+      log: () => {},
+      error: () => {}
+    });
+
+    assert.equal(result.failedSources.length, 0);
+    assert.equal(sessions.length, 2);
+    assert.equal(!!sessions[0], true);
+    assert.equal(sessions[0] === sessions[1], true);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
