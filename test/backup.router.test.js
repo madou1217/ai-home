@@ -316,12 +316,13 @@ test('runBackupCommand generic export reports collecting progress while staging 
         log: () => {},
         error: () => {}
       },
-      processImpl: {
-        exit: (code) => { exitCode = code; },
-        platform: 'linux'
-      },
-      ensureAesSuffix: (value) => value,
-      defaultExportName: () => path.join(root, 'backup.zip'),
+    processImpl: {
+      exit: (code) => { exitCode = code; },
+      platform: 'linux'
+    },
+    getDefaultParallelism: () => 8,
+    ensureAesSuffix: (value) => value,
+    defaultExportName: () => path.join(root, 'backup.zip'),
       parseExportArgs: () => ({ targetFile: path.join(root, 'backup.zip'), selectors: [] }),
       parseImportArgs: () => ({}),
       expandSelectorsToPaths: () => ['profiles'],
@@ -332,7 +333,7 @@ test('runBackupCommand generic export reports collecting progress while staging 
     assert.equal(handled, true);
     assert.equal(exitCode, 0);
     assert.equal(
-      progressEvents.some((entry) => String(entry[3] || '').includes('Collecting credential files 2/2 accounts=2 files=2')),
+      progressEvents.some((entry) => String(entry[3] || '').includes('Collecting credential files 2/2 accounts=2 files=2 workers=2')),
       true
     );
   } finally {

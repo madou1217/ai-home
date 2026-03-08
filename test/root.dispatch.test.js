@@ -46,6 +46,7 @@ test('createRootCommandContexts builds all root command contexts', () => {
     defaultExportName: () => 'x',
     parseExportArgs: () => ({}),
     parseImportArgs: () => ({}),
+    getDefaultParallelism: () => 8,
     expandSelectorsToPaths: () => [],
     renderStageProgress: () => '',
     exportCliproxyapiCodexAuths: () => ({}),
@@ -98,6 +99,7 @@ test('createRootCommandContexts builds all root command contexts', () => {
   assert.equal(contexts.devContext.usageConstants.schemaVersion, 2);
   assert.equal(contexts.aiCliContext.HOST_HOME_DIR, '/tmp');
   assert.equal(typeof contexts.backupContext.exportCliproxyapiCodexAuths, 'function');
+  assert.equal(typeof contexts.backupContext.getDefaultParallelism, 'function');
 });
 
 test('createRootRouterDeps keeps exact handler references', () => {
