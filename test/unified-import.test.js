@@ -162,3 +162,68 @@ test('runUnifiedImport auto-discovers nested zip files and provider folders unde
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('runUnifiedImport imports provider-fixed zip when extracted root is direct account directory layout', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aih-unified-import-provider-zip-'));
+  try {
+    const zipPath = path.join(root, '1111.zip');
+    const zipExtractDir = path.join(root, 'zip-extract');
+    fs.writeFileSync(zipPath, 'fake-zip');
+    fs.mkdirSync(path.join(zipExtractDir, '10001', '.codex'), { recursive: true });
+    fs.writeFileSync(path.join(zipExtractDir, '10001', '.codex', 'auth.json'), '{"refresh_token":"rt_x"}');
+
+    const calls = [];
+    const service = createUnifiedImportService({
+      fs,
+      path,
+      os,
+      fse: require('fs-extra'),
+      execSync: () => {},
+      spawnImpl: () => {},
+      processImpl: { platform: 'linux' },
+      cryptoImpl: require('node:crypto'),
+      aiHomeDir: path.join(root, '.ai_home'),
+      cliConfigs: { codex: {} },
+      parseCodexBulkImportArgs: () => ({}),
+      importCodexTokensFromOutput: async () => ({}),
+      ensureArchiveExtractedByHashImpl: async () => ({
+        extractDir: zipExtractDir,
+        cacheHit: false
+      }),
+      runGlobalAccountImport: async (args) => {
+        calls.push(args[0]);
+        return {
+          providers: ['codex'],
+          failedProviders: [],
+          providerResults: [{
+            provider: 'codex',
+            imported: 1,
+            duplicates: 0,
+            invalid: 0,
+            failed: 0
+          }]
+        };
+      },
+      importCliproxyapiCodexAuths: async () => ({
+        imported: 0,
+        duplicates: 0,
+        invalid: 0,
+        failed: 0
+      })
+    });
+
+    const result = await service.runUnifiedImport([zipPath], {
+      provider: 'codex',
+      log: () => {},
+      error: () => {}
+    });
+
+    assert.equal(result.failedSources.length, 0);
+    assert.equal(result.sourceResults.length, 1);
+    assert.equal(result.sourceResults[0].imported, 1);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].includes('__aih_import_root'), true);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

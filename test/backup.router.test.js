@@ -70,7 +70,7 @@ test('resolveImportSourceRoot maps custom folder to provider root when provider 
       provider: 'codex',
       folderHint: 'abc'
     });
-    assert.equal(resolved.sourceRoot, path.join(root, '__aih_import_root'));
+    assert.equal(resolved.sourceRoot, path.join(root, 'abc.__aih_import_root'));
     assert.equal(fs.existsSync(path.join(resolved.sourceRoot, 'codex')), true);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });

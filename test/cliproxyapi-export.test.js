@@ -275,3 +275,38 @@ test('importCliproxyapiCodexAuths imports codex oauth auth files from local CLIP
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('importCliproxyapiCodexAuths creates aih provider root on first import', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aih-cliproxyapi-import-'));
+  try {
+    const aiHomeDir = path.join(root, '.ai_home');
+    const hostHomeDir = path.join(root, 'home');
+    const authDir = path.join(hostHomeDir, '.cli-proxy-api');
+    fs.mkdirSync(authDir, { recursive: true });
+
+    writeJson(path.join(authDir, 'worker@example.com.json'), {
+      type: 'codex',
+      email: 'worker@example.com',
+      id_token: makeJwt({ email: 'worker@example.com' }),
+      access_token: makeJwt({ exp: 1778000000 }),
+      refresh_token: 'rt_worker_token',
+      account_id: 'acct-worker',
+      last_refresh: '2026-03-08T12:00:00.000Z'
+    });
+
+    const service = createCliproxyapiExportService({
+      fs,
+      path,
+      aiHomeDir,
+      hostHomeDir,
+      BufferImpl: Buffer
+    });
+
+    const result = service.importCliproxyapiCodexAuths();
+    assert.equal(result.imported, 1);
+    assert.equal(result.failed, 0);
+    assert.equal(fs.existsSync(path.join(aiHomeDir, 'profiles', 'codex', '1', '.codex', 'auth.json')), true);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
