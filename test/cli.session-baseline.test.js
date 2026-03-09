@@ -35,7 +35,7 @@ test('`aih ls` is read-only and does not create profile directories', (t) => {
   assert.equal(fs.existsSync(aiHomeDir), false, 'read-only list command should not create ~/.ai_home');
 });
 
-test('`set-default` updates default pointer, syncs host config, and preserves session topology', (t) => {
+test('`set-default` updates default pointer, syncs host auth, and drops profile-owned shared codex entries', (t) => {
   const homeDir = mkTmpDir();
   t.after(() => fs.rmSync(homeDir, { recursive: true, force: true }));
 
@@ -44,9 +44,11 @@ test('`set-default` updates default pointer, syncs host config, and preserves se
   const sandboxConfigDir = path.join(accountDir, '.codex');
   const sandboxSessionsDir = path.join(sandboxConfigDir, 'sessions');
   const sandboxAuthPath = path.join(sandboxConfigDir, 'auth.json');
+  const sandboxConfigPath = path.join(sandboxConfigDir, 'config.toml');
   fs.mkdirSync(sandboxSessionsDir, { recursive: true });
   fs.writeFileSync(path.join(sandboxSessionsDir, 'local-session.json'), '{"local":true}\n');
   fs.writeFileSync(sandboxAuthPath, '{"sandbox":"auth"}\n');
+  fs.writeFileSync(sandboxConfigPath, 'model = "gpt-5"\n');
 
   const globalCodexDir = path.join(homeDir, '.codex');
   fs.mkdirSync(globalCodexDir, { recursive: true });
@@ -59,12 +61,11 @@ test('`set-default` updates default pointer, syncs host config, and preserves se
   assert.equal(fs.readFileSync(defaultPath, 'utf8').trim(), '1');
 
   const sandboxSessionsStat = fs.lstatSync(sandboxSessionsDir);
-  assert.equal(sandboxSessionsStat.isDirectory(), true, 'sandbox sessions path should remain a directory');
-  assert.equal(sandboxSessionsStat.isSymbolicLink(), false, 'set-default must not rewrite sessions into symlink topology');
+  assert.equal(sandboxSessionsStat.isSymbolicLink(), true, 'set-default should normalize sessions into shared symlink topology');
   assert.equal(
-    fs.existsSync(path.join(sandboxSessionsDir, 'local-session.json')),
+    fs.existsSync(path.join(globalCodexDir, 'sessions', 'local-session.json')),
     true,
-    'existing sandbox session content should remain untouched'
+    'existing sandbox session content should be preserved in the host shared store'
   );
   assert.equal(
     fs.existsSync(path.join(globalCodexDir, 'history.jsonl')),
@@ -74,7 +75,17 @@ test('`set-default` updates default pointer, syncs host config, and preserves se
   assert.equal(
     fs.readFileSync(path.join(globalCodexDir, 'auth.json'), 'utf8'),
     '{"sandbox":"auth"}\n',
-    'set-default should sync selected account config into native global tool directory'
+    'set-default should sync selected account auth into native global tool directory'
+  );
+  assert.equal(
+    fs.existsSync(path.join(globalCodexDir, 'config.toml')),
+    false,
+    'set-default should not backfill missing host shared config from sandbox-owned files'
+  );
+  assert.equal(
+    fs.existsSync(sandboxConfigPath),
+    false,
+    'set-default should drop sandbox-owned shared codex entries when host source is absent'
   );
 });
 

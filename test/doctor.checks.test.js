@@ -10,9 +10,13 @@ function mkTmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'aih-doctor-test-'));
 }
 
-test('doctor detects required-config and broken-link anomalies', (t) => {
+test('doctor detects required-config, broken-link, and shared-topology anomalies', (t) => {
   const homeDir = mkTmpDir();
   t.after(() => fs.rmSync(homeDir, { recursive: true, force: true }));
+
+  const hostCodexDir = path.join(homeDir, '.codex');
+  fs.mkdirSync(hostCodexDir, { recursive: true });
+  fs.writeFileSync(path.join(hostCodexDir, 'config.toml'), 'model = "gpt-5"\n');
 
   const profilesDir = path.join(homeDir, '.ai_home', 'profiles', 'codex');
   fs.mkdirSync(path.join(profilesDir, '1'), { recursive: true });
@@ -20,6 +24,7 @@ test('doctor detects required-config and broken-link anomalies', (t) => {
   const configDir2 = path.join(profilesDir, '2', '.codex');
   fs.mkdirSync(configDir2, { recursive: true });
   fs.symlinkSync('missing-target', path.join(configDir2, 'sessions'));
+  fs.writeFileSync(path.join(configDir2, 'config.toml'), 'model = "local"\n');
 
   const report = runDoctorChecks({
     hostHomeDir: homeDir,
@@ -32,6 +37,10 @@ test('doctor detects required-config and broken-link anomalies', (t) => {
   assert.equal(report.ok, false);
   assert.ok(report.summary.byType['required-config'] >= 1);
   assert.ok(report.summary.byType.link >= 1);
+  assert.ok(
+    report.issues.some((issue) => issue.message.includes('shared tool config entry should symlink')),
+    'doctor should report shared codex entries that are still regular files'
+  );
 });
 
 test('doctor detects permission anomaly when profiles directory is not writable', (t) => {
