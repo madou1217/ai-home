@@ -24,6 +24,7 @@ function createHarness(overrides = {}) {
     showHelp: () => events.push('showHelp'),
     showLsHelp: () => events.push('showLsHelp'),
     listProfiles: () => events.push('listProfiles'),
+    countProfiles: () => ({ total: 0, providers: {} }),
     runGlobalAccountImport: async () => ({ providers: [], failedProviders: [] }),
     parseCodexBulkImportArgs: () => ({}),
     importCodexTokensFromOutput: async () => ({}),
@@ -122,4 +123,17 @@ test('runCliRootRouter __usage-probe prefers async payload builder and writes ne
   await runCliRootRouter(['__usage-probe', 'codex', '1'], h.deps);
   assert.equal(h.getExitCode(), 0);
   assert.equal(h.events.some((event) => event === 'stdout:{"source":"async","ok":true}\n'), true);
+});
+
+test('runCliRootRouter prints overall counts for `aih count`', async () => {
+  const h = createHarness({
+    countProfiles: () => ({
+      total: 6,
+      providers: { codex: 4, gemini: 1, claude: 1 }
+    })
+  });
+  await runCliRootRouter(['count'], h.deps);
+  assert.equal(h.getExitCode(), 0);
+  assert.equal(h.events.some((event) => event.includes('codex: 4')), true);
+  assert.equal(h.events.some((event) => event.includes('total: 6')), true);
 });

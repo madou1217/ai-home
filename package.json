@@ -5,7 +5,8 @@
   "main": "index.js",
   "scripts": {
     "test": "node --test test/*.test.js",
-    "postinstall": "node scripts/postinstall.js"
+    "postinstall": "node scripts/postinstall.js",
+    "cleanup:codex": "node scripts/cleanup-codex-free-accounts.js"
   },
   "keywords": [],
   "author": "",

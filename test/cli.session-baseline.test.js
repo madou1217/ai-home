@@ -60,12 +60,15 @@ test('`set-default` updates default pointer, syncs host auth, and drops profile-
   const defaultPath = path.join(toolDir, '.aih_default');
   assert.equal(fs.readFileSync(defaultPath, 'utf8').trim(), '1');
 
-  const sandboxSessionsStat = fs.lstatSync(sandboxSessionsDir);
-  assert.equal(sandboxSessionsStat.isSymbolicLink(), true, 'set-default should normalize sessions into shared symlink topology');
   assert.equal(
-    fs.existsSync(path.join(globalCodexDir, 'sessions', 'local-session.json')),
-    true,
-    'existing sandbox session content should be preserved in the host shared store'
+    fs.existsSync(path.join(globalCodexDir, 'sessions')),
+    false,
+    'set-default should not backfill missing host shared session state from sandbox-owned files'
+  );
+  assert.equal(
+    fs.existsSync(sandboxSessionsDir),
+    false,
+    'set-default should drop sandbox-owned shared session state when host source is absent'
   );
   assert.equal(
     fs.existsSync(path.join(globalCodexDir, 'history.jsonl')),

@@ -98,3 +98,17 @@ test('account state index prunes missing ids deterministically', () => {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('account state index deletes one account deterministically', () => {
+  const root = mkTmpDir();
+  try {
+    const index = createAccountStateIndex({ aiHomeDir: root, fs });
+    index.upsertAccountState('codex', '1', { configured: true, exhausted: false, remainingPct: 50 });
+    index.upsertAccountState('codex', '2', { configured: true, exhausted: false, remainingPct: 80 });
+    assert.equal(index.deleteAccountState('codex', '1'), true);
+    assert.equal(index.deleteAccountState('codex', '1'), false);
+    assert.deepEqual(index.listAccountIds('codex'), ['2']);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

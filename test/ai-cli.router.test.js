@@ -52,6 +52,82 @@ test('`aih codex ls <id>` forwards id filter to listProfiles', () => {
   assert.deepEqual(exits, [0]);
 });
 
+test('`aih codex count` prints provider count', () => {
+  const exits = [];
+  const logs = [];
+  const originalLog = console.log;
+  console.log = (msg) => logs.push(String(msg));
+  try {
+    runAiCliCommandRouter('codex', ['codex', 'count'], {
+      processImpl: { exit: (code) => exits.push(code) },
+      fs: { existsSync: () => true },
+      countProfiles: () => ({ total: 12, providers: { codex: 12 } })
+    });
+  } finally {
+    console.log = originalLog;
+  }
+  assert.deepEqual(exits, [0]);
+  assert.equal(logs.some((line) => line.includes('codex accounts: 12')), true);
+});
+
+test('`aih codex delete 1,2,3` deletes multiple accounts', () => {
+  const exits = [];
+  const logs = [];
+  const originalLog = console.log;
+  console.log = (msg) => logs.push(String(msg));
+  try {
+    runAiCliCommandRouter('codex', ['codex', 'delete', '1,2,3'], {
+      processImpl: { exit: (code) => exits.push(code) },
+      fs: { existsSync: () => true },
+      parseDeleteSelectorTokens: () => ['1', '2', '3'],
+      deleteAccountsForCli: () => ({ deletedIds: ['1', '2', '3'], missingIds: [] })
+    });
+  } finally {
+    console.log = originalLog;
+  }
+  assert.deepEqual(exits, [0]);
+  assert.equal(logs.some((line) => line.includes('deleted 3 codex account')), true);
+  assert.equal(logs.some((line) => line.includes('1, 2, 3')), true);
+});
+
+test('`aih codex delete 1-9` supports range selectors', () => {
+  const exits = [];
+  const logs = [];
+  const originalLog = console.log;
+  console.log = (msg) => logs.push(String(msg));
+  try {
+    runAiCliCommandRouter('codex', ['codex', 'delete', '1-3'], {
+      processImpl: { exit: (code) => exits.push(code) },
+      fs: { existsSync: () => true },
+      parseDeleteSelectorTokens: () => ['1', '2', '3'],
+      deleteAccountsForCli: () => ({ deletedIds: ['1', '2'], missingIds: ['3'] })
+    });
+  } finally {
+    console.log = originalLog;
+  }
+  assert.deepEqual(exits, [0]);
+  assert.equal(logs.some((line) => line.includes('deleted 2 codex account')), true);
+  assert.equal(logs.some((line) => line.includes('missing: 3')), true);
+});
+
+test('`aih codex deleteall` deletes all accounts for a provider', () => {
+  const exits = [];
+  const logs = [];
+  const originalLog = console.log;
+  console.log = (msg) => logs.push(String(msg));
+  try {
+    runAiCliCommandRouter('codex', ['codex', 'deleteall'], {
+      processImpl: { exit: (code) => exits.push(code) },
+      fs: { existsSync: () => true },
+      deleteAllAccountsForCli: () => ({ deletedIds: ['1', '2'], totalBeforeDelete: 2 })
+    });
+  } finally {
+    console.log = originalLog;
+  }
+  assert.deepEqual(exits, [0]);
+  assert.equal(logs.some((line) => line.includes('deleted 2/2 codex account')), true);
+});
+
 test('`aih codex ls foo` returns invalid id error', () => {
   const exits = [];
   const errors = [];
@@ -233,4 +309,41 @@ test('`aih codex import` routes through unified import with fixed provider', asy
   assert.equal(calls[0].opts.error, console.error);
   assert.equal(typeof calls[0].opts.renderStageProgress, 'function');
   assert.deepEqual(exits, [0]);
+});
+
+test('`aih codex cleanup` deletes matching accounts immediately', async () => {
+  const exits = [];
+  const logs = [];
+  const progress = [];
+  const calls = [];
+  const originalLog = console.log;
+  console.log = (msg) => logs.push(String(msg));
+  try {
+    runAiCliCommandRouter('codex', ['codex', 'cleanup'], {
+      processImpl: { exit: (code) => exits.push(code) },
+      fs: { existsSync: () => true },
+      renderStageProgress: (prefix, current, total, label) => progress.push({ prefix, current, total, label }),
+      cleanupCodexAccounts: async (opts) => {
+        calls.push(opts);
+        opts.onScanProgress({ scanned: 1, total: 2, id: '7', matched: true, reasons: ['remaining_0'] });
+        opts.onDelete({ id: '7', reasons: ['remaining_0'], email: 'u@example.com' });
+        opts.onScanProgress({ scanned: 2, total: 2, id: '8', matched: false, reasons: [] });
+        return {
+          scannedAccounts: 2,
+          removedAccounts: [{ id: '7', reasons: ['remaining_0'], email: 'u@example.com' }],
+          removedCliproxyapiFiles: []
+        };
+      }
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+  } finally {
+    console.log = originalLog;
+  }
+  assert.deepEqual(exits, [0]);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].jobs, 1000);
+  assert.equal(progress.some((item) => item.prefix === '[aih cleanup]' && item.current === 2 && item.total === 2), true);
+  assert.equal(progress.some((item) => String(item.label || '').includes('deleted 1')), true);
+  assert.equal(logs.some((line) => line.includes('scanning free OAuth accounts with concurrency 1000')), true);
+  assert.equal(logs.some((line) => line.includes('scanned 2 free account(s) and removed 1 account')), true);
 });

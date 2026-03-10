@@ -1,5 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const EventEmitter = require('node:events');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -442,6 +443,86 @@ test('codex usage snapshot async skips refresh when resetAtMs is derived from re
     assert.equal(snapshot, cache);
     assert.equal(fetchCalls, 0);
     assert.equal(spawnCalls, 0);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('codex usage snapshot async tolerates app-server stdin EPIPE and returns cache', async () => {
+  const root = mkTmpDir();
+  try {
+    const getProfileDir = (cliName, id) => path.join(root, 'profiles', cliName, String(id));
+    const getToolConfigDir = (cliName, id) => path.join(getProfileDir(cliName, id), `.${cliName}`);
+    const profileDir = getProfileDir('codex', '15');
+    fs.mkdirSync(profileDir, { recursive: true });
+
+    let spawnCalls = 0;
+    const spawnMock = () => {
+      spawnCalls += 1;
+      const child = new EventEmitter();
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      child.stdout.setEncoding = () => {};
+      child.stderr.setEncoding = () => {};
+      child.kill = () => {};
+      child.stdin = new EventEmitter();
+      child.stdin.write = (_chunk, cb) => {
+        process.nextTick(() => {
+          const err = Object.assign(new Error('write EPIPE'), { code: 'EPIPE' });
+          if (typeof cb === 'function') cb(err);
+          child.stdin.emit('error', err);
+        });
+        return true;
+      };
+      child.stdin.end = () => {};
+      return child;
+    };
+
+    const usageSnapshotService = createUsageSnapshotService({
+      fs,
+      path,
+      spawn: spawnMock,
+      spawnSync: () => ({ stdout: '', stderr: '' }),
+      fetchImpl: async () => null,
+      processObj: {
+        execPath: process.execPath,
+        cwd: () => root,
+        env: {},
+        platform: process.platform
+      },
+      resolveCliPath: () => '/usr/bin/codex',
+      usageSnapshotSchemaVersion: 2,
+      usageRefreshStaleMs: 1,
+      usageSourceGemini: 'gemini_refresh_user_quota',
+      usageSourceCodex: 'codex_app_server',
+      usageSourceClaudeOauth: 'claude_oauth_usage_api',
+      usageSourceClaudeAuthToken: 'claude_auth_token_usage_api',
+      getProfileDir,
+      getToolConfigDir,
+      writeUsageCache: () => {},
+      readUsageCache: () => null
+    });
+
+    const now = Date.now();
+    const cache = {
+      schemaVersion: 2,
+      kind: 'codex_oauth_status',
+      source: 'codex_app_server',
+      capturedAt: now - 10_000,
+      entries: [{
+        bucket: 'primary',
+        windowMinutes: 300,
+        window: '5h',
+        remainingPct: 42,
+        resetIn: '2h',
+        resetAtMs: now + 2 * 60 * 60 * 1000
+      }]
+    };
+
+    const snapshot = await usageSnapshotService.ensureUsageSnapshotAsync('codex', '15', cache);
+    assert.equal(snapshot, cache);
+    assert.equal(spawnCalls >= 1, true);
+    assert.equal(usageSnapshotService.getLastUsageProbeError('codex', '15'), 'stdin_write_failed');
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

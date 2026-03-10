@@ -2,7 +2,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
   createAccountCoreWiring,
-  createAccountSelectionWiring
+  createAccountSelectionWiring,
+  createAccountCleanupWiring
 } = require('../lib/cli/bootstrap/account-wiring');
 
 test('createAccountCoreWiring composes state registry, activity tracker and status checker', () => {
@@ -75,4 +76,37 @@ test('createAccountSelectionWiring maps usage-aware selection dependencies', () 
   assert.equal(out.getNextAvailableId, getNextAvailableId);
   assert.equal(selectionArg.profilesDir, '/tmp/profiles');
   assert.equal(typeof selectionArg.getUsageRemainingPercentValues, 'function');
+});
+
+test('createAccountCleanupWiring maps cleanup dependencies', () => {
+  let cleanupArg = null;
+  const cleanupCodexAccounts = async () => ({ removedAccounts: [] });
+  const parseDeleteSelectorTokens = () => [];
+  const deleteAccountsForCli = () => ({ deletedIds: [], missingIds: [] });
+  const deleteAllAccountsForCli = () => ({ deletedIds: [], totalBeforeDelete: 0 });
+
+  const out = createAccountCleanupWiring({
+    fs: {},
+    path: {},
+    hostHomeDir: '/tmp/home',
+    profilesDir: '/tmp/profiles',
+    getProfileDir: () => '/tmp/profile',
+    getAccountStateIndex: () => ({}),
+    checkStatus: () => ({ configured: true }),
+    readUsageCache: () => null,
+    ensureUsageSnapshotAsync: async () => null,
+    getLastUsageProbeError: () => ''
+  }, {
+    createAccountCleanupService: (arg) => {
+      cleanupArg = arg;
+      return { cleanupCodexAccounts, parseDeleteSelectorTokens, deleteAccountsForCli, deleteAllAccountsForCli };
+    }
+  });
+
+  assert.equal(out.cleanupCodexAccounts, cleanupCodexAccounts);
+  assert.equal(out.parseDeleteSelectorTokens, parseDeleteSelectorTokens);
+  assert.equal(out.deleteAccountsForCli, deleteAccountsForCli);
+  assert.equal(out.deleteAllAccountsForCli, deleteAllAccountsForCli);
+  assert.equal(cleanupArg.hostHomeDir, '/tmp/home');
+  assert.equal(cleanupArg.profilesDir, '/tmp/profiles');
 });
