@@ -378,6 +378,75 @@ test('runBackupCommand generic export reports collecting progress while staging 
   }
 });
 
+test('runBackupCommand provider-scoped codex export writes flat email json files under accounts/codex', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aih-backup-provider-export-'));
+  let exitCode = null;
+  try {
+    const outZip = path.join(root, 'codex-flat.zip');
+    const aiHomeDir = path.join(root, '.ai_home');
+    writeJson(path.join(aiHomeDir, 'profiles', 'codex', '7', '.codex', 'auth.json'), {
+      auth_mode: 'chatgpt',
+      OPENAI_API_KEY: null,
+      tokens: {
+        id_token: 'header.payload.sig',
+        access_token: 'header.payload.sig',
+        refresh_token: 'rt_one',
+        account_id: 'acct-one'
+      },
+      last_refresh: '2026-03-10T10:00:00.000Z'
+    });
+
+    const handled = await runBackupCommand('export', ['export', '__provider__', 'codex', outZip], {
+      fs,
+      path,
+      os,
+      fse,
+      execSync: (cmd) => {
+        const text = String(cmd || '');
+        const cdMatch = text.match(/^cd "([^"]+)" && zip -rq "([^"]+)"/);
+        if (!cdMatch) throw new Error(`unexpected command: ${text}`);
+        const stageDir = cdMatch[1];
+        const flattened = path.join(stageDir, 'accounts', 'codex');
+        const fileNames = fs.readdirSync(flattened).filter((name) => name.endsWith('.json')).sort();
+        assert.deepEqual(fileNames, ['worker@example.com.json']);
+        const payload = JSON.parse(fs.readFileSync(path.join(flattened, fileNames[0]), 'utf8'));
+        assert.equal(payload.type, 'codex');
+        assert.equal(payload.email, 'worker@example.com');
+      },
+      readline: {},
+      consoleImpl: {
+        log: () => {},
+        error: () => {}
+      },
+      processImpl: {
+        exit: (code) => { exitCode = code; },
+        platform: 'linux'
+      },
+      ensureAesSuffix: (value) => value,
+      defaultExportName: () => outZip,
+      parseExportArgs: () => ({ targetFile: outZip, selectors: [] }),
+      parseImportArgs: () => ({}),
+      expandSelectorsToPaths: () => [],
+      renderStageProgress: () => {},
+      exportCliproxyapiCodexAuths: ({ authDirOverride }) => {
+        fs.mkdirSync(authDirOverride, { recursive: true });
+        fs.writeFileSync(path.join(authDirOverride, 'worker@example.com.json'), JSON.stringify({
+          type: 'codex',
+          email: 'worker@example.com',
+          refresh_token: 'rt_one'
+        }));
+        return { exported: 1 };
+      },
+      aiHomeDir
+    });
+
+    assert.equal(handled, true);
+    assert.equal(exitCode, 0);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('runBackupCommand routes import sources to unified import executor', async () => {
   const progressEvents = [];
   let exitCode = null;

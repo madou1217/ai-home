@@ -147,7 +147,7 @@ test('runCliRootRouter routes provider-scoped export through backup command', as
     }
   });
   await runCliRootRouter(['codex', 'export'], h.deps);
-  assert.deepEqual(calls, [{ cmd: 'export', args: ['export', 'codex'] }]);
+  assert.deepEqual(calls, [{ cmd: 'export', args: ['export', '__provider__', 'codex'] }]);
 });
 
 test('runCliRootRouter routes provider-scoped cliproxyapi export through backup command', async () => {
