@@ -137,3 +137,27 @@ test('runCliRootRouter prints overall counts for `aih count`', async () => {
   assert.equal(h.events.some((event) => event.includes('codex: 4')), true);
   assert.equal(h.events.some((event) => event.includes('total: 6')), true);
 });
+
+test('runCliRootRouter routes provider-scoped export through backup command', async () => {
+  const calls = [];
+  const h = createHarness({
+    runBackupCommand: async (cmd, args) => {
+      calls.push({ cmd, args });
+      return true;
+    }
+  });
+  await runCliRootRouter(['codex', 'export'], h.deps);
+  assert.deepEqual(calls, [{ cmd: 'export', args: ['export', 'codex'] }]);
+});
+
+test('runCliRootRouter routes provider-scoped cliproxyapi export through backup command', async () => {
+  const calls = [];
+  const h = createHarness({
+    runBackupCommand: async (cmd, args) => {
+      calls.push({ cmd, args });
+      return true;
+    }
+  });
+  await runCliRootRouter(['codex', 'export', 'cliproxyapi'], h.deps);
+  assert.deepEqual(calls, [{ cmd: 'export', args: ['export', 'cliproxyapi', 'codex'] }]);
+});
